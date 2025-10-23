@@ -1,5 +1,6 @@
 import React, { useState } from "react";
-import { View, Text, TextInput, TouchableOpacity, Image, ImageBackground, useWindowDimensions } from "react-native";
+import { View, Text, TextInput, TouchableOpacity, Image, ImageBackground, useWindowDimensions, Platform, Alert } from "react-native";
+import { useRouter } from 'expo-router';
 import { tw } from "react-native-tailwindcss";
 
 const Login: React.FC = () => {
@@ -11,8 +12,39 @@ const Login: React.FC = () => {
     const containerWidth = width >= 2000 ? "40%" : width > 900 ? "60%" : "90%";
     const containerHeight = height >= 1200 ? "70%" : height > 700 ? "80%" : "90%";
 
-    const handleSubmit = () => {
-        // Handle login logic here
+    const router = useRouter();
+
+    const handleSubmit = async () => {
+        if (!email || !password) return Alert.alert('Validation', 'Email and password required');
+        try {
+            // For Android emulator use 10.0.2.2, for iOS simulator or web use localhost,
+            // on a physical device replace with your machine LAN IP (e.g. http://192.168.x.y:3000)
+            const baseUrl = Platform.OS === 'android' ? 'http://10.0.2.2:3000' : 'http://localhost:3000';
+            console.log('[Frontend] login attempt', { email });
+            const res = await fetch(`${baseUrl}/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password }),
+            });
+            console.log('[Frontend] response status', res.status);
+            if (!res.ok) {
+                const text = await res.text().catch(() => null);
+                console.log('[Frontend] login failed body:', text);
+                Alert.alert('Login failed', text || `Status ${res.status}`);
+                return;
+            }
+            const data = await res.json().catch(() => ({ message: 'OK' }));
+            console.log('[Frontend] login success:', data);
+            Alert.alert('Login success', data?.message ?? 'Authenticated');
+                        // navigate according to backend-provided destination (role-based)
+                        try {
+                            const dest = data?.destination || '/admin';
+                            router.push(dest);
+                        } catch (e) { console.log('router.push error', e); }
+        } catch (err: any) {
+            console.log('[Frontend] network error', err?.message ?? err);
+            Alert.alert('Network error', err?.message ?? String(err));
+        }
     };
 
     return (
