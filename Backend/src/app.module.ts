@@ -8,21 +8,10 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
-    TypeOrmModule.forRootAsync({
-      imports: [ConfigModule],
-      inject: [ConfigService],
-      useFactory: (config: ConfigService) => {
-        const url = config.get<string>('DATABASE_URL');
-        return {
-          type: 'postgres',
-          url,
-          entities: [__dirname + '/**/*.entity{.ts,.js}'],
-          synchronize: false,
-          ssl: { rejectUnauthorized: false },
-          extra: { ssl: { rejectUnauthorized: false } },
-        } as any;
-      },
-    }),
+    // Note: TypeORM is intentionally not initialized here in dev to avoid
+    // TLS/self-signed cert issues with the managed DB. DbService (pg client)
+    // is used for direct queries. If you need TypeORM, configure proper CA
+    // or enable it with secure settings in production.
     DbModule,
   ],
   controllers: [AppController],

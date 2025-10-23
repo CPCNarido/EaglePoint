@@ -1,5 +1,6 @@
-import { Controller, Get, Post, Body, UnauthorizedException } from '@nestjs/common';
+import { Controller, Get, Post, Body, UnauthorizedException, Req } from '@nestjs/common';
 import { AppService } from './app.service';
+import type { Request } from 'express';
 
 @Controller()
 export class AppController {
@@ -11,7 +12,7 @@ export class AppController {
   }
 
   @Post('login')
-  async login(@Body() body: { email?: string; password?: string }) {
+  async login(@Req() req: Request, @Body() body: { email?: string; password?: string }) {
     const email = body.email ?? '';
     const password = body.password ?? '';
     const ok = await this.appService.validateUser(email, password);
@@ -27,6 +28,17 @@ export class AppController {
     if (role === 'dispatcher') destination = '/dispatcher';
     if (role === 'cashier') destination = '/cashier';
     if (role === 'ballhandler') destination = '/ballhandler';
+    // store minimal user info in session
+    (req as any).session = (req as any).session || {};
+    (req as any).session.user = { id: user?.id, username: user?.username, role };
+
     return { message: 'Authenticated', user: { id: user?.id, username: user?.username, role }, destination };
+  }
+
+  @Get('me')
+  getMe(@Req() req: Request) {
+    const sessionUser = (req as any).session?.user;
+    if (!sessionUser) throw new UnauthorizedException('Not authenticated');
+    return { user: sessionUser };
   }
 }
