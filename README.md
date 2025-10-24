@@ -9,10 +9,14 @@ Version Control	Git + GitHub
 ⚙️ Installation Guide
 
 ****************************************************1ST TERMINAL*******************************************
+cd Backend (or run the setup script below)
+
+# Recommended: run the project setup helper to install deps, create a .env, and optionally start services
+powershell -ExecutionPolicy Bypass -File .\setup-dev.ps1 -StartServices
+
+OR, to start backend only (foreground):
 cd Backend
-$env:NODE_TLS_REJECT_UNAUTHORIZED='0'
-npm run start:dev
-h
+$env:DEV_ALLOW_SELF_SIGNED_TLS='1'; npm run start:dev
 
 ****************************************************2ND TERMINAL*******************************************
 
