@@ -1,7 +1,11 @@
 import React, { useState } from "react";
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, Platform, Modal } from "react-native";
+import { View, Text, TouchableOpacity, ScrollView, Alert, Platform, Modal, StyleSheet } from "react-native";
+import { tw } from 'react-native-tailwindcss';
 import { useRouter } from "expo-router";
 import { MaterialIcons } from "@expo/vector-icons";
+import StaffManagement from "./components/StaffManagement";
+import BayManagement from "./components/BayManagement";
+// import ReportAnalytics from "./components/ReportAnalytics/ReportAnalytics";
 
 type OverviewItem = { title: string; value: string; subtitle: string; color: string };
 
@@ -124,7 +128,14 @@ export default function AdminDashboard() {
             </View>
           </ScrollView>
         );
+      case "Staff Management":
+      return <StaffManagement />; // ✅ Calls the imported component
 
+      case "Bay Management":
+      return <BayManagement />;
+
+      // case "Reports":
+      // return <ReportAnalytics />; // ✅ And this one
       default:
         return (
           <View style={styles.contentContainer}>
@@ -147,42 +158,48 @@ export default function AdminDashboard() {
   ];
 
   return (
-    <View style={styles.container}>
+    <View style={[tw.flex1, tw.flexRow, { backgroundColor: '#F6F6F2' }]}>
       {/* Sidebar */}
-      <View style={styles.sidebar}>
-        <Text style={styles.logo}>Eagle Point{"\n"}ADMIN</Text>
+      <View style={[tw.w64, tw.p5, { backgroundColor: '#1E2B20', justifyContent: 'space-between' }]}>
+  <Text style={[tw.textWhite, tw.fontBold, tw.text2xl, tw.mB10]}>Eagle Point{"\n"}ADMIN</Text>
 
         {tabs.map((tab) => (
           <TouchableOpacity
             key={tab.name}
-            style={[styles.tabButton, activeTab === tab.name && styles.activeTabButton]}
+            style={[
+              tw.flexRow,
+              tw.itemsCenter,
+              tw.pY3,
+              tw.pX2,
+              tw.roundedLg,
+              tw.mY1,
+              activeTab === tab.name ? { backgroundColor: '#405C45' } : {},
+            ]}
             onPress={() => setActiveTab(tab.name)}
           >
             <MaterialIcons
               name={tab.icon as any}
               size={22}
               color={activeTab === tab.name ? "#fff" : "#B8C1B7"}
-              style={styles.icon}
+              style={{ marginRight: 10 }}
             />
-            <Text
-              style={[styles.tabText, activeTab === tab.name && styles.activeTabText]}
-            >
+            <Text style={[activeTab === tab.name ? { color: '#fff', fontWeight: '600' } : { color: '#DADADA' }]}>
               {tab.name}
             </Text>
           </TouchableOpacity>
         ))}
 
-        <View style={styles.logoutContainer}>
-          <Text style={styles.loggedInText}>Logged in as: ADMIN</Text>
-          <Text style={styles.loggedInText}>Admin ID: 1212121212</Text>
-          <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-            <Text style={styles.logoutText}>LOG OUT</Text>
+        <View style={{ marginTop: 60 }}>
+          <Text style={[tw.textGray400, tw.textXs]}>Logged in as: ADMIN</Text>
+          <Text style={[tw.textGray400, tw.textXs]}>Admin ID: 1212121212</Text>
+          <TouchableOpacity style={{ marginTop: 10, backgroundColor: '#404040', paddingVertical: 10, borderRadius: 6, alignItems: 'center' }} onPress={handleLogout}>
+            <Text style={[tw.textWhite, tw.fontBold]}>LOG OUT</Text>
           </TouchableOpacity>
         </View>
       </View>
 
       {/* Main Content */}
-      <View style={styles.mainContent}>{renderContent()}</View>
+  <View style={[tw.flex1, tw.p6]}>{renderContent()}</View>
       <Modal
         visible={logoutModalVisible}
         transparent
