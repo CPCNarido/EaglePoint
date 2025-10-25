@@ -24,10 +24,10 @@ export class AppController {
     // return user info including role so frontend can route accordingly
     const user = await this.appService.getUserByIdentifier(email);
     const role = user?.role ?? 'admin';
-    let destination = '/admin';
-    if (role === 'dispatcher') destination = '/dispatcher';
-    if (role === 'cashier') destination = '/cashier';
-    if (role === 'ballhandler') destination = '/ballhandler';
+    let destination = '/(main)/admin/admin';
+    if (role === 'dispatcher') destination = '/(main)/dispatcher/dispatcher';
+    if (role === 'cashier') destination = '/(main)/cashier/cashier';
+    if (role === 'ballhandler') destination = '/(main)/ballhandler/ballhandler';
     // store minimal user info in session
     (req as any).session = (req as any).session || {};
     (req as any).session.user = { id: user?.id, username: user?.username, role };
