@@ -5,7 +5,7 @@ import { useRouter } from "expo-router";
 import { MaterialIcons } from "@expo/vector-icons";
 import StaffManagement from "./Tabs/StaffManagement";
 import BayManagement from "./Tabs/BayManagement";
-// import ReportAnalytics from "./components/ReportAnalytics/ReportAnalytics";
+
 
 type OverviewItem = { title: string; value: string; subtitle: string; color: string };
 
@@ -134,8 +134,6 @@ export default function AdminDashboard() {
       case "Bay Management":
       return <BayManagement />;
 
-      // case "Reports":
-      // return <ReportAnalytics />; // ✅ And this one
       default:
         return (
           <View style={styles.contentContainer}>
