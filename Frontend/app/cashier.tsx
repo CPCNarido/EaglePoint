@@ -30,7 +30,7 @@ export default function CashierLayout() {
       {/* Sidebar */}
       <View style={styles.sidebar}>
         <View>
-          <Text style={styles.logoTitle}>🦅{"\n"}Eagle Point{"\n"}CASHIER</Text>
+          <Text style={styles.logoTitle}>Eagle Point{"\n"}CASHIER</Text>
 
           {/* Navigation Buttons */}
           <View style={styles.navContainer}>
@@ -162,7 +162,7 @@ const TransactionContent = () => (
   <ScrollView style={styles.scrollArea}>
     <Text style={styles.title}>Player Transaction</Text>
     <View style={styles.placeholderBox}>
-      <Text style={styles.placeholderText}>💳 Transaction Page</Text>
+      <Text style={styles.placeholderText}> Transaction Page</Text>
     </View>
   </ScrollView>
 );
@@ -172,7 +172,7 @@ const PlayerListContent = () => (
   <ScrollView style={styles.scrollArea}>
     <Text style={styles.title}>Active Player List</Text>
     <View style={styles.placeholderBox}>
-      <Text style={styles.placeholderText}>🧍 Player List Page</Text>
+      <Text style={styles.placeholderText}> Player List Page</Text>
     </View>
   </ScrollView>
 );

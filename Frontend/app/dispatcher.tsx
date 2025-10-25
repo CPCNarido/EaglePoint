@@ -212,7 +212,7 @@ export default function DispatcherDashboard() {
     <View style={styles.container}>
       {/* Sidebar */}
       <View style={styles.sidebar}>
-        <Text style={styles.logo}>🦅{"  "}Eagle Point{"\n"}Dispatcher</Text>
+        <Text style={styles.logo}>{" "}Eagle Point{"\n"}Dispatcher</Text>
 
         {tabs.map((tab) => (
           <TouchableOpacity
