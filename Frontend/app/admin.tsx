@@ -1,25 +1,62 @@
 import React, { useState } from "react";
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from "react-native";
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert, Platform, Modal } from "react-native";
+import { useRouter } from "expo-router";
 import { MaterialIcons } from "@expo/vector-icons";
 
-export default function AdminDashboard() {
-  const [activeTab, setActiveTab] = useState("Dashboard");
+type OverviewItem = { title: string; value: string; subtitle: string; color: string };
 
-  const getBayStatus = (num) => {
+export default function AdminDashboard() {
+  const [activeTab, setActiveTab] = useState<string>("Dashboard");
+  const router = useRouter();
+
+  const handleLogout = () => {
+    if (Platform.OS === 'web') {
+      setLogoutModalVisible(true);
+      return;
+    }
+
+    Alert.alert("Logout", "Are you sure you want to log out?", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Log out", style: "destructive", onPress: () => performLogout() },
+    ]);
+  };
+
+  const [logoutModalVisible, setLogoutModalVisible] = useState<boolean>(false);
+
+  const performLogout = async () => {
+    try { setLogoutModalVisible(false); } catch (e) {}
+    try {
+      const baseUrl = Platform.OS === "android" ? 'http://10.127.147.53:3000' : 'http://localhost:3000';
+      await fetch(`${baseUrl}/logout`, { method: 'POST', credentials: 'include' }).catch(() => {});
+    } catch (e) {}
+
+    try { if (typeof window !== 'undefined' && window.localStorage) {
+      ['authToken','token','user','EAGLEPOINT_AUTH'].forEach(k=>window.localStorage.removeItem(k));
+    } } catch (e) {}
+
+    try { // @ts-ignore
+      const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+      if (AsyncStorage && AsyncStorage.multiRemove) await AsyncStorage.multiRemove(['authToken','token','user','EAGLEPOINT_AUTH']);
+    } catch (e) {}
+
+    router.replace('/');
+  };
+
+  const getBayStatus = (num: number) => {
     if ([4, 9, 12, 18, 32, 40].includes(num)) return { color: "#C62828" }; // Maintenance
     if ([5, 13, 26, 34, 36].includes(num)) return { color: "#BF930E" }; // Open Session
     if ([8, 21, 22, 35].includes(num)) return { color: "#A3784E" }; // Assigned
     return { color: "#2E7D32" }; // Available
   };
 
-  const Legend = ({ color, label }) => (
+  const Legend: React.FC<{ color: string; label: string }> = ({ color, label }) => (
     <View style={styles.legendItem}>
       <View style={[styles.legendColor, { backgroundColor: color }]} />
       <Text style={styles.legendText}>{label}</Text>
     </View>
   );
 
-  const OverviewCard = ({ title, value, subtitle, color }) => (
+  const OverviewCard: React.FC<OverviewItem> = ({ title, value, subtitle, color }) => (
     <View style={[styles.overviewCard, { borderLeftColor: color }]}>
       <Text style={styles.overviewLabel}>{title}</Text>
       <Text style={[styles.overviewValue, { color }]}>{value}</Text>
@@ -122,7 +159,7 @@ export default function AdminDashboard() {
             onPress={() => setActiveTab(tab.name)}
           >
             <MaterialIcons
-              name={tab.icon}
+              name={tab.icon as any}
               size={22}
               color={activeTab === tab.name ? "#fff" : "#B8C1B7"}
               style={styles.icon}
@@ -138,7 +175,7 @@ export default function AdminDashboard() {
         <View style={styles.logoutContainer}>
           <Text style={styles.loggedInText}>Logged in as: ADMIN</Text>
           <Text style={styles.loggedInText}>Admin ID: 1212121212</Text>
-          <TouchableOpacity style={styles.logoutButton}>
+          <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
             <Text style={styles.logoutText}>LOG OUT</Text>
           </TouchableOpacity>
         </View>
@@ -146,6 +183,27 @@ export default function AdminDashboard() {
 
       {/* Main Content */}
       <View style={styles.mainContent}>{renderContent()}</View>
+      <Modal
+        visible={logoutModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setLogoutModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalBox}>
+            <Text style={styles.modalTitle}>Confirm Logout</Text>
+            <Text style={styles.modalText}>Are you sure you want to log out?</Text>
+            <View style={styles.modalButtons}>
+              <TouchableOpacity style={[styles.modalButton, styles.modalButtonCancel]} onPress={() => setLogoutModalVisible(false)}>
+                <Text style={styles.modalButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.modalButton, styles.modalButtonConfirm]} onPress={() => performLogout()}>
+                <Text style={styles.modalButtonText}>Log out</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -246,4 +304,23 @@ const styles = StyleSheet.create({
     marginRight: 6,
   },
   legendText: { fontSize: 12, color: "#333" },
+  modalOverlay: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "rgba(0,0,0,0.4)",
+  },
+  modalBox: {
+    width: "80%",
+    backgroundColor: "#fff",
+    borderRadius: 10,
+    padding: 20,
+  },
+  modalTitle: { fontSize: 18, fontWeight: "700", marginBottom: 10 },
+  modalText: { fontSize: 14, color: "#333", marginBottom: 6 },
+  modalButtons: { flexDirection: "row", justifyContent: "flex-end", gap: 10 },
+  modalButton: { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 6 },
+  modalButtonCancel: { backgroundColor: "#EEE", marginRight: 8 },
+  modalButtonConfirm: { backgroundColor: "#C62828" },
+  modalButtonText: { color: "#fff", fontWeight: "600" },
 });

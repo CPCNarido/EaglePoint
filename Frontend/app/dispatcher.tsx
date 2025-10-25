@@ -6,16 +6,84 @@ import {
   StyleSheet,
   ScrollView,
   Modal,
+  Alert,
+  Platform,
 } from "react-native";
+import { useRouter } from "expo-router";
 import { MaterialIcons } from "@expo/vector-icons";
 
+type OverviewItem = {
+  title: string;
+  value: string;
+  subtitle: string;
+  color: string;
+};
+
+type Bay = {
+  id: number;
+  status: string;
+  player: string;
+  sm: string;
+  time: string;
+};
+
 export default function DispatcherDashboard() {
-  const [activeTab, setActiveTab] = useState("Dashboard");
-  const [currentPage, setCurrentPage] = useState(1);
-  const [selectedBay, setSelectedBay] = useState(null);
+  const [activeTab, setActiveTab] = useState<string>("Dashboard");
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [selectedBay, setSelectedBay] = useState<Bay | null>(null);
+  const router = useRouter();
+
+  const handleLogout = () => {
+    if (Platform.OS === 'web') {
+      setLogoutModalVisible(true);
+      return;
+    }
+
+    Alert.alert("Logout", "Are you sure you want to log out?", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Log out", style: "destructive", onPress: () => performLogout() },
+    ]);
+  };
+
+  const [logoutModalVisible, setLogoutModalVisible] = useState<boolean>(false);
+
+  const performLogout = async () => {
+    // close modal right away for responsive UI
+    try {
+      setLogoutModalVisible(false);
+    } catch (e) {}
+
+    // best-effort server logout (send cookies if any)
+    try {
+      const baseUrl = Platform.OS === "android" ? 'http://10.127.147.53:3000' : 'http://localhost:3000';
+      await fetch(`${baseUrl}/logout`, { method: 'POST', credentials: 'include' }).catch(() => {});
+    } catch (e) {
+      // ignore network errors here
+    }
+
+    // clear common local storage keys (web)
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        ['authToken', 'token', 'user', 'EAGLEPOINT_AUTH'].forEach((k) => window.localStorage.removeItem(k));
+      }
+    } catch (e) {}
+
+    // try clearing AsyncStorage on native (best-effort). Use require + ts-ignore so missing package won't break type-check.
+    try {
+      // @ts-ignore
+      const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+      if (AsyncStorage && AsyncStorage.multiRemove) {
+        await AsyncStorage.multiRemove(['authToken', 'token', 'user', 'EAGLEPOINT_AUTH']);
+      }
+    } catch (e) {
+      // ignore if package isn't installed
+    }
+
+    router.replace('/');
+  };
 
   // Quick Overview Data
-  const overviewData = [
+  const overviewData: OverviewItem[] = [
     {
       title: "Available Bays Currently",
       value: "30/45",
@@ -43,7 +111,7 @@ export default function DispatcherDashboard() {
   ];
 
   // ✅ Bay Data
-  const bayData = [
+  const bayData: Bay[] = [
     { id: 1, status: "Timed Session", player: "Motea", sm: "Narido", time: "1:18:00 Remaining" },
     { id: 2, status: "Open Time", player: "Camarillo", sm: "Narido", time: "1:03:26 Elapsed" },
     { id: 3, status: "Available", player: "Lamadora", sm: "Narido", time: "1:03:26 Remaining" },
@@ -62,7 +130,7 @@ export default function DispatcherDashboard() {
   ];
 
   // Color Scheme
-  const getStatusColors = (status) => {
+  const getStatusColors = (status: string) => {
     switch (status) {
       case "Available":
         return { border: "#2E7D32", text: "#fff", bg: "#2E7D32" };
@@ -77,14 +145,14 @@ export default function DispatcherDashboard() {
     }
   };
 
-  const Legend = ({ color, label }) => (
+  const Legend: React.FC<{ color: string; label: string }> = ({ color, label }) => (
     <View style={styles.legendItem}>
       <View style={[styles.legendColor, { backgroundColor: color }]} />
       <Text style={styles.legendText}>{label}</Text>
     </View>
   );
 
-  const OverviewCard = ({ title, value, subtitle, color }) => (
+  const OverviewCard: React.FC<OverviewItem> = ({ title, value, subtitle, color }) => (
     <View style={[styles.overviewCard, { borderLeftColor: color }]}>
       <Text style={styles.overviewTitle}>{title}</Text>
       <Text style={[styles.overviewValue, { color }]}>{value}</Text>
@@ -123,11 +191,11 @@ export default function DispatcherDashboard() {
         </View>
 
         <View style={styles.bayContainer}>
-          {bayData.map((bay) => {
-            const { border, text, bg } = getStatusColors(bay.status);
+            {bayData.map((bay) => {
+            const { border, bg } = getStatusColors(bay.status);
             return (
               <View key={bay.id} style={[styles.bayCard, { borderColor: border }]}>
-                
+
                 {/* Capsule Status */}
                 <View style={[styles.statusCapsule, { backgroundColor: bg }]}>
                   <Text style={styles.statusCapsuleText}>
@@ -201,7 +269,7 @@ export default function DispatcherDashboard() {
     </ScrollView>
   );
 
-  const tabs = [
+  const tabs: { name: string; icon: string }[] = [
     { name: "Dashboard", icon: "dashboard" },
     { name: "Bay Assignment", icon: "golf-course" },
     { name: "Shared Display", icon: "tv" },
@@ -214,7 +282,7 @@ export default function DispatcherDashboard() {
       <View style={styles.sidebar}>
         <Text style={styles.logo}>{" "}Eagle Point{"\n"}Dispatcher</Text>
 
-        {tabs.map((tab) => (
+          {tabs.map((tab) => (
           <TouchableOpacity
             key={tab.name}
             style={[
@@ -224,7 +292,7 @@ export default function DispatcherDashboard() {
             onPress={() => setActiveTab(tab.name)}
           >
             <MaterialIcons
-              name={tab.icon}
+              name={tab.icon as any}
               size={22}
               color={activeTab === tab.name ? "#fff" : "#B8C1B7"}
               style={styles.icon}
@@ -243,7 +311,7 @@ export default function DispatcherDashboard() {
         <View style={styles.logoutContainer}>
           <Text style={styles.loggedInText}>Logged in as: Cashier Anne</Text>
           <Text style={styles.loggedInText}>Cashier ID: 1022101</Text>
-          <TouchableOpacity style={styles.logoutButton}>
+          <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
             <Text style={styles.logoutText}>LOG OUT</Text>
           </TouchableOpacity>
         </View>
@@ -260,6 +328,35 @@ export default function DispatcherDashboard() {
           </View>
         )}
       </View>
+
+      {/* Logout confirmation modal for web/laptop */}
+      <Modal
+        visible={logoutModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setLogoutModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalBox}>
+            <Text style={styles.modalTitle}>Confirm Logout</Text>
+            <Text style={styles.modalText}>Are you sure you want to log out?</Text>
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalButtonCancel]}
+                onPress={() => setLogoutModalVisible(false)}
+              >
+                <Text style={styles.modalButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalButton, styles.modalButtonConfirm]}
+                onPress={() => performLogout()}
+              >
+                <Text style={styles.modalButtonText}>Log out</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -444,4 +541,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   placeholderText: { color: "#666", marginTop: 10 },
+  modalButtons: { flexDirection: "row", justifyContent: "flex-end", gap: 10 },
+  modalButton: { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 6 },
+  modalButtonCancel: { backgroundColor: "#EEE", marginRight: 8 },
+  modalButtonConfirm: { backgroundColor: "#C62828" },
+  modalButtonText: { color: "#fff", fontWeight: "600" },
 });
