@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { MaterialIcons } from "@expo/vector-icons";
+import auth from '../../lib/auth';
 
 import DashboardTab from "./Tabs/DashboardTab";
 import BayAssignmentTab from "./Tabs/BayAssignmentTab";
@@ -34,28 +35,8 @@ export default function DispatcherDashboard() {
   };
 
   const performLogout = async () => {
-    try {
-      setLogoutModalVisible(false);
-      const baseUrl =
-        Platform.OS === "android"
-          ? "http://10.127.147.53:3000"
-          : "http://localhost:3000";
-      await fetch(`${baseUrl}/logout`, { method: "POST", credentials: "include" });
-    } catch {}
-    try {
-      if (typeof window !== "undefined" && window.localStorage) {
-        ["authToken", "token", "user", "EAGLEPOINT_AUTH"].forEach((k) =>
-          window.localStorage.removeItem(k)
-        );
-      }
-    } catch {}
-    try {
-      // @ts-ignore
-      const AsyncStorage = require("@react-native-async-storage/async-storage").default;
-      if (AsyncStorage && AsyncStorage.multiRemove) {
-        await AsyncStorage.multiRemove(["authToken", "token", "user", "EAGLEPOINT_AUTH"]);
-      }
-    } catch {}
+    setLogoutModalVisible(false);
+    await auth.logoutAndClear();
     router.replace("/");
   };
 

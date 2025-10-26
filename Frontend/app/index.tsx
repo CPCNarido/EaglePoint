@@ -15,6 +15,7 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { tw } from "react-native-tailwindcss";
+import auth from './lib/auth';
 
 const Login: React.FC = () => {
   const [email, setEmail] = useState("");
@@ -54,12 +55,15 @@ const Login: React.FC = () => {
     setErrorMessage("");
     setErrorModalVisible(false);
     try {
-      const baseUrl =
-        Platform.OS === "android" ? "http://10.127.147.53:3000" : "http://localhost:3000";
-      const res = await fetch(`${baseUrl}/login`, {
+      // Backend runs with global prefix '/api' and default port 3001 in development.
+      // Use localhost:3001 for web and 10.0.2.2:3001 for Android emulator.
+      const baseUrl = Platform.OS === 'android' ? 'http://10.0.2.2:3001' : 'http://localhost:3001';
+      const res = await fetch(`${baseUrl}/api/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        // server expects 'email' body field (we treat it as username or employee id)
+        body: JSON.stringify({ email: email?.trim(), password }),
+        credentials: 'include',
       });
 
       if (!res.ok) {
@@ -70,6 +74,17 @@ const Login: React.FC = () => {
       }
 
       const data = await res.json().catch(() => ({ message: "OK" }));
+
+      // Save access token (refresh token will be set as HttpOnly cookie by server)
+      try {
+        const access = data?.accessToken || data?.access_token || null;
+        if (access) {
+          auth.saveAccessToken(access);
+        }
+      } catch (err) {
+        // ignore storage errors
+      }
+
       router.push(data?.destination || "/admin");
     } catch (err: any) {
       const msg = err?.message ?? String(err);

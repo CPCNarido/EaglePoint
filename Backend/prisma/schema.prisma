@@ -1,0 +1,193 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Employee {
+  employee_id Int       @id @default(autoincrement())
+  full_name   String
+  username    String?   @unique
+  password    String?
+  role        Role
+  created_at  DateTime  @default(now())
+  created_by  Int?
+  creator     Employee? @relation("CreatedEmployees", fields: [created_by], references: [employee_id])
+
+  createdEmployees Employee[] @relation("CreatedEmployees")
+  players          Player[]
+  updatedBays      Bay[]      @relation("BayUpdatedBy")
+  updatedInventories BallBucketInventory[] @relation("InventoryUpdatedBy")
+  dispatcherAssignments BayAssignment[] @relation("DispatcherAssignments")
+  servicemanAssignments BayAssignment[] @relation("ServicemanAssignments")
+  ballTransactions  BallTransaction[] @relation("BallHandlerTransactions")
+  servicemanQueues  ServicemanQueue[]
+  systemLogs        SystemLog[] @relation("EmployeeLogs")
+  approvedLogs      SystemLog[] @relation("ApprovedLogs")
+
+  // 🗨️ Chat Relationships
+  sentMessages     ChatMessage[] @relation("SentMessages")
+  receivedMessages ChatMessage[] @relation("ReceivedMessages")
+  chatParticipants ChatParticipant[]
+}
+
+model Player {
+  player_id      Int       @id @default(autoincrement())
+  nickname       String?
+  receipt_number String?   @unique
+  start_time     DateTime
+  end_time       DateTime
+  price_per_hour Decimal   @db.Decimal(10, 2)
+  created_by     Int
+  created_at     DateTime  @default(now())
+
+  creator Employee @relation(fields: [created_by], references: [employee_id])
+  assignments BayAssignment[]
+}
+
+model Bay {
+  bay_id      Int       @id @default(autoincrement())
+  bay_number  String
+  status      BayStatus @default(Available)
+  note        String?
+  updated_by  Int?
+  updated_at  DateTime  @default(now()) @updatedAt
+
+  updatedBy Employee? @relation("BayUpdatedBy", fields: [updated_by], references: [employee_id])
+  assignments BayAssignment[]
+  servicemanQueues ServicemanQueue[]
+}
+
+model BallBucketInventory {
+  inventory_id           Int       @id @default(autoincrement())
+  record_date            DateTime  @default(now())
+  total_buckets_start    Int
+  total_buckets_remaining Int
+  bottom_limit           Int       @default(100)
+  updated_by             Int?
+  updated_at             DateTime  @default(now()) @updatedAt
+  note                   String?
+
+  updatedBy Employee? @relation("InventoryUpdatedBy", fields: [updated_by], references: [employee_id])
+}
+
+model BayAssignment {
+  assignment_id  Int       @id @default(autoincrement())
+  player_id      Int?
+  bay_id         Int
+  dispatcher_id  Int
+  serviceman_id  Int?
+  assigned_time  DateTime
+  open_time      Boolean   @default(false)
+  end_time       DateTime?
+
+  player       Player?    @relation(fields: [player_id], references: [player_id])
+  bay          Bay        @relation(fields: [bay_id], references: [bay_id])
+  dispatcher   Employee   @relation("DispatcherAssignments", fields: [dispatcher_id], references: [employee_id])
+  serviceman   Employee?  @relation("ServicemanAssignments", fields: [serviceman_id], references: [employee_id])
+  transactions BallTransaction[]
+}
+
+model BallTransaction {
+  transaction_id Int       @id @default(autoincrement())
+  assignment_id  Int
+  handler_id     Int
+  bucket_count   Int
+  delivered_time DateTime  @default(now())
+
+  assignment BayAssignment @relation(fields: [assignment_id], references: [assignment_id])
+  handler    Employee      @relation("BallHandlerTransactions", fields: [handler_id], references: [employee_id])
+}
+
+model ServicemanQueue {
+  queue_id     Int       @id @default(autoincrement())
+  serviceman_id Int
+  status       ServicemanStatus @default(Available)
+  assigned_bay Int?
+  updated_at   DateTime  @default(now()) @updatedAt
+
+  serviceman Employee @relation(fields: [serviceman_id], references: [employee_id])
+  assignedBay Bay?    @relation(fields: [assigned_bay], references: [bay_id])
+}
+
+model SystemLog {
+  log_id         Int       @id @default(autoincrement())
+  employee_id    Int
+  role           Role
+  action         String
+  timestamp      DateTime  @default(now())
+  related_record String?
+  approved_by    Int?
+
+  employee  Employee @relation("EmployeeLogs", fields: [employee_id], references: [employee_id])
+  approvedBy Employee? @relation("ApprovedLogs", fields: [approved_by], references: [employee_id])
+}
+
+model Notification {
+  notification_id Int       @id @default(autoincrement())
+  message         String
+  created_at      DateTime  @default(now())
+  is_read         Boolean   @default(false)
+}
+
+//
+// 🧠 Chat System Models
+//
+
+model ChatRoom {
+  chat_id     Int       @id @default(autoincrement())
+  name        String?
+  is_group    Boolean   @default(false)
+  created_at  DateTime  @default(now())
+  messages    ChatMessage[]
+  participants ChatParticipant[]
+}
+
+model ChatMessage {
+  message_id  Int       @id @default(autoincrement())
+  chat_id     Int
+  sender_id   Int
+  recipient_id Int?     // for 1-on-1 DMs (optional)
+  content     String
+  sent_at     DateTime  @default(now())
+  is_read     Boolean   @default(false)
+
+  chat      ChatRoom   @relation(fields: [chat_id], references: [chat_id])
+  sender    Employee   @relation("SentMessages", fields: [sender_id], references: [employee_id])
+  recipient Employee?  @relation("ReceivedMessages", fields: [recipient_id], references: [employee_id])
+}
+
+model ChatParticipant {
+  participant_id Int       @id @default(autoincrement())
+  chat_id        Int
+  employee_id    Int
+  joined_at      DateTime  @default(now())
+
+  chat     ChatRoom @relation(fields: [chat_id], references: [chat_id])
+  employee Employee @relation(fields: [employee_id], references: [employee_id])
+}
+
+enum Role {
+  Admin
+  Cashier
+  Dispatcher
+  BallHandler
+  Serviceman
+}
+
+enum BayStatus {
+  Available
+  Occupied
+  Maintenance
+  SpecialUse
+  Unavailable
+}
+
+enum ServicemanStatus {
+  Available
+  Assigned
+  OnBreak
+}

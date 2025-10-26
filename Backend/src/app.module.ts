@@ -1,20 +1,28 @@
 import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-import { DbModule } from './db.module';
-import { ConfigModule, ConfigService } from '@nestjs/config';
-import { TypeOrmModule } from '@nestjs/typeorm';
+// Removed unused modules - only Auth and Prisma remain for minimal auth flow
+import { AuthModule } from './modules/auth/auth.module';
+// import { LostFoundModule } from './modules/lost-found/lost-found.module';
+import { PrismaModule } from './common/prisma/prisma.module';
+// import { ContentsModule } from './modules/contents/contents.module';
+// import { NotificationsModule } from './modules/notifications/notifications.module';
+// import { RolesSerializerInterceptor } from 'common/decorator/roles-serializer.interceptor';
+// import { MeModule } from './modules/me/me.module';
+// import { EmailModule } from './modules/email/email.module';
+import { ConfigModule } from '@nestjs/config';
+// import { BusinessModule } from './modules/business/business.module';
 
 @Module({
   imports: [
+    PrismaModule,
     ConfigModule.forRoot({ isGlobal: true }),
-    // Note: TypeORM is intentionally not initialized here in dev to avoid
-    // TLS/self-signed cert issues with the managed DB. DbService (pg client)
-    // is used for direct queries. If you need TypeORM, configure proper CA
-    // or enable it with secure settings in production.
-    DbModule,
+    AuthModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    // Roles serializer interceptor removed for minimal auth-only setup
+  ],
 })
 export class AppModule {}
