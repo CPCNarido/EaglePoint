@@ -45,6 +45,9 @@ export default function AdminDashboard() {
   // State from server
   const [overview, setOverview] = useState<any>(null);
   const [loadingOverview, setLoadingOverview] = useState(false);
+  // admin info
+  const [adminName, setAdminName] = useState<string>('ADMIN');
+  const [adminId, setAdminId] = useState<string>('');
 
   const getColorFromStatus = (status: string) => {
     switch (status) {
@@ -77,6 +80,23 @@ export default function AdminDashboard() {
       }
     };
     fetchOverview();
+    // fetch admin identity for sidebar
+    const fetchAdmin = async () => {
+      try {
+        const baseUrl = Platform.OS === 'android' ? 'http://10.0.2.2:3001' : 'http://localhost:3001';
+        const r = await fetch(`${baseUrl}/api/admin/me`, { method: 'GET', credentials: 'include' });
+        if (!r.ok) return;
+        const d = await r.json();
+        const name = d?.full_name || d?.name || d?.username || 'ADMIN';
+  const idVal = d?.employee_id || d?.employeeId || d?.staff_id || d?.staffId || d?.id || d?.adminId || '';
+  const id = idVal ? String(idVal) : '';
+        setAdminName(name);
+        setAdminId(id);
+      } catch (e) {
+        // ignore
+      }
+    };
+    fetchAdmin();
   }, []);
 
   const Legend: React.FC<{ color: string; label: string }> = ({ color, label }) => (
@@ -239,8 +259,8 @@ export default function AdminDashboard() {
         ))}
 
         <View style={{ marginTop: 60 }}>
-          <Text style={[tw.textGray400, tw.textXs]}>Logged in as: ADMIN</Text>
-          <Text style={[tw.textGray400, tw.textXs]}>Admin ID: 1212121212</Text>
+          <Text style={[tw.textGray400, tw.textXs]}>Logged in as: {adminName}</Text>
+          <Text style={[tw.textGray400, tw.textXs]}>Admin ID: {adminId || '—'}</Text>
           <TouchableOpacity style={{ marginTop: 10, backgroundColor: '#404040', paddingVertical: 10, borderRadius: 6, alignItems: 'center' }} onPress={handleLogout}>
             <Text style={[tw.textWhite, tw.fontBold]}>LOG OUT</Text>
           </TouchableOpacity>
