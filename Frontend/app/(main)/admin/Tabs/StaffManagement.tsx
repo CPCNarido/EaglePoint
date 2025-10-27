@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   ScrollView,
   StyleSheet,
+  Platform,
 } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 
@@ -13,23 +14,68 @@ export default function StaffManagement() {
   const [searchQuery, setSearchQuery] = useState("");
   const [filterRole, setFilterRole] = useState("All");
 
-  const staffList = [
-    { id: "23232321", name: "John Doe Peterson", role: "Dispatcher" },
-    { id: "23232322", name: "Jane Cruz", role: "Dispatcher" },
-    { id: "23232323", name: "Mark Dela Peña", role: "Receptionist" },
-    { id: "23232324", name: "Ella Santos", role: "Technician" },
-  ];
+  const [staffList, setStaffList] = useState<Array<any>>([]);
+  const [loading, setLoading] = useState(false);
+
+  // Add staff form
+  const [showAdd, setShowAdd] = useState(false);
+  const [fullName, setFullName] = useState("");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [role, setRole] = useState("Dispatcher");
+
+  const baseUrl = Platform.OS === 'android' ? 'http://10.0.2.2:3001' : 'http://localhost:3001';
+
+  useEffect(() => {
+    fetchStaff();
+  }, []);
+
+  const fetchStaff = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${baseUrl}/api/admin/staff`, { method: 'GET', credentials: 'include' });
+      if (!res.ok) {
+        setStaffList([]);
+        return;
+      }
+      const data = await res.json();
+      setStaffList(data || []);
+    } catch (e) {
+      setStaffList([]);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const filteredStaff =
     filterRole === "All"
-      ? staffList.filter((s) =>
-          s.name.toLowerCase().includes(searchQuery.toLowerCase())
-        )
-      : staffList.filter(
-          (s) =>
-            s.role === filterRole &&
-            s.name.toLowerCase().includes(searchQuery.toLowerCase())
-        );
+      ? staffList.filter((s) => s.full_name.toLowerCase().includes(searchQuery.toLowerCase()))
+      : staffList.filter((s) => s.role === filterRole && s.full_name.toLowerCase().includes(searchQuery.toLowerCase()));
+
+  const submitAdd = async () => {
+    if (!fullName || !password) return alert('Name and password required');
+    const nameTrim = fullName.trim();
+    const passTrim = password.trim();
+    if (!nameTrim || !passTrim) return alert('Name and password required');
+    try {
+      const res = await fetch(`${baseUrl}/api/admin/staff`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ full_name: nameTrim, username: username || undefined, password: passTrim, role }),
+      });
+      if (!res.ok) {
+        const t = await res.text();
+        alert('Failed: ' + t);
+        return;
+      }
+      await fetchStaff();
+      setShowAdd(false);
+      setFullName(''); setUsername(''); setPassword(''); setRole('Dispatcher');
+    } catch (e) {
+      alert('Error creating staff');
+    }
+  };
 
   return (
     <ScrollView style={styles.container}>
@@ -50,7 +96,7 @@ export default function StaffManagement() {
       {/* Table of Staff */}
       <Text style={styles.sectionTitle}>Table of Staff</Text>
 
-      <View style={styles.searchRow}>
+  <View style={styles.searchRow}>
         <View style={styles.searchContainer}>
           <MaterialIcons name="search" size={20} color="#4B4B4B" />
           <TextInput
@@ -62,11 +108,29 @@ export default function StaffManagement() {
           />
         </View>
 
-        <TouchableOpacity style={styles.filterButton}>
-          <Text style={styles.filterButtonText}>Filter by Role ({filterRole})</Text>
-          <MaterialIcons name="arrow-drop-down" size={22} color="#374728" />
+        <TouchableOpacity style={styles.filterButton} onPress={() => setShowAdd(!showAdd)}>
+          <Text style={styles.filterButtonText}>{showAdd ? 'Cancel' : 'Add Staff to Roster'}</Text>
+          <MaterialIcons name={showAdd ? 'close' : 'add'} size={22} color="#374728" />
         </TouchableOpacity>
       </View>
+
+      {showAdd && (
+        <View style={[styles.tableContainer, { marginBottom: 12 }]}>
+          <Text style={styles.tableTitle}>Add Staff</Text>
+          <TextInput style={styles.formInput} placeholder="Full name" value={fullName} onChangeText={setFullName} />
+          <TextInput style={styles.formInput} placeholder="Username (optional)" value={username} onChangeText={setUsername} />
+          <TextInput style={styles.formInput} placeholder="Password" secureTextEntry value={password} onChangeText={setPassword} />
+          <View style={{ flexDirection: 'row', gap: 8, marginTop: 8 }}>
+            <TouchableOpacity style={[styles.roleButton, role === 'Dispatcher' ? styles.roleButtonActive : {}]} onPress={() => setRole('Dispatcher')}><Text style={role === 'Dispatcher' ? styles.roleButtonTextActive : {}}>Dispatcher</Text></TouchableOpacity>
+            <TouchableOpacity style={[styles.roleButton, role === 'Cashier' ? styles.roleButtonActive : {}]} onPress={() => setRole('Cashier')}><Text style={role === 'Cashier' ? styles.roleButtonTextActive : {}}>Cashier</Text></TouchableOpacity>
+            <TouchableOpacity style={[styles.roleButton, role === 'BallHandler' ? styles.roleButtonActive : {}]} onPress={() => setRole('BallHandler')}><Text style={role === 'BallHandler' ? styles.roleButtonTextActive : {}}>BallHandler</Text></TouchableOpacity>
+            <TouchableOpacity style={[styles.roleButton, role === 'Serviceman' ? styles.roleButtonActive : {}]} onPress={() => setRole('Serviceman')}><Text style={role === 'Serviceman' ? styles.roleButtonTextActive : {}}>Serviceman</Text></TouchableOpacity>
+          </View>
+          <TouchableOpacity style={[styles.addButton, { marginTop: 10 }]} onPress={submitAdd}>
+            <Text style={styles.addButtonText}>Create Staff</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {/* Current Staff Roster Table */}
       <View style={styles.tableContainer}>
@@ -82,8 +146,8 @@ export default function StaffManagement() {
 
         {/* Rows */}
         {filteredStaff.map((staff, i) => (
-          <View key={i} style={styles.tableRow}>
-            <Text style={[styles.cellText, { flex: 2 }]}>{staff.name}</Text>
+          <View key={staff.id ?? i} style={styles.tableRow}>
+            <Text style={[styles.cellText, { flex: 2 }]}>{staff.full_name}</Text>
             <Text style={[styles.cellText, { flex: 2 }]}>{staff.role}</Text>
             <Text style={[styles.cellText, { flex: 2 }]}>{staff.id}</Text>
             <View style={[styles.cellActions, { flex: 2 }]}>
@@ -99,7 +163,7 @@ export default function StaffManagement() {
       </View>
 
       {/* Add Button */}
-      <TouchableOpacity style={styles.addButton}>
+      <TouchableOpacity style={styles.addButton} onPress={() => setShowAdd(!showAdd)}>
         <Text style={styles.addButtonText}>Add Staff to Roster</Text>
         <MaterialIcons name="add" size={20} color="#374728" />
       </TouchableOpacity>
@@ -270,4 +334,27 @@ const styles = StyleSheet.create({
     fontSize: 14,
     marginRight: 4,
   },
+  formInput: {
+    backgroundColor: '#fff',
+    borderRadius: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    marginTop: 8,
+  },
+  roleButton: {
+    backgroundColor: '#EEE',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+  }
+  ,
+  roleButtonActive: {
+    backgroundColor: '#C9DABF',
+    borderWidth: 1,
+    borderColor: '#374728'
+  },
+  roleButtonTextActive: {
+    color: '#12411A',
+    fontWeight: '700'
+  }
 });

@@ -11,6 +11,7 @@ import { PrismaModule } from './common/prisma/prisma.module';
 // import { MeModule } from './modules/me/me.module';
 // import { EmailModule } from './modules/email/email.module';
 import { ConfigModule } from '@nestjs/config';
+import { AdminModule } from './modules/admin/admin.module';
 // import { BusinessModule } from './modules/business/business.module';
 
 @Module({
@@ -18,6 +19,7 @@ import { ConfigModule } from '@nestjs/config';
     PrismaModule,
     ConfigModule.forRoot({ isGlobal: true }),
     AuthModule,
+    AdminModule,
   ],
   controllers: [AppController],
   providers: [

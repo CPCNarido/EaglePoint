@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { View, Text, TouchableOpacity, ScrollView, Alert, Platform, Modal, StyleSheet } from "react-native";
 import { tw } from 'react-native-tailwindcss';
 import { useRouter } from "expo-router";
@@ -35,11 +35,49 @@ export default function AdminDashboard() {
   };
 
   const getBayStatus = (num: number) => {
+    // fallback static mapping (kept for immediate visuals)
     if ([4, 9, 12, 18, 32, 40].includes(num)) return { color: "#C62828" }; // Maintenance
     if ([5, 13, 26, 34, 36].includes(num)) return { color: "#BF930E" }; // Open Session
     if ([8, 21, 22, 35].includes(num)) return { color: "#A3784E" }; // Assigned
     return { color: "#2E7D32" }; // Available
   };
+
+  // State from server
+  const [overview, setOverview] = useState<any>(null);
+  const [loadingOverview, setLoadingOverview] = useState(false);
+
+  const getColorFromStatus = (status: string) => {
+    switch (status) {
+      case 'Maintenance':
+        return '#C62828';
+      case 'Occupied':
+        return '#A3784E';
+      case 'Open':
+      case 'OpenTime':
+        return '#BF930E';
+      case 'Available':
+      default:
+        return '#2E7D32';
+    }
+  };
+
+  useEffect(() => {
+    const fetchOverview = async () => {
+      setLoadingOverview(true);
+      try {
+        const baseUrl = Platform.OS === 'android' ? 'http://10.0.2.2:3001' : 'http://localhost:3001';
+        const res = await fetch(`${baseUrl}/api/admin/overview`, { method: 'GET', credentials: 'include' });
+        if (!res.ok) return setOverview(null);
+        const data = await res.json();
+        setOverview(data);
+      } catch (e) {
+        setOverview(null);
+      } finally {
+        setLoadingOverview(false);
+      }
+    };
+    fetchOverview();
+  }, []);
 
   const Legend: React.FC<{ color: string; label: string }> = ({ color, label }) => (
     <View style={styles.legendItem}>
@@ -70,26 +108,42 @@ export default function AdminDashboard() {
               <View style={styles.overviewContainer}>
                 <OverviewCard
                   title="Total Revenue (Today)"
-                  value="₱100,000"
-                  subtitle="▲ 12.5% vs Last Period"
+                  value={overview ? `₱${overview.totalRevenueToday}` : '—'}
+                  subtitle="Compared to previous period"
                   color="#2E7D32"
                 />
                 <OverviewCard
-                  title="Active Players Today"
-                  value="48"
-                  subtitle="6 Bays Currently Playing"
+                  title="Available Bays"
+                  value={overview ? String(overview.availableBays) : '—'}
+                  subtitle={overview ? `${overview.availableBays} / ${overview.totalBays} available` : ''}
                   color="#558B2F"
                 />
                 <OverviewCard
-                  title="Staff on Duty Today"
-                  value="20 / 30"
-                  subtitle="5 Staff are Absent Today"
+                  title="Staff on Duty"
+                  value={overview ? String(overview.staffOnDuty) : '—'}
+                  subtitle="Total staff"
                   color="#C62828"
                 />
                 <OverviewCard
                   title="Next Tee Time"
-                  value="10:30 AM"
-                  subtitle="Group 3 Waiting in Queue"
+                  value={(() => {
+                    if (!overview || !overview.nextTeeTime) return '—';
+                    if (overview.nextTeeTime === 'Bay Ready') return 'Bay Ready';
+                    try {
+                      return new Date(overview.nextTeeTime).toLocaleTimeString();
+                    } catch (e) {
+                      return String(overview.nextTeeTime);
+                    }
+                  })()}
+                  subtitle={(() => {
+                    if (!overview || !overview.nextTeeTime) return '';
+                    if (overview.nextTeeTime === 'Bay Ready') return '';
+                    try {
+                      return new Date(overview.nextTeeTime).toLocaleDateString();
+                    } catch (e) {
+                      return '';
+                    }
+                  })()}
                   color="#6D4C41"
                 />
               </View>
@@ -97,14 +151,23 @@ export default function AdminDashboard() {
               {/* Real-Time Bay Overview */}
               <Text style={styles.sectionTitle}>Real-Time Bay Overview</Text>
               <View style={styles.bayContainer}>
-                {Array.from({ length: 45 }).map((_, i) => {
-                  const status = getBayStatus(i + 1);
-                  return (
-                    <View key={i} style={[styles.bayBox, { borderColor: status.color }]}>
-                      <Text style={[styles.bayText, { color: status.color }]}>{i + 1}</Text>
+                {overview && overview.bays && overview.bays.length > 0 ? (
+                  overview.bays.map((b: any, idx: number) => (
+                    <View key={b.bay_id ?? idx} style={[styles.bayBox, { borderColor: getColorFromStatus(b.status) }]}>
+                      <Text style={[styles.bayText, { color: getColorFromStatus(b.status) }]}>{b.bay_number ?? b.bay_id}</Text>
                     </View>
-                  );
-                })}
+                  ))
+                ) : (
+                  // fallback static grid up to 45
+                  Array.from({ length: 45 }).map((_, i) => {
+                    const status = getBayStatus(i + 1);
+                    return (
+                      <View key={i} style={[styles.bayBox, { borderColor: status.color }]}>
+                        <Text style={[styles.bayText, { color: status.color }]}>{i + 1}</Text>
+                      </View>
+                    );
+                  })
+                )}
               </View>
 
               <View style={styles.legendContainer}>
