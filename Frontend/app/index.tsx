@@ -16,6 +16,7 @@ import {
 import { useRouter } from "expo-router";
 import { tw } from "react-native-tailwindcss";
 import auth from './lib/auth';
+import { useSettings } from './lib/SettingsProvider';
 
 const Login: React.FC = () => {
   const [email, setEmail] = useState("");
@@ -130,7 +131,7 @@ const Login: React.FC = () => {
           />
           <Text style={[tw.text2xl, tw.fontBold, tw.textCenter]}>STAFF LOGIN</Text>
           <Text style={[tw.textCenter, tw.textGray500, tw.fontMedium, tw.mB10]}>
-            Welcome to Eagle Point Management System
+            Welcome to {useSettings().siteName} Management System
           </Text>
 
           <View style={tw.mB4}>
@@ -139,14 +140,14 @@ const Login: React.FC = () => {
             </Text>
             <TextInput
               style={[
-                tw.wFull,
-                tw.pX5,
-                tw.pY4,
-                tw.border,
-                tw.rounded,
-                tw.mB2,
-                { fontSize: isSmallScreen ? 14 : 16 },
-              ]}
+                  tw.wFull,
+                  tw.pX5,
+                  tw.pY4,
+                  tw.border,
+                  tw.rounded,
+                  tw.mB2,
+                  { fontSize: isSmallScreen ? 14 : 16 },
+                ]}
               value={email}
               onChangeText={setEmail}
               placeholder="Enter your EmployeeID or Username"

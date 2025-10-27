@@ -12,6 +12,7 @@ import {
 import { useRouter } from "expo-router";
 import { MaterialIcons as Icon } from "@expo/vector-icons";
 import auth from '../../lib/auth';
+import { useSettings } from '../../lib/SettingsProvider';
 
 type SidebarButtonProps = {
   icon: string;
@@ -28,6 +29,7 @@ type OverviewItem = {
 };
 
 export default function CashierLayout() {
+  const settings = useSettings();
   const [activeTab, setActiveTab] = useState<string>("Dashboard");
   const [logoutModalVisible, setLogoutModalVisible] = useState<boolean>(false);
   const router = useRouter();
@@ -68,7 +70,7 @@ export default function CashierLayout() {
       {/* Sidebar */}
       <View style={styles.sidebar}>
         <View>
-          <Text style={styles.logoTitle}>Eagle Point{"\n"}CASHIER</Text>
+          <Text style={styles.logoTitle}>{settings.siteName}{"\n"}CASHIER</Text>
 
           {/* Navigation Buttons */}
           <View style={styles.navContainer}>
@@ -164,7 +166,10 @@ const SidebarButton: React.FC<SidebarButtonProps> = ({
 );
 
 /* ----------------------------- Dashboard Tab ----------------------------- */
-const DashboardContent = () => (
+const DashboardContent = () => {
+  const settings = useSettings();
+  const totalBays = settings.totalAvailableBays ?? 45;
+  return (
   <ScrollView style={styles.scrollArea}>
     <Text style={styles.title}>Dashboard</Text>
 
@@ -178,7 +183,7 @@ const DashboardContent = () => (
     <View style={styles.quickOverview}>
       <OverviewCard
         title="Total Revenue (Today)"
-        value="₱100,000"
+        value={`${useSettings().currencySymbol}100,000`}
         subtitle="▲ 12.5% vs Last Period"
         color="#2E7D32"
       />
@@ -205,7 +210,7 @@ const DashboardContent = () => (
     {/* Real-Time Bay Overview */}
     <Text style={styles.sectionTitle}>Real-Time Bay Overview</Text>
     <View style={styles.bayContainer}>
-      {Array.from({ length: 45 }).map((_, i) => {
+      {Array.from({ length: totalBays }).map((_, i) => {
         const status = getBayStatus(i + 1);
         return (
           <View key={i} style={[styles.bayBox, { borderColor: status.color }]}>
@@ -222,7 +227,8 @@ const DashboardContent = () => (
       <Legend color="#C62828" label="Maintenance" />
     </View>
   </ScrollView>
-);
+  );
+};
 
 const getBayStatus = (num: number) => {
   if ([4, 9, 12, 18, 32, 40].includes(num)) return { color: "#C62828" }; // Maintenance

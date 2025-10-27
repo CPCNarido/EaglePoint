@@ -4,8 +4,10 @@ import { tw } from 'react-native-tailwindcss';
 import { useRouter } from "expo-router";
 import { MaterialIcons } from "@expo/vector-icons";
 import auth from '../../lib/auth';
+import { useSettings } from '../../lib/SettingsProvider';
 import StaffManagement from "./Tabs/StaffManagement";
 import BayManagement from "./Tabs/BayManagement";
+import SystemSettings from "./Tabs/SystemSettingsTab";
 
 
 type OverviewItem = { title: string; value: string; subtitle: string; color: string };
@@ -48,6 +50,9 @@ export default function AdminDashboard() {
   // admin info
   const [adminName, setAdminName] = useState<string>('ADMIN');
   const [adminId, setAdminId] = useState<string>('');
+  const settings = useSettings();
+  const prevTotalRef = React.useRef<number | null>(null);
+  const [highlightedBays, setHighlightedBays] = useState<number[]>([]);
 
   const getColorFromStatus = (status: string) => {
     switch (status) {
@@ -79,7 +84,19 @@ export default function AdminDashboard() {
         setLoadingOverview(false);
       }
     };
+    // initial fetch
     fetchOverview();
+
+    // Poll every 5 seconds so dashboard reflects DB changes without manual refresh
+    const interval = setInterval(() => {
+      fetchOverview();
+    }, 5000);
+
+    // Listen for explicit update events (emitted by other components after mutations)
+    const onOverviewUpdated = () => fetchOverview();
+    try {
+      if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('overview:updated', onOverviewUpdated as EventListener);
+    } catch (e) {}
     // fetch admin identity for sidebar
     const fetchAdmin = async () => {
       try {
@@ -87,17 +104,41 @@ export default function AdminDashboard() {
         const r = await fetch(`${baseUrl}/api/admin/me`, { method: 'GET', credentials: 'include' });
         if (!r.ok) return;
         const d = await r.json();
-        const name = d?.full_name || d?.name || d?.username || 'ADMIN';
-  const idVal = d?.employee_id || d?.employeeId || d?.staff_id || d?.staffId || d?.id || d?.adminId || '';
-  const id = idVal ? String(idVal) : '';
-        setAdminName(name);
-        setAdminId(id);
+    const name = d?.full_name || d?.name || d?.username || 'ADMIN';
+    // Prefer the database employee id. If not present, allow camelCase employeeId as a fallback.
+    // Do NOT fall back to internal ids — the sidebar must show the employee id from the DB.
+    const empId = d?.employee_id ?? d?.employeeId ?? null;
+    const id = empId != null ? String(empId) : '';
+    setAdminName(name);
+    setAdminId(id);
       } catch (e) {
         // ignore
       }
     };
     fetchAdmin();
+
+    return () => {
+      clearInterval(interval);
+      try {
+        if (typeof window !== 'undefined' && window.removeEventListener) window.removeEventListener('overview:updated', onOverviewUpdated as EventListener);
+      } catch (e) {}
+    };
   }, []);
+
+  // Watch settings.totalAvailableBays and highlight newly added bay numbers when it increases
+  useEffect(() => {
+    const current = Number(settings.totalAvailableBays ?? 45);
+    const prev = prevTotalRef.current ?? current;
+    if (current > prev) {
+      const newNumbers: number[] = [];
+      for (let i = prev + 1; i <= current; i++) newNumbers.push(i);
+      setHighlightedBays(newNumbers);
+      // clear after 4s
+      const t = setTimeout(() => setHighlightedBays([]), 4000);
+      return () => clearTimeout(t);
+    }
+    prevTotalRef.current = current;
+  }, [settings.totalAvailableBays]);
 
   const Legend: React.FC<{ color: string; label: string }> = ({ color, label }) => (
     <View style={styles.legendItem}>
@@ -128,16 +169,39 @@ export default function AdminDashboard() {
               <View style={styles.overviewContainer}>
                 <OverviewCard
                   title="Total Revenue (Today)"
-                  value={overview ? `₱${overview.totalRevenueToday}` : '—'}
+                  value={overview ? `${settings.currencySymbol}${overview.totalRevenueToday}` : '—'}
                   subtitle="Compared to previous period"
                   color="#2E7D32"
                 />
-                <OverviewCard
-                  title="Available Bays"
-                  value={overview ? String(overview.availableBays) : '—'}
-                  subtitle={overview ? `${overview.availableBays} / ${overview.totalBays} available` : ''}
-                  color="#558B2F"
-                />
+                {(() => {
+                  if (!overview) {
+                    return <OverviewCard title="Available Bays" value={'—'} subtitle={''} color="#558B2F" />;
+                  }
+
+                  const total = Number(settings.totalAvailableBays ?? overview.totalBays ?? 45);
+
+                  // Prefer server-provided availableBays when present.
+                  let avail: number | null = typeof overview.availableBays === 'number' ? overview.availableBays : null;
+
+                  // If server didn't provide a pre-computed availableBays, derive it from bay rows.
+                  if (avail === null) {
+                    const bays = overview.bays ?? [];
+                    const occupied = bays.filter((b: any) => {
+                      const st = String(b?.status ?? b?.originalStatus ?? '').trim();
+                      return ['Occupied', 'Assigned', 'Open', 'OpenTime', 'Maintenance', 'SpecialUse'].includes(st);
+                    }).length;
+                    avail = Math.max(0, total - occupied);
+                  }
+
+                  return (
+                    <OverviewCard
+                      title="Available Bays"
+                      value={String(avail)}
+                      subtitle={`${avail} / ${total} available`}
+                      color="#558B2F"
+                    />
+                  );
+                })()}
                 <OverviewCard
                   title="Staff on Duty"
                   value={overview ? String(overview.staffOnDuty) : '—'}
@@ -172,18 +236,34 @@ export default function AdminDashboard() {
               <Text style={styles.sectionTitle}>Real-Time Bay Overview</Text>
               <View style={styles.bayContainer}>
                 {overview && overview.bays && overview.bays.length > 0 ? (
-                  overview.bays.map((b: any, idx: number) => (
-                    <View key={b.bay_id ?? idx} style={[styles.bayBox, { borderColor: getColorFromStatus(b.status) }]}>
-                      <Text style={[styles.bayText, { color: getColorFromStatus(b.status) }]}>{b.bay_number ?? b.bay_id}</Text>
-                    </View>
-                  ))
-                ) : (
-                  // fallback static grid up to 45
-                  Array.from({ length: 45 }).map((_, i) => {
-                    const status = getBayStatus(i + 1);
+                  // Render bay grid 1..N in numerical order, using overview data when available
+                  Array.from({ length: settings.totalAvailableBays ?? 45 }).map((_, i) => {
+                    const num = i + 1;
+                    const numStr = String(num);
+                    const b = overview.bays.find((x: any) => String(x.bay_number) === numStr || String(x.bay_id) === numStr);
+                    const status = b?.status ?? null;
+                    const original = b?.originalStatus ?? null;
+                    const isHighlighted = highlightedBays.includes(num);
                     return (
-                      <View key={i} style={[styles.bayBox, { borderColor: status.color }]}>
-                        <Text style={[styles.bayText, { color: status.color }]}>{i + 1}</Text>
+                      <View key={b?.bay_id ?? `bay-${num}`} style={[styles.bayBox, { borderColor: getColorFromStatus(status ?? ''), position: 'relative', ...(isHighlighted ? { borderWidth: 3, shadowColor: '#00BFA5', shadowOpacity: 0.3 } : {}) }]}>
+                        <Text style={[styles.bayText, { color: getColorFromStatus(status ?? '') }]}>{num}</Text>
+                        {original === 'SpecialUse' && (
+                          <View style={styles.reservedBadge}>
+                            <Text style={styles.reservedBadgeText}>Reserved</Text>
+                          </View>
+                        )}
+                      </View>
+                    );
+                  })
+                ) : (
+                  // fallback static grid up to N
+                  Array.from({ length: settings.totalAvailableBays ?? 45 }).map((_, i) => {
+                    const num = i + 1;
+                    const status = getBayStatus(num);
+                    const isHighlighted = highlightedBays.includes(num);
+                    return (
+                      <View key={i} style={[styles.bayBox, { borderColor: status.color, ...(isHighlighted ? { borderWidth: 3, shadowColor: '#00BFA5', shadowOpacity: 0.3 } : {}) }]}>
+                        <Text style={[styles.bayText, { color: status.color }]}>{num}</Text>
                       </View>
                     );
                   })
@@ -205,6 +285,9 @@ export default function AdminDashboard() {
       case "Bay Management":
       return <BayManagement />;
 
+  case "System Settings":
+  return <SystemSettings />;
+
       default:
         return (
           <View style={styles.contentContainer}>
@@ -221,16 +304,17 @@ export default function AdminDashboard() {
     { name: "Dashboard", icon: "dashboard" },
     { name: "Staff Management", icon: "group" },
     { name: "Bay Management", icon: "golf-course" },
-    { name: "Reports", icon: "bar-chart" },
-    { name: "Settings", icon: "settings" },
-    { name: "Logs", icon: "history" },
+    { name: "Report & Analytics", icon: "bar-chart" },
+    { name: "Team Chats", icon: "chat" },
+    { name: "Audit Logs", icon: "history" },
+    { name: "System Settings", icon: "settings" },
   ];
 
   return (
     <View style={[tw.flex1, tw.flexRow, { backgroundColor: '#F6F6F2' }]}>
       {/* Sidebar */}
       <View style={[tw.w64, tw.p5, { backgroundColor: '#1E2B20', justifyContent: 'space-between' }]}>
-  <Text style={[tw.textWhite, tw.fontBold, tw.text2xl, tw.mB10]}>Eagle Point{"\n"}ADMIN</Text>
+  <Text style={[tw.textWhite, tw.fontBold, tw.text2xl, tw.mB10]}>{settings.siteName}{"\n"}ADMIN</Text>
 
         {tabs.map((tab) => (
           <TouchableOpacity
@@ -376,6 +460,8 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: "#F9F9F9",
   },
+  reservedBadge: { position: 'absolute', top: -8, right: -8, backgroundColor: '#7C0A02', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, zIndex: 5 },
+  reservedBadgeText: { color: '#fff', fontSize: 10, fontWeight: '700' },
   bayText: { fontWeight: "bold" },
   legendContainer: {
     flexDirection: "row",

@@ -67,4 +67,54 @@ export class AdminController {
   async ping(@Body() body: any) {
     return { ok: true, received: body };
   }
+
+  @Post('bays/:bayNo/override')
+  async overrideBay(@Param('bayNo') bayNo: string, @Body() body: any) {
+    try {
+      const { action, adminId } = body || {};
+      if (!action || typeof action !== 'string') throw new BadRequestException('Action is required');
+      const res = await this.adminService.overrideBay(bayNo, action, adminId);
+      return res;
+    } catch (e: any) {
+      if (e instanceof BadRequestException) throw e;
+      Logger.error('Failed to override bay', e, 'AdminController');
+      throw new InternalServerErrorException(e && e.message ? e.message : 'Failed to override bay');
+    }
+  }
+
+  // Generic override endpoint (fallback)
+  @Post('override')
+  async overrideGeneric(@Body() body: any) {
+    try {
+      const { bayNo, action, adminId } = body || {};
+      if (!bayNo || !action) throw new BadRequestException('bayNo and action are required');
+      const res = await this.adminService.overrideBay(String(bayNo), action, adminId);
+      return res;
+    } catch (e: any) {
+      if (e instanceof BadRequestException) throw e;
+      Logger.error('Failed to perform generic override', e, 'AdminController');
+      throw new InternalServerErrorException(e && e.message ? e.message : 'Failed to perform override');
+    }
+  }
+
+  @Get('settings')
+  async getSettings() {
+    try {
+      return await this.adminService.getSettings();
+    } catch (e: any) {
+      Logger.error('Failed to get settings', e, 'AdminController');
+      throw new InternalServerErrorException(e && e.message ? e.message : 'Failed getting settings');
+    }
+  }
+
+  @Post('settings')
+  async postSettings(@Body() body: any) {
+    try {
+      return await this.adminService.updateSettings(body || {});
+    } catch (e: any) {
+      Logger.error('Failed to update settings', e, 'AdminController');
+      if (e instanceof BadRequestException) throw e;
+      throw new InternalServerErrorException(e && e.message ? e.message : 'Failed updating settings');
+    }
+  }
 }

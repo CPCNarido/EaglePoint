@@ -170,6 +170,42 @@ model ChatParticipant {
   employee Employee @relation(fields: [employee_id], references: [employee_id])
 }
 
+// Application-level settings persisted by admins (key/value store)
+model SystemSetting {
+  setting_id Int      @id @default(autoincrement())
+  key        String   @unique
+  value      String
+  updated_at DateTime @default(now()) @updatedAt
+}
+
+// Optional single-row site configuration for explicitly-typed site-wide settings
+model SiteConfig {
+  site_id            Int      @id @default(autoincrement())
+  site_name          String   @default("Eagle Point")
+  timezone           String   @default("Asia/Manila")
+  currency_symbol    String   @default("₱")
+  default_language   String   @default("en")
+  enable_reservations Boolean @default(true)
+  updated_at         DateTime @default(now()) @updatedAt
+}
+
+// Typed pricing configuration
+model PricingConfig {
+  pricing_id                  Int      @id @default(autoincrement())
+  timed_session_rate          Decimal  @db.Decimal(10, 2) @default("0.00")
+  open_time_rate              Decimal  @db.Decimal(10, 2) @default("0.00")
+  updated_at                  DateTime @default(now()) @updatedAt
+}
+
+// Typed operational configuration
+model OperationalConfig {
+  operational_id               Int      @id @default(autoincrement())
+  total_available_bays         Int      @default(45)
+  standard_tee_interval_minutes Int     @default(10)
+  ball_bucket_warning_threshold Int     @default(5)
+  updated_at                   DateTime @default(now()) @updatedAt
+}
+
 enum Role {
   Admin
   Cashier

@@ -9,7 +9,7 @@ import {
   Alert,
   Modal,
   Pressable,
-} from "react-native";
+} from "react-native";ChannelMergerNode
 import { MaterialIcons } from "@expo/vector-icons";
 
 export default function StaffManagement() {
@@ -683,11 +683,13 @@ const styles = StyleSheet.create({
   },
   tableHeader: {
     flexDirection: "row",
-    backgroundColor: "#E6EED4",
-    borderRadius: 6,
+    backgroundColor: "#E9F0E4",
+    borderTopLeftRadius: 6,
+    borderTopRightRadius: 6,
     paddingVertical: 8,
-    paddingHorizontal: 6,
-    marginBottom: 4,
+    borderWidth: 1,
+    borderColor: "#000000ff",
+    // Add a clear bottom border so the header is visually separated from rows
   },
   headerText: {
     fontWeight: "700",
@@ -701,6 +703,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: "#ddd",
     paddingVertical: 10,
+    
   },
   cellText: {
     fontSize: 13,

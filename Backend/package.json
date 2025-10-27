@@ -20,7 +20,8 @@
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "seed": "node scripts/seed-test-accounts.js",
     "seed:data": "node scripts/seed-test-data.js",
-    "seed:bays": "node scripts/seed-bays.js"
+    "seed:bays": "node scripts/seed-bays.js",
+    "seed:large": "node scripts/seed-large.js"
   },
   
   "prisma": {

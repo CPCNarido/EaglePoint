@@ -12,6 +12,7 @@ import {
 import { useRouter } from "expo-router";
 import { MaterialIcons } from "@expo/vector-icons";
 import auth from '../../lib/auth';
+import { useSettings } from '../../lib/SettingsProvider';
 
 import DashboardTab from "./Tabs/DashboardTab";
 import BayAssignmentTab from "./Tabs/BayAssignmentTab";
@@ -22,6 +23,7 @@ export default function DispatcherDashboard() {
   const [activeTab, setActiveTab] = useState("Dashboard");
   const [logoutModalVisible, setLogoutModalVisible] = useState(false);
   const router = useRouter();
+  const settings = useSettings();
 
   const handleLogout = () => {
     if (Platform.OS === "web") {
@@ -66,7 +68,7 @@ export default function DispatcherDashboard() {
     <View style={styles.container}>
       {/* Sidebar */}
       <View style={styles.sidebar}>
-        <Text style={styles.logo}>Eagle Point{"\n"}Dispatcher</Text>
+        <Text style={styles.logo}>{settings.siteName}{"\n"}Dispatcher</Text>
 
         {tabs.map((tab) => (
           <TouchableOpacity
