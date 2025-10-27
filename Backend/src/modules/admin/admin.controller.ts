@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, InternalServerErrorException, Logger, BadRequestException } from '@nestjs/common';
+import { Controller, Get, Post, Body, InternalServerErrorException, Logger, BadRequestException, Put, Param, Delete } from '@nestjs/common';
 import { AdminService } from './admin.service';
 import { CreateStaffDto } from './dto/create-staff.dto';
 
@@ -33,6 +33,33 @@ export class AdminController {
       Logger.error('Failed to create staff', e, 'AdminController');
       // Expose error message temporarily for debugging
       throw new InternalServerErrorException(e && e.message ? e.message : 'Failed creating staff');
+    }
+  }
+
+  @Put('staff/:id')
+  async updateStaff(@Param('id') idStr: string, @Body() dto: Partial<CreateStaffDto>) {
+    try {
+      const id = Number(idStr);
+      if (Number.isNaN(id)) throw new BadRequestException('Invalid id');
+      const res = await this.adminService.updateStaff(id, dto);
+      return res;
+    } catch (e: any) {
+      if (e instanceof BadRequestException) throw e;
+      Logger.error('Failed to update staff', e, 'AdminController');
+      throw new InternalServerErrorException(e && e.message ? e.message : 'Failed updating staff');
+    }
+  }
+
+  @Delete('staff/:id')
+  async deleteStaff(@Param('id') idStr: string) {
+    try {
+      const id = Number(idStr);
+      if (Number.isNaN(id)) throw new BadRequestException('Invalid id');
+      return await this.adminService.deleteStaff(id);
+    } catch (e: any) {
+      if (e instanceof BadRequestException) throw e;
+      Logger.error('Failed to delete staff', e, 'AdminController');
+      throw new InternalServerErrorException(e && e.message ? e.message : 'Failed deleting staff');
     }
   }
 

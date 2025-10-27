@@ -107,4 +107,25 @@ export class AdminService {
     const created = await this.prisma.employee.create({ data: { full_name: dto.full_name, username: dto.username ?? null, password: hashed, role: dto.role } });
     return { id: created.employee_id, full_name: created.full_name, username: created.username, role: created.role };
   }
+
+  async updateStaff(id: number, dto: Partial<CreateStaffDto>) {
+    if (!id) throw new BadRequestException('Invalid id');
+    const data: any = {};
+    if (dto.full_name) data.full_name = dto.full_name;
+    if (dto.username !== undefined) data.username = dto.username ?? null;
+    if (dto.role) data.role = dto.role;
+    if (dto.password) {
+      // hash new password
+      data.password = await bcrypt.hash(dto.password as string, 10);
+    }
+
+    const updated = await this.prisma.employee.update({ where: { employee_id: id }, data });
+    return { id: updated.employee_id, full_name: updated.full_name, username: updated.username, role: updated.role };
+  }
+
+  async deleteStaff(id: number) {
+    if (!id) throw new BadRequestException('Invalid id');
+    await this.prisma.employee.delete({ where: { employee_id: id } });
+    return { ok: true };
+  }
 }
