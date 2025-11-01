@@ -1,14 +1,11 @@
 import {
   Controller,
-  Get,
   Post,
   Body,
-  Patch,
-  Param,
-  Delete,
   UseGuards,
   Req,
   Res,
+  UnauthorizedException,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
@@ -17,9 +14,7 @@ import { User } from '../../common/decorator/user.decorator';
 
 @Controller('auth')
 export class AuthController {
-  constructor(
-    private readonly authService: AuthService,
-  ) {}
+  constructor(private readonly authService: AuthService) {}
 
   @Post('login')
   async login(
@@ -58,10 +53,63 @@ export class AuthController {
         maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
         path: '/',
       });
-    } catch (e) {}
+    } catch (e) {
+      void e;
+    }
 
-    // Return access token in body for the client to store/use
-    return { accessToken: tokens.accessToken, destination };
+    // Also return refreshToken in body so native clients can store it securely.
+    // We still set the HttpOnly cookie for web clients.
+    return {
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      destination,
+    };
+  }
+
+  @Post('refresh')
+  async refreshByToken(
+    @Body() body: { refreshToken?: string },
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    // Accept refresh token in body (mobile) or cookie (web) and return new tokens.
+    let token = body?.refreshToken;
+    if (!token) {
+      try {
+        const cookieHeader = req.headers?.cookie || '';
+        const match = cookieHeader
+          .split(';')
+          .map((s) => s.trim())
+          .find((c) => c.startsWith('refreshToken='));
+        if (match) token = decodeURIComponent(match.split('=')[1] || '');
+      } catch (e) {
+        void e;
+      }
+    }
+
+    if (!token) throw new UnauthorizedException('Missing refresh token');
+
+    const tokens = await this.authService.refreshWithToken(token);
+
+    // Set refresh cookie for web flows
+    try {
+      const secure = process.env.NODE_ENV === 'production';
+      res.cookie('refreshToken', tokens.refreshToken, {
+        httpOnly: true,
+        secure,
+        sameSite: 'lax',
+        maxAge: 30 * 24 * 60 * 60 * 1000,
+        path: '/',
+      });
+    } catch (e) {
+      void e;
+    }
+
+    // Return access + refresh tokens in body so mobile clients can store the refresh token.
+    return {
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+    };
   }
 
   @UseGuards(AuthGuard)
@@ -72,7 +120,7 @@ export class AuthController {
 
   @UseGuards(AuthGuard)
   @Post('logout')
-  async logout(
+  logout(
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
     @Body() body: { refreshToken?: string },
@@ -84,23 +132,30 @@ export class AuthController {
       try {
         const cookieHeader = req.headers?.cookie || '';
         // simple cookie parse
-        const match = cookieHeader.split(';').map((s) => s.trim()).find((c) => c.startsWith('refreshToken='));
+        const match = cookieHeader
+          .split(';')
+          .map((s) => s.trim())
+          .find((c) => c.startsWith('refreshToken='));
         if (match) {
           token = decodeURIComponent(match.split('=')[1] || '');
         }
-      } catch (e) {}
+      } catch (e) {
+        void e;
+      }
     }
 
     try {
-      await this.authService.revokeRefreshToken(userId, token);
+      this.authService.revokeRefreshToken(userId, token);
     } catch (e) {
-      // ignore errors during logout
+      void e;
     }
 
     // Clear cookie
     try {
       res.clearCookie('refreshToken', { path: '/' });
-    } catch (e) {}
+    } catch (e) {
+      void e;
+    }
 
     return { ok: true };
   }

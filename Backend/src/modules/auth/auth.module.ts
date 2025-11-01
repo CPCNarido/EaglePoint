@@ -8,7 +8,10 @@ import { JwtModule } from '@nestjs/jwt';
       global: true,
       // Use environment secrets when present; fall back to a development secret to avoid
       // runtime crashes when secrets are not set. DO NOT use the fallback in production.
-      secret: process.env.JWT_ACCESS_SECRET ?? process.env.JWT_SECRET ?? 'dev-access-secret',
+      secret:
+        process.env.JWT_ACCESS_SECRET ??
+        process.env.JWT_SECRET ??
+        'dev-access-secret',
       signOptions: { expiresIn: '1h' },
     }),
     // UsersModule and EmailModule removed for minimal auth-only setup

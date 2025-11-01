@@ -16,12 +16,16 @@ export class AuthService {
   async validateUser(login: string, password: string) {
     // Using Employee model as the user table in this schema.
     // Accept either username or numeric employee_id (frontend allows EmployeeID or Username).
-    let user = await this.prisma.employee.findUnique({ where: { username: login } });
+    let user = await this.prisma.employee.findUnique({
+      where: { username: login },
+    });
     if (!user) {
       // If login looks like an integer, try employee_id lookup
       const maybeId = parseInt(login, 10);
       if (!Number.isNaN(maybeId)) {
-        user = await this.prisma.employee.findUnique({ where: { employee_id: maybeId } });
+        user = await this.prisma.employee.findUnique({
+          where: { employee_id: maybeId },
+        });
       }
     }
     if (user) {
@@ -34,13 +38,19 @@ export class AuthService {
   }
 
   // Generate stateless access + refresh JWTs (no DB persistence in minimal setup)
-  async generateTokens(userId: number, role: string) {
+  generateTokens(userId: number, role: string) {
     const payload = { sub: userId, role };
 
     const accessSecret =
-      this.config.get<string>('JWT_ACCESS_SECRET') ?? process.env.JWT_ACCESS_SECRET ?? process.env.JWT_SECRET ?? 'dev-access-secret';
+      this.config.get<string>('JWT_ACCESS_SECRET') ??
+      process.env.JWT_ACCESS_SECRET ??
+      process.env.JWT_SECRET ??
+      'dev-access-secret';
     const refreshSecret =
-      this.config.get<string>('JWT_REFRESH_SECRET') ?? process.env.JWT_REFRESH_SECRET ?? process.env.JWT_SECRET ?? 'dev-refresh-secret';
+      this.config.get<string>('JWT_REFRESH_SECRET') ??
+      process.env.JWT_REFRESH_SECRET ??
+      process.env.JWT_SECRET ??
+      'dev-refresh-secret';
 
     const accessToken = this.jwtService.sign(payload, {
       secret: accessSecret,
@@ -57,44 +67,99 @@ export class AuthService {
 
   // Verify incoming refresh token and issue new tokens if valid
   async refreshTokens(userId: number, refreshToken: string) {
-    const user = await this.prisma.employee.findUnique({ where: { employee_id: userId } });
+    const user = await this.prisma.employee.findUnique({
+      where: { employee_id: userId },
+    });
     if (!user) throw new UnauthorizedException('User not found');
 
     try {
       const refreshSecret =
-        this.config.get<string>('JWT_REFRESH_SECRET') ?? process.env.JWT_REFRESH_SECRET ?? process.env.JWT_SECRET ?? 'dev-refresh-secret';
-      const payload = this.jwtService.verify<{ sub: number; role: string }>(refreshToken, {
-        secret: refreshSecret,
-      });
+        this.config.get<string>('JWT_REFRESH_SECRET') ??
+        process.env.JWT_REFRESH_SECRET ??
+        process.env.JWT_SECRET ??
+        'dev-refresh-secret';
+      const payload = this.jwtService.verify<{ sub: number; role: string }>(
+        refreshToken,
+        {
+          secret: refreshSecret,
+        },
+      );
       if (!payload || payload.sub !== userId) {
         throw new UnauthorizedException('Invalid refresh token');
       }
     } catch (err) {
+      void err;
       throw new UnauthorizedException('Invalid refresh token');
     }
 
-    const { accessToken, refreshToken: newRefresh } = await this.generateTokens(
+    const { accessToken, refreshToken: newRefresh } = this.generateTokens(
       userId,
       user.role as unknown as string,
     );
     return { accessToken, refreshToken: newRefresh };
   }
 
+  // Verify a refresh token directly (no access token required) and return new tokens.
+  async refreshWithToken(refreshToken: string) {
+    try {
+      const refreshSecret =
+        this.config.get<string>('JWT_REFRESH_SECRET') ??
+        process.env.JWT_REFRESH_SECRET ??
+        process.env.JWT_SECRET ??
+        'dev-refresh-secret';
+      const payload = this.jwtService.verify<{ sub: number; role: string }>(
+        refreshToken,
+        { secret: refreshSecret },
+      );
+      if (!payload || !payload.sub)
+        throw new UnauthorizedException('Invalid refresh token');
+      const userId = payload.sub;
+      const user = await this.prisma.employee.findUnique({
+        where: { employee_id: userId },
+      });
+      if (!user) throw new UnauthorizedException('User not found');
+
+      const tokens = this.generateTokens(
+        userId,
+        user.role as unknown as string,
+      );
+      return tokens;
+    } catch (err) {
+      void err;
+      throw new UnauthorizedException('Invalid refresh token');
+    }
+  }
+
   async signIn(
     login: string,
     password: string,
-  ): Promise<{ accessToken: string; refreshToken: string; role: string; userId: number }> {
+  ): Promise<{
+    accessToken: string;
+    refreshToken: string;
+    role: string;
+    userId: number;
+  }> {
     const user = await this.validateUser(login, password);
     if (!user) {
       throw new UnauthorizedException('Invalid credentials');
     }
 
-    const tokens = await this.generateTokens(user.employee_id, user.role as unknown as string);
-    return { accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, role: user.role as unknown as string, userId: user.employee_id };
+    const tokens = this.generateTokens(
+      user.employee_id,
+      user.role as unknown as string,
+    );
+    return {
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
+      role: user.role as unknown as string,
+      userId: user.employee_id,
+    };
   }
 
   // Minimal revoke: stateless setup can't reliably revoke issued JWTs without DB; treat as idempotent
-  async revokeRefreshToken(userId: number, refreshToken?: string) {
+  revokeRefreshToken(userId: number, refreshToken?: string) {
+    void userId;
+    void refreshToken;
     return { ok: true };
   }
 }

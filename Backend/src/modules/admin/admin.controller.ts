@@ -1,4 +1,15 @@
-import { Controller, Get, Post, Body, InternalServerErrorException, Logger, BadRequestException, Put, Param, Delete } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  InternalServerErrorException,
+  Logger,
+  BadRequestException,
+  Put,
+  Param,
+  Delete,
+} from '@nestjs/common';
 import { AdminService } from './admin.service';
 import { CreateStaffDto } from './dto/create-staff.dto';
 
@@ -32,12 +43,17 @@ export class AdminController {
       if (e instanceof BadRequestException) throw e;
       Logger.error('Failed to create staff', e, 'AdminController');
       // Expose error message temporarily for debugging
-      throw new InternalServerErrorException(e && e.message ? e.message : 'Failed creating staff');
+      throw new InternalServerErrorException(
+        e && e.message ? e.message : 'Failed creating staff',
+      );
     }
   }
 
   @Put('staff/:id')
-  async updateStaff(@Param('id') idStr: string, @Body() dto: Partial<CreateStaffDto>) {
+  async updateStaff(
+    @Param('id') idStr: string,
+    @Body() dto: Partial<CreateStaffDto>,
+  ) {
     try {
       const id = Number(idStr);
       if (Number.isNaN(id)) throw new BadRequestException('Invalid id');
@@ -46,7 +62,9 @@ export class AdminController {
     } catch (e: any) {
       if (e instanceof BadRequestException) throw e;
       Logger.error('Failed to update staff', e, 'AdminController');
-      throw new InternalServerErrorException(e && e.message ? e.message : 'Failed updating staff');
+      throw new InternalServerErrorException(
+        e && e.message ? e.message : 'Failed updating staff',
+      );
     }
   }
 
@@ -59,12 +77,14 @@ export class AdminController {
     } catch (e: any) {
       if (e instanceof BadRequestException) throw e;
       Logger.error('Failed to delete staff', e, 'AdminController');
-      throw new InternalServerErrorException(e && e.message ? e.message : 'Failed deleting staff');
+      throw new InternalServerErrorException(
+        e && e.message ? e.message : 'Failed deleting staff',
+      );
     }
   }
 
   @Post('ping')
-  async ping(@Body() body: any) {
+  ping(@Body() body: any) {
     return { ok: true, received: body };
   }
 
@@ -72,13 +92,16 @@ export class AdminController {
   async overrideBay(@Param('bayNo') bayNo: string, @Body() body: any) {
     try {
       const { action, adminId } = body || {};
-      if (!action || typeof action !== 'string') throw new BadRequestException('Action is required');
+      if (!action || typeof action !== 'string')
+        throw new BadRequestException('Action is required');
       const res = await this.adminService.overrideBay(bayNo, action, adminId);
       return res;
     } catch (e: any) {
       if (e instanceof BadRequestException) throw e;
       Logger.error('Failed to override bay', e, 'AdminController');
-      throw new InternalServerErrorException(e && e.message ? e.message : 'Failed to override bay');
+      throw new InternalServerErrorException(
+        e && e.message ? e.message : 'Failed to override bay',
+      );
     }
   }
 
@@ -87,13 +110,20 @@ export class AdminController {
   async overrideGeneric(@Body() body: any) {
     try {
       const { bayNo, action, adminId } = body || {};
-      if (!bayNo || !action) throw new BadRequestException('bayNo and action are required');
-      const res = await this.adminService.overrideBay(String(bayNo), action, adminId);
+      if (!bayNo || !action)
+        throw new BadRequestException('bayNo and action are required');
+      const res = await this.adminService.overrideBay(
+        String(bayNo),
+        action,
+        adminId,
+      );
       return res;
     } catch (e: any) {
       if (e instanceof BadRequestException) throw e;
       Logger.error('Failed to perform generic override', e, 'AdminController');
-      throw new InternalServerErrorException(e && e.message ? e.message : 'Failed to perform override');
+      throw new InternalServerErrorException(
+        e && e.message ? e.message : 'Failed to perform override',
+      );
     }
   }
 
@@ -103,7 +133,9 @@ export class AdminController {
       return await this.adminService.getSettings();
     } catch (e: any) {
       Logger.error('Failed to get settings', e, 'AdminController');
-      throw new InternalServerErrorException(e && e.message ? e.message : 'Failed getting settings');
+      throw new InternalServerErrorException(
+        e && e.message ? e.message : 'Failed getting settings',
+      );
     }
   }
 
@@ -114,7 +146,50 @@ export class AdminController {
     } catch (e: any) {
       Logger.error('Failed to update settings', e, 'AdminController');
       if (e instanceof BadRequestException) throw e;
-      throw new InternalServerErrorException(e && e.message ? e.message : 'Failed updating settings');
+      throw new InternalServerErrorException(
+        e && e.message ? e.message : 'Failed updating settings',
+      );
+    }
+  }
+
+  // Reports summary endpoint
+  @Get('reports/summary')
+  async reportsSummary() {
+    try {
+      return await this.adminService.getReportsSummary();
+    } catch (e: any) {
+      Logger.error('Failed to get reports summary', e, 'AdminController');
+      throw new InternalServerErrorException(
+        e && e.message ? e.message : 'Failed getting reports summary',
+      );
+    }
+  }
+
+  // Recent sessions list for reports table
+  @Get('reports/sessions')
+  async reportsSessions() {
+    try {
+      return await this.adminService.getRecentSessions({ limit: 200 });
+    } catch (e: any) {
+      Logger.error('Failed to get recent sessions', e, 'AdminController');
+      throw new InternalServerErrorException(
+        e && e.message ? e.message : 'Failed getting recent sessions',
+      );
+    }
+  }
+
+  // Export report (returns CSV text in body)
+  @Post('reports/export')
+  async exportReport(@Body() body: any) {
+    try {
+      const csv = await this.adminService.exportReport(body || {});
+      // return CSV string in JSON wrapper for simplicity (frontend will download)
+      return { ok: true, csv };
+    } catch (e: any) {
+      Logger.error('Failed to export report', e, 'AdminController');
+      throw new InternalServerErrorException(
+        e && e.message ? e.message : 'Failed exporting report',
+      );
     }
   }
 }
