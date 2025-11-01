@@ -145,11 +145,12 @@ export default function StaffManagement() {
         alert('Failed: ' + t);
         return;
       }
-      // refresh and show acknowledgement popup
-      await fetchStaff();
-      setShowAdd(false);
-      setFullName(''); setUsername(''); setPassword(''); setRole('Dispatcher');
-      openApprovalPopup('Staff have been successfully added!.');
+  // refresh and show acknowledgement popup
+  await fetchStaff();
+  try { if (typeof window !== 'undefined' && window.dispatchEvent) window.dispatchEvent(new Event('overview:updated')); } catch {}
+  setShowAdd(false);
+  setFullName(''); setUsername(''); setPassword(''); setRole('Dispatcher');
+  openApprovalPopup('Staff have been successfully added!.');
     } catch {
       alert('Error creating staff');
     }
@@ -182,8 +183,9 @@ export default function StaffManagement() {
         alert('Failed updating staff: ' + t);
         return;
       }
-      // show approval popup with manual close (X) and 2s auto-close
-      openApprovalPopup('Changes have been successfully made.');
+  // show approval popup with manual close (X) and 2s auto-close
+  openApprovalPopup('Changes have been successfully made.');
+  try { if (typeof window !== 'undefined' && window.dispatchEvent) window.dispatchEvent(new Event('overview:updated')); } catch {}
     } catch {
       alert('Error updating staff');
     }
@@ -220,6 +222,7 @@ export default function StaffManagement() {
     setShowApprovedPopup(false);
     try {
       await fetchStaff();
+      try { if (typeof window !== 'undefined' && window.dispatchEvent) window.dispatchEvent(new Event('overview:updated')); } catch {}
     } catch {
       // ignore fetch errors here
     }
@@ -257,7 +260,8 @@ export default function StaffManagement() {
       // close remove modal then show acknowledgement popup
       setShowRemoveConfirmModal(false);
       setRemoveTarget(null);
-      openApprovalPopup('Staff has been removed successfully.');
+  openApprovalPopup('Staff has been removed successfully.');
+  try { if (typeof window !== 'undefined' && window.dispatchEvent) window.dispatchEvent(new Event('overview:updated')); } catch {}
     } catch {
       Alert.alert('Error', 'Error deleting staff');
     }

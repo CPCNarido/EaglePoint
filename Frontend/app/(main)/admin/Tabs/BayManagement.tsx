@@ -20,6 +20,9 @@ import { useSettings } from '../../../lib/SettingsProvider';
 export default function BayManagement() {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("All");
+  // header info
+  const [adminName, setAdminName] = useState<string>('Admin');
+  const [now, setNow] = useState<Date>(new Date());
 
   // dynamic bays loaded from backend
   const [bays, setBays] = useState<any[]>([]);
@@ -46,6 +49,9 @@ export default function BayManagement() {
   /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(() => {
     fetchOverview();
+    const t = setInterval(() => setNow(new Date()), 1000);
+    fetchAdminInfo();
+    return () => clearInterval(t);
   }, []);
   /* eslint-enable react-hooks/exhaustive-deps */
 
@@ -113,11 +119,23 @@ export default function BayManagement() {
     }
   };
 
+  const fetchAdminInfo = async () => {
+    try {
+      const res = await fetch(`${baseUrl}/api/admin/me`, { method: 'GET', credentials: 'include' });
+      if (!res.ok) return;
+      const data = await res.json();
+      const name = data?.full_name || data?.name || data?.username || data?.displayName || 'Admin';
+      setAdminName(name);
+    } catch {
+      // ignore
+    }
+  };
+
   // Override controls state
   const [selectedBayInput, setSelectedBayInput] = useState<string>('');
   const [selectedAction, setSelectedAction] = useState<string>('');
   const [showOverrideConfirm, setShowOverrideConfirm] = useState<boolean>(false);
-  const [overrideTarget, setOverrideTarget] = useState<{ bayNo: any; player?: string } | null>(null);
+  const [overrideTarget, setOverrideTarget] = useState<{ bayNo: any; bayId?: any; player?: string } | null>(null);
   const [, setOverrideBusy] = useState<boolean>(false);
   const [showOverrideSuccess, setShowOverrideSuccess] = useState<boolean>(false);
   const overrideTimerRef = React.useRef<any>(null);
@@ -170,10 +188,16 @@ export default function BayManagement() {
   return (
     <ScrollView style={[tw.flex1, { backgroundColor: "#F6F6F2" }]}>
       <View style={[styles.container]}>
-        <Text style={styles.pageTitle}>Bay Management</Text>
-        <Text style={styles.subTitle}>Welcome back, Admin!</Text>
-
-        {/* Divider */}
+        <View style={styles.headerRow}>
+          <View>
+            <Text style={styles.pageTitle}>Bay Management</Text>
+            <Text style={styles.subTitle}>{`Welcome back, ${adminName}!`}</Text>
+          </View>
+          <View>
+            <Text style={styles.dateText}>{now.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}</Text>
+            <Text style={styles.dateText}>{now.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })}</Text>
+          </View>
+        </View>
         <View style={styles.divider} />
 
         {/* Real-Time Bay Monitoring */}
@@ -425,12 +449,18 @@ export default function BayManagement() {
 
 const styles = StyleSheet.create({
   container: { padding: 20 },
+  headerRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
   pageTitle: {
     fontSize: 22,
     fontWeight: "700",
     color: "#2E3B2B",
   },
   subTitle: { color: "#666", marginBottom: 10 },
+  dateText: { textAlign: 'right', fontSize: 12, color: '#555' },
   divider: {
     borderBottomWidth: 1,
     borderBottomColor: "#ccc",

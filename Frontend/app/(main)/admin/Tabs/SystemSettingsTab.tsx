@@ -5,6 +5,9 @@ import { useSettings } from '../../../lib/SettingsProvider';
 
 export default function SystemSettingsTab() {
   const provider = useSettings();
+  // header info
+  const [adminName, setAdminName] = useState<string>('Admin');
+  const [now, setNow] = useState<Date>(new Date());
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [confirmVisible, setConfirmVisible] = useState(false);
@@ -33,6 +36,9 @@ export default function SystemSettingsTab() {
     setCurrencySymbol(provider.currencySymbol ?? currencySymbol);
     setTotalAvailableBays(String(provider.totalAvailableBays ?? totalAvailableBays));
     fetchSettings();
+    fetchAdminInfo();
+    const t = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -57,6 +63,18 @@ export default function SystemSettingsTab() {
       // ignore
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchAdminInfo = async () => {
+    try {
+      const res = await fetch(`${baseUrl}/api/admin/me`, { method: 'GET', credentials: 'include' });
+      if (!res.ok) return;
+      const data = await res.json();
+      const name = data?.full_name || data?.name || data?.username || data?.displayName || 'Admin';
+      setAdminName(name);
+    } catch {
+      // ignore
     }
   };
 
@@ -164,7 +182,17 @@ export default function SystemSettingsTab() {
     <View style={styles.rootContainer}>
       <ScrollView contentContainerStyle={{ flexGrow: 1 }} style={[tw.flex1, { backgroundColor: '#F6F6F2' }]}>
         <View style={styles.container}>
-          <Text style={styles.pageTitle}>System Settings (Connected)</Text>
+            <View style={styles.headerRow}>
+              <View>
+                <Text style={styles.pageTitle}>System Settings (Connected)</Text>
+                <Text style={styles.subtitle}>{`Welcome back, ${adminName}!`}</Text>
+              </View>
+              <View>
+                <Text style={styles.dateText}>{now.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}</Text>
+                <Text style={styles.dateText}>{now.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })}</Text>
+              </View>
+            </View>
+            <View style={styles.divider} />
 
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Operational Parameters</Text>
@@ -269,7 +297,11 @@ export default function SystemSettingsTab() {
 const styles = StyleSheet.create({
   rootContainer: { flex: 1, position: 'relative' },
   container: { padding: 20 },
+  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   pageTitle: { fontSize: 22, fontWeight: '700', color: '#2E3B2B', marginBottom: 8 },
+  subtitle: { color: '#666', marginBottom: 10 },
+  dateText: { textAlign: 'right', fontSize: 12, color: '#555' },
+  divider: { height: 1, backgroundColor: '#ccc', marginVertical: 10 },
   card: { backgroundColor: '#fff', borderRadius: 10, padding: 18, marginBottom: 18, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 4, elevation: 2 },
   cardTitle: { fontSize: 16, fontWeight: '700', marginBottom: 10 },
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: '#EEF6EE', paddingVertical: 12 },

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { View, Text, TouchableOpacity, ScrollView, Alert, Platform, Modal, StyleSheet, useWindowDimensions, Animated, StatusBar as RNStatusBar, Image } from "react-native";
+import { View, Text, TouchableOpacity, ScrollView, Alert, Platform, Modal, StyleSheet, useWindowDimensions, Animated, StatusBar as RNStatusBar, Image, ImageBackground, AppState } from "react-native";
 import { tw } from 'react-native-tailwindcss';
 import { useRouter } from "expo-router";
 import { useNavigation } from '@react-navigation/native';
@@ -10,6 +10,8 @@ import StaffManagement from "./Tabs/StaffManagement";
 import BayManagement from "./Tabs/BayManagement";
 import SystemSettings from "./Tabs/SystemSettingsTab";
 import ReportsAndAnalytics from "./Tabs/ReportsAndAnalytics";
+import TeamChats from "./Tabs/TeamChats";
+import AuditLogs from "./Tabs/AuditLogs";
 
 
 type OverviewItem = { title: string; value: string; subtitle: string; color: string };
@@ -54,9 +56,28 @@ export default function AdminDashboard() {
   // admin info
   const [adminName, setAdminName] = useState<string>('ADMIN');
   const [adminId, setAdminId] = useState<string>('');
+  // live clock for header
+  const [now, setNow] = useState<Date>(new Date());
   const settings = useSettings();
   const prevTotalRef = React.useRef<number | null>(null);
   const [highlightedBays, setHighlightedBays] = useState<number[]>([]);
+  // Prevent overlapping overview fetches
+  const isFetchingRef = React.useRef(false);
+  // Track recent user interactions to avoid spamming fullscreen calls
+  const lastInteractionRef = React.useRef<number>(0);
+  const interactionDebounceMs = 800;
+
+  const handleUserInteraction = () => {
+    try {
+      const nowTs = Date.now();
+      if (nowTs - lastInteractionRef.current < interactionDebounceMs) return;
+      lastInteractionRef.current = nowTs;
+      if (!isFullscreen) {
+        // best-effort entrance to fullscreen when user interacts
+        try { enterFullScreen(); } catch {}
+      }
+    } catch {}
+  };
 
   // Responsive helper: treat large screens/tablets specially
   const { width, height } = useWindowDimensions();
@@ -202,7 +223,17 @@ export default function AdminDashboard() {
     };
 
   useEffect(() => {
+    // live clock updater (updates every second)
+    const tick = setInterval(() => setNow(new Date()), 1000);
+    // cleanup
+    return () => clearInterval(tick);
+  }, []);
+
+  // existing useEffect continues after this
+  useEffect(() => {
     const fetchOverview = async () => {
+      if (isFetchingRef.current) return;
+      isFetchingRef.current = true;
       setLoadingOverview(true);
       try {
           // Resolve persisted probe override if available (helps physical devices)
@@ -221,21 +252,29 @@ export default function AdminDashboard() {
           const data = await res.json();
           setOverview(data);
         } catch {
-            setOverview(null);
-          } finally {
-        setLoadingOverview(false);
-      }
+          setOverview(null);
+        } finally {
+          setLoadingOverview(false);
+          isFetchingRef.current = false;
+        }
     };
     // initial fetch
     fetchOverview();
 
-    // Poll every 5 seconds so dashboard reflects DB changes without manual refresh
+    // Poll every 2 seconds so dashboard reflects DB changes more quickly
     const interval = setInterval(() => {
       fetchOverview();
-    }, 5000);
+    }, 2000);
 
     // Listen for explicit update events (emitted by other components after mutations)
-    const onOverviewUpdated = () => fetchOverview();
+    // Debounce: wait 2s after an update event before reloading so DB writes have propagated
+    let overviewUpdateTimer: any = null;
+    const onOverviewUpdated = () => {
+      try { if (overviewUpdateTimer) clearTimeout(overviewUpdateTimer); } catch {}
+      overviewUpdateTimer = setTimeout(() => {
+        try { fetchOverview(); } catch {}
+      }, 2000);
+    };
     try {
       if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('overview:updated', onOverviewUpdated as EventListener);
     } catch {}
@@ -288,8 +327,11 @@ export default function AdminDashboard() {
     return () => {
       clearInterval(interval);
       try {
+        if (overviewUpdateTimer) clearTimeout(overviewUpdateTimer);
+      } catch {}
+      try {
         if (typeof window !== 'undefined' && window.removeEventListener) window.removeEventListener('overview:updated', onOverviewUpdated as EventListener);
-  } catch {}
+      } catch {}
     };
   }, []);
 
@@ -299,6 +341,44 @@ export default function AdminDashboard() {
       if (isFullscreen) {
         try { exitFullScreen(); } catch {}
       }
+    };
+  }, []);
+
+  // Try Server-Sent Events (SSE) stream from backend to immediately receive overview updates
+  useEffect(() => {
+    let es: any = null;
+    (async () => {
+      try {
+        let baseUrl = Platform.OS === 'android' ? 'http://10.127.147.53:3000' : 'http://localhost:3000';
+        try {
+          // @ts-ignore
+          const AsyncStorageModule = await import('@react-native-async-storage/async-storage').catch(() => null);
+          const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
+          const override = AsyncStorage ? await AsyncStorage.getItem('backendBaseUrlOverride') : null;
+          if (override) baseUrl = override;
+        } catch {}
+
+        // Only try SSE where EventSource exists (web or RN environment with polyfill)
+        if (typeof EventSource !== 'undefined') {
+          const streamUrl = `${baseUrl.replace(/\/$/, '')}/api/admin/overview/stream`;
+          try {
+            es = new EventSource(streamUrl);
+            es.onmessage = (ev: any) => {
+              try {
+                const payload = JSON.parse(ev.data);
+                if (payload) setOverview(payload);
+              } catch {}
+            };
+            es.onerror = () => {
+              try { es.close(); } catch {}
+            };
+          } catch {}
+        }
+      } catch {}
+    })();
+
+    return () => {
+      try { if (es) es.close(); } catch {}
     };
   }, []);
 
@@ -338,6 +418,33 @@ export default function AdminDashboard() {
       try { if (webListener && typeof window !== 'undefined' && window.removeEventListener) window.removeEventListener('pointerdown', webListener); } catch {}
     };
   }, []);
+
+  // Re-enter fullscreen whenever the app becomes active (foreground).
+  useEffect(() => {
+    const handleAppState = (next: string) => {
+      try {
+        if (next === 'active') {
+          if (!isFullscreen) enterFullScreen().catch(() => {});
+        }
+      } catch {}
+    };
+
+    // AppState API changed in newer RN; use addEventListener where available
+    let sub: any = null;
+    try {
+      if ((AppState as any).addEventListener) {
+        sub = AppState.addEventListener('change', handleAppState);
+      } else if (AppState.addEventListener) {
+        sub = AppState.addEventListener('change', handleAppState);
+      }
+    } catch {
+      // ignore
+    }
+
+    return () => {
+      try { sub?.remove?.(); } catch {}
+    };
+  }, [isFullscreen]);
 
   // load icon lib at runtime to avoid bundler-time issues
   let MaterialIcons: any = null;
@@ -405,8 +512,22 @@ export default function AdminDashboard() {
         return (
           <ScrollView style={styles.scrollContent}>
             <View style={styles.contentContainer}>
-              <Text style={styles.sectionTitle}>Admin Dashboard Overview</Text>
-              <Text style={styles.placeholderText}>Welcome back, Admin!</Text>
+              {/* Header banner with welcome text inside image, date/time below */}
+              <ImageBackground
+                source={require('../../../assets/General/AdminHeroImage.png')}
+                style={styles.headerBannerImage}
+                imageStyle={{ borderRadius: 12 }}
+              >
+                <Text style={styles.sectionTitle}>Admin Dashboard</Text>
+                <View style={styles.headerBannerOverlay}>
+                  <Text style={styles.headerBannerTitle}>Welcome back, {adminName}!</Text>
+                  <View style={styles.headerDateTimeRow}>
+                    <Text style={styles.headerBannerDate}>{now.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}</Text>
+                    <Text style={styles.headerBannerTime}>{now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Text>
+                  </View>
+                </View>
+              </ImageBackground>
+              
 
               {/* Quick Overview */}
               <Text style={styles.sectionTitle}>Quick Overview</Text>
@@ -581,6 +702,11 @@ export default function AdminDashboard() {
   return <SystemSettings />;
     case "Report & Analytics":
   return <ReportsAndAnalytics />;
+      case "Team Chats":
+        return <TeamChats />;
+
+      case "Audit Logs":
+        return <AuditLogs />;
 
       default:
         return (
@@ -605,7 +731,12 @@ export default function AdminDashboard() {
   ];
 
   return (
-    <View style={[tw.flex1, tw.flexRow, { backgroundColor: '#F6F6F2' }]}>
+    <View
+      style={[tw.flex1, tw.flexRow, { backgroundColor: '#F6F6F2' }]}
+      // capture top-level interactions and try to re-enter fullscreen (non-blocking)
+      onStartShouldSetResponder={() => { handleUserInteraction(); return false; }}
+      onTouchStart={() => { handleUserInteraction(); }}
+    >
       {/* Sidebar */}
       <View style={[tw.w64, tw.p5, { backgroundColor: '#1E2B20', justifyContent: 'space-between' }]}>
         <View style={styles.logoContainer}>
@@ -711,6 +842,18 @@ const styles = StyleSheet.create({
   logoAppName: { color: '#fff', fontWeight: '700', fontSize: 20 },
   logoRole: { color: '#DADADA', fontSize: 15, marginTop: 2 },
   logoDivider: { height: 1, backgroundColor: 'rgba(255,255,255,0.14)', marginVertical: 0, alignSelf: 'stretch' },
+  headerBannerImage: {
+    width: '100%',
+    height: 190,
+    borderRadius: 12,
+    marginBottom: 8,
+    backgroundColor: 'transparent',
+  },
+  headerBannerOverlay: { flex: 1, justifyContent: 'space-between', padding: 16, alignItems: 'flex-start' },
+  headerBannerTitle: { color: '#fff',marginTop:12, fontSize: 20, fontWeight: '800', textShadowColor: 'rgba(0,0,0,0.35)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 },
+  headerBannerDate: { color: '#fff', marginBottom: 4, marginTop: 50, fontSize: 13 ,fontWeight: '600' },
+  headerBannerTime: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  headerDateTimeRow: { marginBottom: 12 },
   tabButton: {
     flexDirection: "row",
     alignItems: "center",

@@ -6,6 +6,9 @@ import { useSettings } from '../../../lib/SettingsProvider';
 export default function ReportsAndAnalytics() {
   useSettings();
   const [loading, setLoading] = useState(false);
+  // header info
+  const [adminName, setAdminName] = useState<string>('Admin');
+  const [now, setNow] = useState<Date>(new Date());
   const [summary, setSummary] = useState<any>(null);
   const [sessions, setSessions] = useState<any[]>([]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -72,6 +75,25 @@ export default function ReportsAndAnalytics() {
       })();
     }
   }, []);
+
+  // fetch admin info and live clock
+  useEffect(() => {
+    fetchAdminInfo();
+    const t = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  const fetchAdminInfo = async () => {
+    try {
+      const res = await fetch(`${baseUrl}/api/admin/me`, { method: 'GET', credentials: 'include' });
+      if (!res.ok) return;
+      const data = await res.json();
+      const name = data?.full_name || data?.name || data?.username || data?.displayName || 'Admin';
+      setAdminName(name);
+    } catch {
+      // ignore
+    }
+  };
 
   // A very small wrapper component that renders a Chart.js chart directly into a canvas.
   // This avoids depending on `react-chartjs-2` and therefore avoids its React peerDep.
@@ -185,8 +207,17 @@ export default function ReportsAndAnalytics() {
   return (
     <ScrollView style={[tw.flex1, { backgroundColor: '#F6F6F2' }]}>
       <View style={styles.container}>
-        <Text style={styles.title}>Reports & Analytics</Text>
-        <Text style={styles.subtitle}>Admin Reports & Analytics</Text>
+        <View style={styles.headerRow}>
+          <View>
+            <Text style={styles.title}>Reports & Analytics</Text>
+            <Text style={styles.subtitle}>{`Welcome back, ${adminName}!`}</Text>
+          </View>
+          <View>
+            <Text style={styles.dateText}>{now.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}</Text>
+            <Text style={styles.dateText}>{now.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })}</Text>
+          </View>
+        </View>
+        <View style={styles.divider} />
 
         {errorMsg ? (
           <View style={{ backgroundColor: '#FCE4E4', padding: 10, borderRadius: 6, marginTop: 8 }}>
@@ -553,8 +584,11 @@ export default function ReportsAndAnalytics() {
 
 const styles = StyleSheet.create({
   container: { padding: 20 },
+  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   title: { fontSize: 22, fontWeight: '700', color: '#2E3B2B' },
   subtitle: { color: '#666', marginBottom: 10 },
+  dateText: { textAlign: 'right', fontSize: 12, color: '#555' },
+  divider: { height: 1, backgroundColor: '#ccc', marginVertical: 10 },
   cardRow: { flexDirection: 'row', gap: 10, marginTop: 12 },
   metricCard: { backgroundColor: '#fff', padding: 12, borderRadius: 8, flex: 1, alignItems: 'center', borderLeftWidth: 6, borderLeftColor: '#C9DABF' },
   metricLabel: { fontSize: 13, color: '#666' },
