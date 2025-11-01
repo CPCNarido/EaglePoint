@@ -33,6 +33,10 @@ export async function logoutAndClear(options?: { baseUrl?: string }) {
 }
 
 export function saveAccessToken(token?: string) {
+  // NOTE: For development it's acceptable to persist access tokens in
+  // AsyncStorage/localStorage for convenience. For production/native apps
+  // store refresh/access tokens in secure storage (Keychain/Keystore) such
+  // as react-native-keychain or expo-secure-store to reduce risk of token theft.
   try {
     if (!token) return;
     if (typeof window !== 'undefined' && window.localStorage) {
@@ -53,10 +57,7 @@ export function saveAccessToken(token?: string) {
 
 // Intentional: only named exports. Remove default export to avoid import/no-named-as-default-member warnings.
 
-// Provide a harmless default export so Expo Router doesn't treat this module as a broken route
-// (some bundlers will warn if a file under `app/` is not a route component). This component
-// is never used at runtime — we keep only named exports for programmatic usage.
+// Provide a harmless default export so Expo Router won't treat this file as a broken route.
 import React from 'react';
-export default function _AuthHelper(): React.ReactElement | null {
-  return null;
-}
+const _HiddenAuthHelper: React.FC = () => null;
+export default _HiddenAuthHelper;

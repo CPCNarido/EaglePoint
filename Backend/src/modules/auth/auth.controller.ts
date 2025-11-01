@@ -21,7 +21,7 @@ export class AuthController {
     @Body() body: { email: string; password: string },
     @Res({ passthrough: true }) res: Response,
   ) {
-    const tokens = await this.authService.signIn(body.email, body.password);
+  const tokens = await this.authService.signIn(body.email, body.password);
 
     // Determine destination by role
     const role = (tokens as any).role as string | undefined;
@@ -57,13 +57,17 @@ export class AuthController {
       void e;
     }
 
-    // Also return refreshToken in body so native clients can store it securely.
-    // We still set the HttpOnly cookie for web clients.
-    return {
+    // Optionally return refreshToken in body for native clients only when enabled
+    // via environment variable. Returning refresh tokens in JSON increases the
+    // attack surface and should be disabled in most production deployments.
+    const allowNative = String(process.env.ALLOW_NATIVE_REFRESH ?? '').toLowerCase() === 'true';
+    const result: any = {
       accessToken: tokens.accessToken,
-      refreshToken: tokens.refreshToken,
       destination,
+      user: tokens.user ?? { id: tokens.userId, role: tokens.role },
     };
+    if (allowNative) result.refreshToken = tokens.refreshToken;
+    return result;
   }
 
   @Post('refresh')
@@ -105,11 +109,24 @@ export class AuthController {
       void e;
     }
 
-    // Return access + refresh tokens in body so mobile clients can store the refresh token.
-    return {
-      accessToken: tokens.accessToken,
-      refreshToken: tokens.refreshToken,
-    };
+    // Return access + refresh tokens in body only when native refresh flow is
+    // explicitly enabled via ALLOW_NATIVE_REFRESH. Web flows continue to rely
+    // on the HttpOnly cookie set above.
+    const allowNativeRefresh = String(process.env.ALLOW_NATIVE_REFRESH ?? '').toLowerCase() === 'true';
+    const out: any = { accessToken: tokens.accessToken };
+    if (allowNativeRefresh) out.refreshToken = tokens.refreshToken;
+    return out;
+  }
+
+  // Protected endpoint to return the current user's public profile.
+  // Expects Authorization: Bearer <accessToken> and uses AuthGuard to validate.
+  @UseGuards(AuthGuard)
+  @Post('me')
+  async me(@Req() req: Request & { user?: any }) {
+    const userId = req?.user?.sub;
+    if (!userId) throw new UnauthorizedException('Missing user in token');
+    const profile = await this.authService.getUserProfile(userId);
+    return { user: profile };
   }
 
   @UseGuards(AuthGuard)

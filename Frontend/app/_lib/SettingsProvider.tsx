@@ -24,28 +24,17 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [settings, setSettings] = useState<SettingsShape>(defaultSettings);
 
   const baseUrl = Platform.OS === 'android' ? 'http://10.127.147.53:3000' : 'http://localhost:3000';
-  const load = async () => {
-    let effectiveBase = baseUrl;
-    try {
-      // @ts-ignore - dynamic import to avoid bundler-time dependency
-      const AsyncStorageModule = await import('@react-native-async-storage/async-storage').catch(() => null);
-      const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
-      const override = AsyncStorage ? await AsyncStorage.getItem('backendBaseUrlOverride') : null;
-      if (override) effectiveBase = override;
-    } catch {
-      // ignore
-    }
 
-    const loadBase = effectiveBase;
+  const load = async () => {
     try {
-      const res = await fetch(`${loadBase}/api/admin/settings`, { method: 'GET', credentials: 'include' });
+      const res = await fetch(`${baseUrl}/api/admin/settings`, { method: 'GET', credentials: 'include' });
       if (!res.ok) return;
       const data = await res.json();
       setSettings((s) => ({
         ...s,
         siteName: data?.siteName ?? data?.site_name ?? s.siteName,
         currencySymbol: data?.currencySymbol ?? data?.currency_symbol ?? s.currencySymbol,
-
+        
         enableReservations: typeof data?.enableReservations === 'boolean' ? data.enableReservations : s.enableReservations,
         totalAvailableBays: Number(data?.totalAvailableBays ?? data?.total_available_bays ?? s.totalAvailableBays),
       }));
@@ -53,7 +42,7 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       // ignore network errors and keep defaults
     }
   };
-
+   
   /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(() => {
     // initial load

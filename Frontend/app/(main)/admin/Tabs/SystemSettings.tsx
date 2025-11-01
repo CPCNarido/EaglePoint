@@ -26,7 +26,8 @@ export default function SystemSettings() {
   const [openRate, setOpenRate] = useState('500');
   
 
-  const baseUrl = Platform.OS === 'android' ? 'http://10.0.2.2:3001' : 'http://localhost:3001';
+  const baseDefault = Platform.OS === 'android' ? 'http://10.127.147.53:3000' : 'http://localhost:3000';
+  const baseUrl = (global as any).__EAGLEPOINT_BASE_URL__ ?? baseDefault;
 
   // fetchSettings invoked once on mount; intentionally skipping exhaustive-deps
   /* eslint-disable react-hooks/exhaustive-deps */

@@ -9,8 +9,12 @@ import {
   Put,
   Param,
   Delete,
+  UseGuards,
+  Req,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import { AdminService } from './admin.service';
+import { AuthGuard } from '../auth/auth.guard';
 import { CreateStaffDto } from './dto/create-staff.dto';
 
 @Controller('admin')
@@ -20,6 +24,15 @@ export class AdminController {
   @Get('overview')
   async overview() {
     return this.adminService.getOverview();
+  }
+
+  @UseGuards(AuthGuard)
+  @Get('me')
+  async me(@Req() req: Request & { user?: any }) {
+    const userId = req?.user?.sub;
+    if (!userId) return {};
+    const profile = await this.adminService.getProfile(Number(userId));
+    return profile ?? {};
   }
 
   @Get('staff')

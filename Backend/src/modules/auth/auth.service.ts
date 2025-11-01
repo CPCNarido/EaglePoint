@@ -138,6 +138,7 @@ export class AuthService {
     refreshToken: string;
     role: string;
     userId: number;
+    user: { employee_id: number; full_name: string; username?: string | null; role: string };
   }> {
     const user = await this.validateUser(login, password);
     if (!user) {
@@ -153,7 +154,28 @@ export class AuthService {
       refreshToken: tokens.refreshToken,
       role: user.role as unknown as string,
       userId: user.employee_id,
+      user: {
+        employee_id: user.employee_id,
+        full_name: user.full_name,
+        username: user.username,
+        role: user.role as unknown as string,
+      },
     };
+  }
+
+  // Return a minimal public profile for the given user id
+  async getUserProfile(userId: number) {
+    const user = await this.prisma.employee.findUnique({
+      where: { employee_id: userId },
+      select: {
+        employee_id: true,
+        full_name: true,
+        username: true,
+        role: true,
+      },
+    });
+    if (!user) throw new UnauthorizedException('User not found');
+    return user;
   }
 
   // Minimal revoke: stateless setup can't reliably revoke issued JWTs without DB; treat as idempotent

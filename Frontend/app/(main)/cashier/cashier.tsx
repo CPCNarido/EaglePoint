@@ -11,7 +11,7 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { MaterialIcons as Icon } from "@expo/vector-icons";
-import { logoutAndClear } from '../../lib/auth';
+import { logoutAndClear } from '../../_lib/auth';
 import { useSettings } from '../../lib/SettingsProvider';
 
 type SidebarButtonProps = {

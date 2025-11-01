@@ -39,7 +39,8 @@ export default function BayManagement() {
     'Maintenance',
   ];
 
-  const baseUrl = Platform.OS === 'android' ? 'http://10.0.2.2:3001' : 'http://localhost:3001';
+  const baseDefault = Platform.OS === 'android' ? 'http://10.127.147.53:3000' : 'http://localhost:3000';
+  const baseUrl = (global as any).__EAGLEPOINT_BASE_URL__ ?? baseDefault;
 
   // fetchOverview is intentionally invoked once on mount; fetchOverview is defined below.
   /* eslint-disable react-hooks/exhaustive-deps */
@@ -90,10 +91,11 @@ export default function BayManagement() {
   const mapAndSetBays = (raw: any[]) => {
     const mapped = (raw || []).map((b: any) => {
       const bayNo = b?.bay_number ?? b?.bay_id ?? b?.bayNo ?? b?.bay_no ?? b?.bay ?? '—';
+      const bayId = b?.bay_id ?? b?.bayId ?? null;
       const player = b?.player?.nickname ?? b?.playerName ?? b?.player_name ?? b?.player ?? (b?.status === 'Maintenance' ? 'Maintenance' : '—');
       const session = b?.status ?? b?.session ?? b?.sessionType ?? (b?.player ? 'Timed Session' : 'N/A');
       const time = b?.timeRange ?? (b?.start_time && b?.end_time ? `${new Date(b.start_time).toLocaleTimeString()} - ${new Date(b.end_time).toLocaleTimeString()}` : b?.time ?? 'N/A');
-      return { bayNo, player, session, time };
+      return { bayNo, bayId, player, session, time };
     });
     // If server didn't return a full bay list, augment with empty "Available" bays up to the configured total
     const configuredTotal = Number(settings.totalAvailableBays ?? 45);
@@ -354,12 +356,13 @@ export default function BayManagement() {
                   setOverrideBusy(true);
                   try {
                     const bayNo = overrideTarget.bayNo;
+                    const bayId = overrideTarget.bayId ?? null;
                     // primary endpoint: POST /api/admin/bays/:bayNo/override
                     let res = await fetch(`${baseUrl}/api/admin/bays/${bayNo}/override`, {
                       method: 'POST',
                       credentials: 'include',
                       headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ action: selectedAction }),
+                      body: JSON.stringify({ action: selectedAction, bayId }),
                     });
                     if (!res.ok) {
                       // fallback to generic endpoint
@@ -367,7 +370,7 @@ export default function BayManagement() {
                         method: 'POST',
                         credentials: 'include',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ bayNo, action: selectedAction }),
+                        body: JSON.stringify({ bayNo, action: selectedAction, bayId }),
                       });
                     }
                     if (!res.ok) {

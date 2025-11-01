@@ -76,6 +76,7 @@ npm install
 
 Configure environment variables
 
+$env:DATABASE_URL = "postgres://avnadmin:AVNS_q1ZSPOvQNMsVVQ9qJDI@eaglepoint-eaglepoint.i.aivencloud.com:12807/defaultdb?sslmode=require"
 
 Run the backend (Nest.js)
 
@@ -87,29 +88,5 @@ Run the frontend (Expo)
 cd Frontend
 npm start
 
-🧩 Key Features
+To check for Db Contents run this "npx prisma studio"
 
-✅ Digital reservation and check-in system
-✅ Role-based access (Admin, Dispatcher, Cashier, Ball Handler)
-✅ Timer-based player sessions
-✅ Civilian verification and receipt tracking
-✅ Real-time bay monitoring and session control
-
-👥 Team MOT.AI
-Name	Role
-Narido, Christian Paul C.	Project Manager
-Motea, Bernard Joseph	UI/UX Designer
-Camarillo, Troy Michael	Lead Developer
-Lamadora, Christian Jay	Documentation Specialist
-🧑‍🏫 Advisers
-
-Prof. Alexander Pahayahay – Software Engineering Adviser
-
-Prof. Abelardo Bucad – Human-Computer Interaction Adviser
-
-Prof. Ethel Ramos – Information Assurance and Security Adviser
-
-🪪 License
-
-This project is developed for academic purposes under the University of Makati.
-Unauthorized distribution or commercial use is not permitted.

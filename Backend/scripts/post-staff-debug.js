@@ -1,7 +1,7 @@
 const fetch = global.fetch || require('node-fetch');
 (async () => {
   try {
-    const res = await fetch('http://localhost:3001/api/admin/staff', {
+  const res = await fetch('http://localhost:3000/api/admin/staff', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ full_name: 'Post Debug', username: 'postdebug', password: 'pw', role: 'Dispatcher' }),

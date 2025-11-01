@@ -9,6 +9,17 @@ import * as fs from 'fs';
 export class AdminService {
   constructor(private prisma: PrismaService) {}
 
+  // Return the public profile for a given employee id
+  async getProfile(userId: number) {
+    if (!userId) return null;
+    const u = await this.prisma.employee.findUnique({
+      where: { employee_id: userId },
+      select: { employee_id: true, full_name: true, username: true, role: true },
+    });
+    if (!u) return null;
+    return { employee_id: u.employee_id, full_name: u.full_name, username: u.username, role: u.role };
+  }
+
   // Helper to write an action to SystemLog when an actor is available
   private async writeLog(
     actorId: number | undefined,
@@ -670,9 +681,20 @@ export class AdminService {
     if (!action) throw new BadRequestException('action is required');
 
     // find bay by bay_number (bay_number is stored as string in schema)
-    const bay = await this.prisma.bay.findFirst({
+    let bay = await this.prisma.bay.findFirst({
       where: { bay_number: String(bayNo) },
     });
+    // If not found by bay_number, and bayNo looks like a numeric id, try lookup by bay_id
+    if (!bay) {
+      const maybeId = Number(bayNo);
+      if (!Number.isNaN(maybeId)) {
+        try {
+          bay = await this.prisma.bay.findUnique({ where: { bay_id: maybeId } as any });
+        } catch (e) {
+          void e;
+        }
+      }
+    }
     if (!bay) {
       throw new BadRequestException('Bay not found');
     }
