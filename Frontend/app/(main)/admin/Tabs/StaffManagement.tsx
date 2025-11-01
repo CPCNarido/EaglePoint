@@ -595,6 +595,10 @@ export default function StaffManagement() {
   );
 }
 
+// Provide an explicit displayName to satisfy lint rules that check for component names
+// when components are assigned or dynamically created.
+(StaffManagement as any).displayName = 'StaffManagement';
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,

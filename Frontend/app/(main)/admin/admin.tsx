@@ -390,6 +390,9 @@ export default function AdminDashboard() {
   );
 }
 
+// ensure linter recognizes the component display name
+(AdminDashboard as any).displayName = 'AdminDashboard';
+
 const styles = StyleSheet.create({
   container: { flex: 1, flexDirection: "row", backgroundColor: "#F6F6F2" },
   sidebar: {
