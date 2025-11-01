@@ -9,10 +9,19 @@ import {
   Alert,
   Modal,
   Pressable,
-} from "react-native";ChannelMergerNode
-import { MaterialIcons } from "@expo/vector-icons";
+} from "react-native";
+// Defer loading of icon library to runtime to avoid possible environment-time errors
+let MaterialIcons: any = null;
 
 export default function StaffManagement() {
+  // require icons at runtime to avoid bundler/runtime initialization errors
+  try {
+    // eslint-disable-next-line global-require
+    MaterialIcons = require('@expo/vector-icons').MaterialIcons;
+  } catch (e) {
+    // if require fails, fallback to a minimal stub so UI doesn't crash
+    MaterialIcons = ({ name, size, color }: any) => null;
+  }
   const [searchQuery, setSearchQuery] = useState("");
   const [filterRole, setFilterRole] = useState("All");
   // Extended filter controls

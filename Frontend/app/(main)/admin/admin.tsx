@@ -2,12 +2,14 @@ import React, { useState, useEffect } from "react";
 import { View, Text, TouchableOpacity, ScrollView, Alert, Platform, Modal, StyleSheet } from "react-native";
 import { tw } from 'react-native-tailwindcss';
 import { useRouter } from "expo-router";
-import { MaterialIcons } from "@expo/vector-icons";
+// Defer loading of icons to runtime
+let MaterialIcons: any = null;
 import auth from '../../lib/auth';
 import { useSettings } from '../../lib/SettingsProvider';
 import StaffManagement from "./Tabs/StaffManagement";
 import BayManagement from "./Tabs/BayManagement";
 import SystemSettings from "./Tabs/SystemSettingsTab";
+import ReportsAndAnalytics from "./Tabs/ReportsAndAnalytics";
 
 
 type OverviewItem = { title: string; value: string; subtitle: string; color: string };
@@ -124,6 +126,14 @@ export default function AdminDashboard() {
       } catch (e) {}
     };
   }, []);
+
+  // load icon lib at runtime to avoid bundler-time issues
+  try {
+    // eslint-disable-next-line global-require
+    MaterialIcons = require('@expo/vector-icons').MaterialIcons;
+  } catch (e) {
+    MaterialIcons = ({ name, size, color }: any) => null;
+  }
 
   // Watch settings.totalAvailableBays and highlight newly added bay numbers when it increases
   useEffect(() => {
@@ -287,6 +297,8 @@ export default function AdminDashboard() {
 
   case "System Settings":
   return <SystemSettings />;
+    case "Report & Analytics":
+  return <ReportsAndAnalytics />;
 
       default:
         return (
