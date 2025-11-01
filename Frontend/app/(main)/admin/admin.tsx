@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { View, Text, TouchableOpacity, ScrollView, Alert, Platform, Modal, StyleSheet, useWindowDimensions, Animated, StatusBar as RNStatusBar } from "react-native";
+import { View, Text, TouchableOpacity, ScrollView, Alert, Platform, Modal, StyleSheet, useWindowDimensions, Animated, StatusBar as RNStatusBar, Image } from "react-native";
 import { tw } from 'react-native-tailwindcss';
 import { useRouter } from "expo-router";
 import { useNavigation } from '@react-navigation/native';
@@ -608,9 +608,23 @@ export default function AdminDashboard() {
     <View style={[tw.flex1, tw.flexRow, { backgroundColor: '#F6F6F2' }]}>
       {/* Sidebar */}
       <View style={[tw.w64, tw.p5, { backgroundColor: '#1E2B20', justifyContent: 'space-between' }]}>
-  <Text style={[tw.textWhite, tw.fontBold, tw.text2xl, tw.mB10]}>{settings.siteName}{"\n"}ADMIN</Text>
+        <View style={styles.logoContainer}>
+          <Image
+            // local asset; bundled via require so React Native includes it
+            source={require('../../../assets/General/Logo.png')}
+            style={styles.logoImage}
+            resizeMode="contain"
+            onError={(e) => { console.warn('Logo image load error', e.nativeEvent ? e.nativeEvent : e); }}
+          />
+          <View style={styles.logoTextContainer}>
+            <Text style={styles.logoAppName}>{settings.siteName}</Text>
+            <Text style={styles.logoRole}>ADMIN</Text>
+          </View>
+  </View>
+  {/* Divider under logo/name/role to match design */}
+  <View style={styles.logoDivider} />
 
-        {tabs.map((tab) => (
+  {tabs.map((tab) => (
           <TouchableOpacity
             key={tab.name}
             style={[
@@ -689,6 +703,14 @@ const styles = StyleSheet.create({
     fontSize: 22,
     marginBottom: 40,
   },
+  logoContainer: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
+  // set transparent background (white box might come from the image having a white background
+  // or from an explicit style). Use contain so the logo scales without cropping.
+  logoImage: { width: 60, height: 60, borderRadius: 8, marginRight: 10, backgroundColor: 'transparent', overflow: 'hidden' },
+  logoTextContainer: { flexDirection: 'column' },
+  logoAppName: { color: '#fff', fontWeight: '700', fontSize: 20 },
+  logoRole: { color: '#DADADA', fontSize: 15, marginTop: 2 },
+  logoDivider: { height: 1, backgroundColor: 'rgba(255,255,255,0.14)', marginVertical: 0, alignSelf: 'stretch' },
   tabButton: {
     flexDirection: "row",
     alignItems: "center",
