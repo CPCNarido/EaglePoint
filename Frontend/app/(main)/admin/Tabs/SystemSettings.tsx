@@ -28,9 +28,12 @@ export default function SystemSettings() {
 
   const baseUrl = Platform.OS === 'android' ? 'http://10.0.2.2:3001' : 'http://localhost:3001';
 
+  // fetchSettings invoked once on mount; intentionally skipping exhaustive-deps
+  /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(() => {
     fetchSettings();
   }, []);
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   const fetchSettings = async () => {
     setLoading(true);
@@ -51,7 +54,7 @@ export default function SystemSettings() {
       if (data.timedSessionRate) setTimedRate(String(data.timedSessionRate));
       if (data.openTimeRate) setOpenRate(String(data.openTimeRate));
       
-    } catch (e) {
+    } catch {
       // ignore
     } finally {
       setLoading(false);
@@ -129,10 +132,10 @@ export default function SystemSettings() {
       }
       // show a small saved notification (matches design) with an X to dismiss
       setShowSavedNotification(true);
-  // notify the rest of the app that settings have changed so providers/components can reload immediately
-  try { if (typeof window !== 'undefined' && window.dispatchEvent) window.dispatchEvent(new Event('settings:updated')); } catch (e) {}
       // emit overview update if needed
-      try { if (typeof window !== 'undefined' && window.dispatchEvent) window.dispatchEvent(new Event('overview:updated')); } catch (e) {}
+  try { if (typeof window !== 'undefined' && window.dispatchEvent) window.dispatchEvent(new Event('settings:updated')); } catch {}
+    // emit overview update if needed
+  try { if (typeof window !== 'undefined' && window.dispatchEvent) window.dispatchEvent(new Event('overview:updated')); } catch {}
       setConfirmVisible(false);
       setConfirmPayload(null);
       // start auto-dismiss timer (2s) — will be reset if user interacts with the notification
@@ -142,7 +145,7 @@ export default function SystemSettings() {
         setShowSavedNotification(false);
         notifTimer.current = null;
       }, 2000) as unknown as number;
-    } catch (e) {
+    } catch {
       Alert.alert('Error', 'Error saving settings');
     } finally {
       setConfirmSaving(false);

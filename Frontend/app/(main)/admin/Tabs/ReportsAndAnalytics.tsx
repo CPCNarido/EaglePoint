@@ -1,12 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Platform, Dimensions, useWindowDimensions } from 'react-native';
 import { tw } from 'react-native-tailwindcss';
 import { useSettings } from '../../../lib/SettingsProvider';
-import { useRef } from 'react';
-const noop = () => {};
 
 export default function ReportsAndAnalytics() {
-  const settings = useSettings();
+  useSettings();
   const [loading, setLoading] = useState(false);
   const [summary, setSummary] = useState<any>(null);
   const [sessions, setSessions] = useState<any[]>([]);
@@ -33,7 +31,10 @@ export default function ReportsAndAnalytics() {
   const [sessionTypeFilter, setSessionTypeFilter] = useState(sessionTypeOptions[0]);
   const [bayFilter, setBayFilter] = useState<'All' | string>('All');
 
+  // fetchSummary / fetchSessions are intentionally stable for current render; disable exhaustive-deps here
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { fetchSummary(); }, [timeRange, sessionTypeFilter, bayFilter]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { fetchSessions(); }, [timeRange, sessionTypeFilter, bayFilter]);
 
   // dynamic chart loader
@@ -49,8 +50,8 @@ export default function ReportsAndAnalytics() {
           // @ts-ignore
           const rc2 = await import('react-chartjs-2');
           setWebCharts(rc2);
-        } catch (e) {
-          console.warn('react-chartjs-2 not available, falling back to chart.js canvas renderer', e);
+        } catch (_e) {
+          console.warn('react-chartjs-2 not available, falling back to chart.js canvas renderer', _e);
           setWebCharts(null);
           setChartJsOnly(true);
           // ensure chart.js is present later when rendering; we don't throw here.
@@ -63,8 +64,8 @@ export default function ReportsAndAnalytics() {
           // @ts-ignore
           const mod = await import('react-native-chart-kit');
           setRNChartKit(mod);
-        } catch (err) {
-          console.warn('Failed to load react-native-chart-kit', err);
+        } catch (_err) {
+          console.warn('Failed to load react-native-chart-kit', _err);
           setRNChartKit(null);
         }
       })();
@@ -88,21 +89,22 @@ export default function ReportsAndAnalytics() {
           if (!canvasRef.current) return;
           const ctx = (canvasRef.current as any).getContext('2d');
           if (chartRef.current) {
-            try { chartRef.current.destroy(); } catch (e) {}
+            try { chartRef.current.destroy(); } catch {}
             chartRef.current = null;
           }
           // @ts-ignore
           chartRef.current = new ChartCtor(ctx, { type, data, options });
-        } catch (e) {
-          console.error('Failed to render Chart.js canvas', e);
+        } catch (_e) {
+          console.error('Failed to render Chart.js canvas', _e);
         }
       })();
-      return () => {
+        return () => {
         mounted = false;
-        if (chartRef.current) try { chartRef.current.destroy(); } catch (e) {}
+        if (chartRef.current) try { chartRef.current.destroy(); } catch {}
       };
-    // shallow stringify data/options so changes re-render
-    }, [type, JSON.stringify(data), JSON.stringify(options)]);
+  // shallow stringify data/options so changes re-render
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [type, JSON.stringify(data), JSON.stringify(options)]);
 
     return (
       // @ts-ignore - canvas is fine on web
@@ -123,9 +125,9 @@ export default function ReportsAndAnalytics() {
       }
       const data = await res.json();
       setSummary(data);
-    } catch (e) {
-      console.error('reports/summary error', e);
-      setErrorMsg(String(e));
+    } catch (_e) {
+      console.error('reports/summary error', _e);
+      setErrorMsg(String(_e));
     } finally { setLoading(false); }
   };
 
@@ -141,9 +143,9 @@ export default function ReportsAndAnalytics() {
       }
       const data = await res.json();
       setSessions(Array.isArray(data) ? data : []);
-    } catch (e) {
-      console.error('reports/sessions error', e);
-      setErrorMsg(String(e));
+    } catch (_e) {
+      console.error('reports/sessions error', _e);
+      setErrorMsg(String(_e));
     }
   };
 
@@ -170,7 +172,7 @@ export default function ReportsAndAnalytics() {
         alert('Export ready. Copy from alert.');
         console.log(csv.slice(0, 1000));
       }
-    } catch (e) {
+    } catch {
       alert('Export failed');
     }
   };

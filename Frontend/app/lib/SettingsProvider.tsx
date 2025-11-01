@@ -38,11 +38,12 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         enableReservations: typeof data?.enableReservations === 'boolean' ? data.enableReservations : s.enableReservations,
         totalAvailableBays: Number(data?.totalAvailableBays ?? data?.total_available_bays ?? s.totalAvailableBays),
       }));
-    } catch (e) {
+    } catch {
       // ignore network errors and keep defaults
     }
   };
-
+   
+  /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(() => {
     // initial load
     load();
@@ -56,16 +57,17 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       if (typeof window !== 'undefined' && window.addEventListener) {
         window.addEventListener('settings:updated', onSettingsUpdated as EventListener);
       }
-    } catch (e) {}
+    } catch {}
 
     return () => {
       try {
         if (typeof window !== 'undefined' && window.removeEventListener) {
           window.removeEventListener('settings:updated', onSettingsUpdated as EventListener);
         }
-      } catch (e) {}
+      } catch {}
     };
   }, []);
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   return (
     <SettingsContext.Provider value={{ ...settings, refresh: load }}>

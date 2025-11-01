@@ -16,9 +16,10 @@ let MaterialIcons: any = null;
 export default function StaffManagement() {
   // require icons at runtime to avoid bundler/runtime initialization errors
   try {
-    // eslint-disable-next-line global-require
+    // allow runtime require here (deliberate) - disable the specific rule
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     MaterialIcons = require('@expo/vector-icons').MaterialIcons;
-  } catch (e) {
+  } catch {
     // if require fails, fallback to a minimal stub so UI doesn't crash
     MaterialIcons = function MaterialIconsStub({ name, size, color }: any) { return null; };
   }
@@ -30,8 +31,8 @@ export default function StaffManagement() {
   const [idFilter, setIdFilter] = useState('');
   const [availabilityFilter, setAvailabilityFilter] = useState<'All' | 'Available' | 'Unavailable'>('All');
 
-  const [staffList, setStaffList] = useState<Array<any>>([]);
-  const [loading, setLoading] = useState(false);
+  const [staffList, setStaffList] = useState<any[]>([]);
+  const [, setLoading] = useState(false);
   // header info
   const [adminName, setAdminName] = useState<string>('Admin');
   const [now, setNow] = useState<Date>(new Date());
@@ -56,12 +57,15 @@ export default function StaffManagement() {
 
   const baseUrl = Platform.OS === 'android' ? 'http://10.0.2.2:3001' : 'http://localhost:3001';
 
+  // fetchStaff/fetchAdminInfo are intentionally invoked once on mount.
+  /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(() => {
     fetchStaff();
     fetchAdminInfo();
     const t = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(t);
   }, []);
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   const fetchAdminInfo = async () => {
     try {
@@ -70,7 +74,7 @@ export default function StaffManagement() {
       const data = await res.json();
       const name = data?.full_name || data?.name || data?.username || data?.displayName || 'Admin';
       setAdminName(name);
-    } catch (e) {
+    } catch {
       // ignore - keep default
     }
   };
@@ -85,7 +89,7 @@ export default function StaffManagement() {
       }
       const data = await res.json();
       setStaffList(data || []);
-    } catch (e) {
+    } catch {
       setStaffList([]);
     } finally {
       setLoading(false);
@@ -145,7 +149,7 @@ export default function StaffManagement() {
       setShowAdd(false);
       setFullName(''); setUsername(''); setPassword(''); setRole('Dispatcher');
       openApprovalPopup('Staff have been successfully added!.');
-    } catch (e) {
+    } catch {
       alert('Error creating staff');
     }
   };
@@ -179,7 +183,7 @@ export default function StaffManagement() {
       }
       // show approval popup with manual close (X) and 2s auto-close
       openApprovalPopup('Changes have been successfully made.');
-    } catch (e) {
+    } catch {
       alert('Error updating staff');
     }
   };
@@ -215,7 +219,7 @@ export default function StaffManagement() {
     setShowApprovedPopup(false);
     try {
       await fetchStaff();
-    } catch (e) {
+    } catch {
       // ignore fetch errors here
     }
     setEditingId(null);
@@ -232,7 +236,8 @@ export default function StaffManagement() {
     };
   }, []);
 
-  const confirmDelete = (id: number) => {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const _confirmDelete = (id: number) => {
     // Deprecated: we now use a custom modal. Keep function to remain compatible.
     setRemoveTarget({ id });
     setShowRemoveConfirmModal(true);
@@ -252,7 +257,7 @@ export default function StaffManagement() {
       setShowRemoveConfirmModal(false);
       setRemoveTarget(null);
       openApprovalPopup('Staff has been removed successfully.');
-    } catch (e) {
+    } catch {
       Alert.alert('Error', 'Error deleting staff');
     }
   };

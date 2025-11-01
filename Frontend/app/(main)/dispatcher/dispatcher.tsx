@@ -11,7 +11,7 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { MaterialIcons } from "@expo/vector-icons";
-import auth from '../../lib/auth';
+import { logoutAndClear } from '../../lib/auth';
 import { useSettings } from '../../lib/SettingsProvider';
 
 import DashboardTab from "./Tabs/DashboardTab";
@@ -38,7 +38,7 @@ export default function DispatcherDashboard() {
 
   const performLogout = async () => {
     setLogoutModalVisible(false);
-    await auth.logoutAndClear();
+    await logoutAndClear();
     router.replace("/");
   };
 

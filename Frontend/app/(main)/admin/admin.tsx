@@ -3,8 +3,7 @@ import { View, Text, TouchableOpacity, ScrollView, Alert, Platform, Modal, Style
 import { tw } from 'react-native-tailwindcss';
 import { useRouter } from "expo-router";
 // Defer loading of icons to runtime
-let MaterialIcons: any = null;
-import auth from '../../lib/auth';
+import { logoutAndClear } from '../../lib/auth';
 import { useSettings } from '../../lib/SettingsProvider';
 import StaffManagement from "./Tabs/StaffManagement";
 import BayManagement from "./Tabs/BayManagement";
@@ -33,8 +32,8 @@ export default function AdminDashboard() {
   const [logoutModalVisible, setLogoutModalVisible] = useState<boolean>(false);
 
   const performLogout = async () => {
-    try { setLogoutModalVisible(false); } catch (e) {}
-    await auth.logoutAndClear();
+    try { setLogoutModalVisible(false); } catch {}
+  await logoutAndClear();
     router.replace('/');
   };
 
@@ -48,7 +47,7 @@ export default function AdminDashboard() {
 
   // State from server
   const [overview, setOverview] = useState<any>(null);
-  const [loadingOverview, setLoadingOverview] = useState(false);
+  const [, setLoadingOverview] = useState(false);
   // admin info
   const [adminName, setAdminName] = useState<string>('ADMIN');
   const [adminId, setAdminId] = useState<string>('');
@@ -75,14 +74,14 @@ export default function AdminDashboard() {
     const fetchOverview = async () => {
       setLoadingOverview(true);
       try {
-        const baseUrl = Platform.OS === 'android' ? 'http://10.0.2.2:3001' : 'http://localhost:3001';
-        const res = await fetch(`${baseUrl}/api/admin/overview`, { method: 'GET', credentials: 'include' });
-        if (!res.ok) return setOverview(null);
-        const data = await res.json();
-        setOverview(data);
-      } catch (e) {
-        setOverview(null);
-      } finally {
+          const baseUrl = Platform.OS === 'android' ? 'http://10.0.2.2:3001' : 'http://localhost:3001';
+          const res = await fetch(`${baseUrl}/api/admin/overview`, { method: 'GET', credentials: 'include' });
+          if (!res.ok) return setOverview(null);
+          const data = await res.json();
+          setOverview(data);
+        } catch {
+            setOverview(null);
+          } finally {
         setLoadingOverview(false);
       }
     };
@@ -98,7 +97,7 @@ export default function AdminDashboard() {
     const onOverviewUpdated = () => fetchOverview();
     try {
       if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('overview:updated', onOverviewUpdated as EventListener);
-    } catch (e) {}
+    } catch {}
     // fetch admin identity for sidebar
     const fetchAdmin = async () => {
       try {
@@ -113,7 +112,7 @@ export default function AdminDashboard() {
     const id = empId != null ? String(empId) : '';
     setAdminName(name);
     setAdminId(id);
-      } catch (e) {
+      } catch {
         // ignore
       }
     };
@@ -123,15 +122,17 @@ export default function AdminDashboard() {
       clearInterval(interval);
       try {
         if (typeof window !== 'undefined' && window.removeEventListener) window.removeEventListener('overview:updated', onOverviewUpdated as EventListener);
-      } catch (e) {}
+  } catch {}
     };
   }, []);
 
   // load icon lib at runtime to avoid bundler-time issues
+  let MaterialIcons: any = null;
   try {
-    // eslint-disable-next-line global-require
+    // allow a runtime require here (we intentionally defer loading)
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     MaterialIcons = require('@expo/vector-icons').MaterialIcons;
-  } catch (e) {
+  } catch {
     MaterialIcons = function MaterialIconsStub({ name, size, color }: any) { return null; };
   }
 
@@ -157,6 +158,8 @@ export default function AdminDashboard() {
     </View>
   );
 
+(Legend as any).displayName = 'Legend';
+
   const OverviewCard: React.FC<OverviewItem> = ({ title, value, subtitle, color }) => (
     <View style={[styles.overviewCard, { borderLeftColor: color }]}>
       <Text style={styles.overviewLabel}>{title}</Text>
@@ -164,6 +167,8 @@ export default function AdminDashboard() {
       <Text style={styles.overviewSubtitle}>{subtitle}</Text>
     </View>
   );
+
+(OverviewCard as any).displayName = 'OverviewCard';
 
   const renderContent = () => {
     switch (activeTab) {
@@ -225,7 +230,7 @@ export default function AdminDashboard() {
                     if (overview.nextTeeTime === 'Bay Ready') return 'Bay Ready';
                     try {
                       return new Date(overview.nextTeeTime).toLocaleTimeString();
-                    } catch (e) {
+                    } catch {
                       return String(overview.nextTeeTime);
                     }
                   })()}
@@ -234,7 +239,7 @@ export default function AdminDashboard() {
                     if (overview.nextTeeTime === 'Bay Ready') return '';
                     try {
                       return new Date(overview.nextTeeTime).toLocaleDateString();
-                    } catch (e) {
+                    } catch {
                       return '';
                     }
                   })()}

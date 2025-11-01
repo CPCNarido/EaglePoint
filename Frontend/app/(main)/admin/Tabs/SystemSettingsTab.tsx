@@ -52,7 +52,7 @@ export default function SystemSettingsTab() {
       if (data.timedSessionRate) setTimedRate(String(data.timedSessionRate));
       if (data.openTimeRate) setOpenRate(String(data.openTimeRate));
       
-    } catch (e) {
+    } catch {
       // ignore
     } finally {
       setLoading(false);
@@ -127,8 +127,8 @@ export default function SystemSettingsTab() {
 
       setShowSavedNotification(true);
       // notify provider and others
-      try { if (typeof window !== 'undefined' && window.dispatchEvent) window.dispatchEvent(new Event('settings:updated')); } catch (e) {}
-      try { if (typeof window !== 'undefined' && window.dispatchEvent) window.dispatchEvent(new Event('overview:updated')); } catch (e) {}
+  try { if (typeof window !== 'undefined' && window.dispatchEvent) window.dispatchEvent(new Event('settings:updated')); } catch {}
+  try { if (typeof window !== 'undefined' && window.dispatchEvent) window.dispatchEvent(new Event('overview:updated')); } catch {}
 
       setConfirmVisible(false);
       setConfirmPayload(null);
@@ -139,7 +139,7 @@ export default function SystemSettingsTab() {
         setShowSavedNotification(false);
         notifTimer.current = null;
       }, 2000) as unknown as number;
-    } catch (e) {
+    } catch {
       Alert.alert('Error', 'Error saving settings');
     } finally {
       setConfirmSaving(false);

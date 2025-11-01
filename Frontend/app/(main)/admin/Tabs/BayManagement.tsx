@@ -41,14 +41,19 @@ export default function BayManagement() {
 
   const baseUrl = Platform.OS === 'android' ? 'http://10.0.2.2:3001' : 'http://localhost:3001';
 
+  // fetchOverview is intentionally invoked once on mount; fetchOverview is defined below.
+  /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(() => {
     fetchOverview();
   }, []);
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   // use settings to ensure we show the expected count even if backend doesn't provide all rows
   const settings = useSettings();
 
   // Animate dropdown when it opens
+  // anim is a stable ref; we intentionally only re-run this effect when showFilterOptions changes
+  /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(() => {
     if (showFilterOptions) {
       anim.setValue(0);
@@ -57,6 +62,7 @@ export default function BayManagement() {
       anim.setValue(0);
     }
   }, [showFilterOptions]);
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   // (action dropdown removed — using inline buttons)
 
@@ -74,7 +80,7 @@ export default function BayManagement() {
       }
       const data = await res.json();
       mapAndSetBays(data?.bays || data?.bayList || data || []);
-    } catch (e) {
+    } catch {
       setBays([]);
     } finally {
       setLoading(false);
@@ -110,7 +116,7 @@ export default function BayManagement() {
   const [selectedAction, setSelectedAction] = useState<string>('');
   const [showOverrideConfirm, setShowOverrideConfirm] = useState<boolean>(false);
   const [overrideTarget, setOverrideTarget] = useState<{ bayNo: any; player?: string } | null>(null);
-  const [overrideBusy, setOverrideBusy] = useState<boolean>(false);
+  const [, setOverrideBusy] = useState<boolean>(false);
   const [showOverrideSuccess, setShowOverrideSuccess] = useState<boolean>(false);
   const overrideTimerRef = React.useRef<any>(null);
 
@@ -379,12 +385,12 @@ export default function BayManagement() {
                       fetchOverview();
                       // notify other parts of the app (dashboard) to refresh immediately
                       try {
-                        if (typeof window !== 'undefined' && window.dispatchEvent) {
-                          window.dispatchEvent(new Event('overview:updated'));
-                        }
-                      } catch (e) {}
+                          if (typeof window !== 'undefined' && window.dispatchEvent) {
+                            window.dispatchEvent(new Event('overview:updated'));
+                          }
+                        } catch {}
                     }
-                  } catch (e) {
+                  } catch {
                     alert('Error performing override');
                   } finally {
                     setOverrideBusy(false);

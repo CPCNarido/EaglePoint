@@ -9,7 +9,7 @@ export async function logoutAndClear(options?: { baseUrl?: string }) {
   // Tell server to revoke refresh token (best-effort). Use credentials to send cookies if available.
   try {
     await fetch(`${baseUrl}/logout`, { method: 'POST', credentials: 'include' }).catch(() => {});
-  } catch (e) {
+  } catch {
     // ignore
   }
 
@@ -18,16 +18,18 @@ export async function logoutAndClear(options?: { baseUrl?: string }) {
     if (typeof window !== 'undefined' && window.localStorage) {
       DEFAULT_KEYS.forEach((k) => window.localStorage.removeItem(k));
     }
-  } catch (e) {}
+  } catch {}
 
   // Clear native AsyncStorage if available
   try {
     // @ts-ignore
+    // runtime require - disable the lint rule for this line
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const AsyncStorage = require('@react-native-async-storage/async-storage').default;
     if (AsyncStorage && AsyncStorage.multiRemove) {
       await AsyncStorage.multiRemove(DEFAULT_KEYS);
     }
-  } catch (e) {}
+  } catch {}
 }
 
 export function saveAccessToken(token?: string) {
@@ -36,15 +38,17 @@ export function saveAccessToken(token?: string) {
     if (typeof window !== 'undefined' && window.localStorage) {
       window.localStorage.setItem('authToken', token);
     }
-  } catch (e) {}
+  } catch {}
 
   try {
     // @ts-ignore
+    // runtime require - disable the lint rule for this line
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const AsyncStorage = require('@react-native-async-storage/async-storage').default;
     if (AsyncStorage && AsyncStorage.setItem && token) {
       AsyncStorage.setItem('authToken', token).catch(() => {});
     }
-  } catch (e) {}
+  } catch {}
 }
 
-export default { logoutAndClear, saveAccessToken };
+// Intentional: only named exports. Remove default export to avoid import/no-named-as-default-member warnings.

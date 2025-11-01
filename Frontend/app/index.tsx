@@ -15,7 +15,7 @@ import {
 } from "react-native";
 import { useRouter } from "expo-router";
 import { tw } from "react-native-tailwindcss";
-import auth from './lib/auth';
+import { saveAccessToken } from './lib/auth';
 import { useSettings } from './lib/SettingsProvider';
 
 const Login: React.FC = () => {
@@ -80,9 +80,9 @@ const Login: React.FC = () => {
       try {
         const access = data?.accessToken || data?.access_token || null;
         if (access) {
-          auth.saveAccessToken(access);
+          saveAccessToken(access);
         }
-      } catch (err) {
+      } catch {
         // ignore storage errors
       }
 
