@@ -20,7 +20,7 @@ export default function StaffManagement() {
     MaterialIcons = require('@expo/vector-icons').MaterialIcons;
   } catch (e) {
     // if require fails, fallback to a minimal stub so UI doesn't crash
-    MaterialIcons = ({ name, size, color }: any) => null;
+    MaterialIcons = function MaterialIconsStub({ name, size, color }: any) { return null; };
   }
   const [searchQuery, setSearchQuery] = useState("");
   const [filterRole, setFilterRole] = useState("All");

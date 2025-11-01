@@ -132,7 +132,7 @@ export default function AdminDashboard() {
     // eslint-disable-next-line global-require
     MaterialIcons = require('@expo/vector-icons').MaterialIcons;
   } catch (e) {
-    MaterialIcons = ({ name, size, color }: any) => null;
+    MaterialIcons = function MaterialIconsStub({ name, size, color }: any) { return null; };
   }
 
   // Watch settings.totalAvailableBays and highlight newly added bay numbers when it increases
