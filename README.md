@@ -76,7 +76,7 @@ npm install
 
 Configure environment variables
 
-$env:DATABASE_URL = "postgres://avnadmin:AVNS_q1ZSPOvQNMsVVQ9qJDI@eaglepoint-eaglepoint.i.aivencloud.com:12807/defaultdb?sslmode=require"
+
 
 Run the backend (Nest.js)
 
