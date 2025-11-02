@@ -9,10 +9,18 @@ import {
 } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 
+type Bay = { id: number; status: string; player: string; sm: string; time: string };
+
+type StatusColors = { border: string; text: string; bg: string };
+
+type LegendProps = { color: string; label: string };
+
+type OverviewCardProps = { title: string; value: string; subtitle: string; color: string };
+
 export default function DashboardTab() {
   // Pagination + selected
   const [currentPage, setCurrentPage] = useState(1);
-  const [selectedBay, setSelectedBay] = useState(null);
+  const [selectedBay, setSelectedBay] = useState<Bay | null>(null);
 
   // ✅ Quick Overview Data
   const overviewData = [
@@ -62,7 +70,7 @@ export default function DashboardTab() {
   ];
 
   // ✅ Color Scheme
-  const getStatusColors = (status) => {
+  const getStatusColors = (status: string): StatusColors => {
     switch (status) {
       case "Available":
         return { border: "#2E7D32", text: "#fff", bg: "#2E7D32" };
@@ -78,7 +86,7 @@ export default function DashboardTab() {
   };
 
   // ✅ Legend component
-  const Legend = ({ color, label }) => (
+  const Legend = ({ color, label }: LegendProps) => (
     <View style={styles.legendItem}>
       <View style={[styles.legendColor, { backgroundColor: color }]} />
       <Text style={styles.legendText}>{label}</Text>
@@ -86,7 +94,7 @@ export default function DashboardTab() {
   );
 
   // ✅ Overview Card component
-  const OverviewCard = ({ title, value, subtitle, color }) => (
+  const OverviewCard = ({ title, value, subtitle, color }: OverviewCardProps) => (
     <View style={[styles.overviewCard, { borderLeftColor: color }]}>
       <Text style={styles.overviewTitle}>{title}</Text>
       <Text style={[styles.overviewValue, { color }]}>{value}</Text>

@@ -20,6 +20,116 @@ export class AdminService {
     return { employee_id: u.employee_id, full_name: u.full_name, username: u.username, role: u.role };
   }
 
+  // Chat-related helpers
+  async listChats() {
+    // return simple room list
+    const rooms = await this.prisma.chatRoom.findMany({ select: { chat_id: true, name: true, is_group: true } });
+    return rooms.map((r: any) => ({ chat_id: r.chat_id, name: r.name, is_group: r.is_group }));
+  }
+
+  async getChatMessages(chatId: number) {
+    if (!chatId && chatId !== 0) throw new BadRequestException('Invalid chat id');
+    const msgs = await this.prisma.chatMessage.findMany({
+      where: { chat_id: chatId },
+      include: { sender: true },
+      orderBy: { sent_at: 'asc' },
+      take: 1000,
+    });
+    return msgs.map((m: any) => ({
+      message_id: m.message_id,
+      chat_id: m.chat_id,
+      sender_id: m.sender_id ?? m.sender?.employee_id ?? null,
+      sender_name: m.sender?.full_name ?? m.sender?.username ?? null,
+      content: m.content,
+      sent_at: m.sent_at,
+    }));
+  }
+
+  async postChatMessage(chatId: number, content: string, senderId?: number) {
+    if (!content || content.trim().length === 0) throw new BadRequestException('content is required');
+    if (!senderId) throw new BadRequestException('senderId is required');
+    // ensure room exists (if chatId=0 is pseudo All Roles, try find/create)
+    let roomId = chatId;
+    if (chatId === 0) {
+      const existing = await this.prisma.chatRoom.findFirst({ where: { name: 'All Roles' } });
+      if (!existing) {
+        const created = await this.prisma.chatRoom.create({ data: { name: 'All Roles', is_group: true } });
+        roomId = created.chat_id;
+      } else roomId = existing.chat_id;
+    }
+
+  const created = await this.prisma.chatMessage.create({ data: { chat_id: roomId, sender_id: senderId, content } });
+    // Optionally write a system log (best-effort)
+    try {
+      await this.writeLog(senderId ?? undefined, Role.Admin, `ChatMessage: chat:${roomId}`, `msg:${created.message_id}`);
+    } catch (e) { void e; }
+  return { message_id: created.message_id, chat_id: created.chat_id, sender_id: created.sender_id, content: created.content, sent_at: created.sent_at };
+  }
+
+  async broadcastMessage(content: string, senderId?: number) {
+    if (!content || content.trim().length === 0) throw new BadRequestException('content is required');
+    if (!senderId) throw new BadRequestException('senderId is required');
+    // find or create an 'All Roles' room and post a message
+    let room = await this.prisma.chatRoom.findFirst({ where: { name: 'All Roles' } });
+    if (!room) {
+      room = await this.prisma.chatRoom.create({ data: { name: 'All Roles', is_group: true } });
+    }
+  const created = await this.prisma.chatMessage.create({ data: { chat_id: room.chat_id, sender_id: senderId, content } });
+    try { await this.writeLog(senderId ?? undefined, Role.Admin, `Broadcast: ${content?.slice(0, 80)}`, `broadcast:${created.message_id}`); } catch (e) { void e; }
+  return { ok: true, message_id: created.message_id, chat_id: room.chat_id, sender_id: created.sender_id };
+  }
+
+  // One-to-one direct message: find existing private chat (is_group = false) between the two
+  // participants or create one, then post the message.
+  async postDirectMessage(targetEmployeeId: number, content: string, senderId?: number) {
+    if (!targetEmployeeId) throw new BadRequestException('targetEmployeeId is required');
+    if (!content || content.trim().length === 0) throw new BadRequestException('content is required');
+    if (!senderId) throw new BadRequestException('senderId is required');
+
+    // ensure both employees exist
+    const [a, b] = await Promise.all([
+      this.prisma.employee.findUnique({ where: { employee_id: senderId } }),
+      this.prisma.employee.findUnique({ where: { employee_id: targetEmployeeId } }),
+    ]);
+    if (!a || !b) throw new BadRequestException('Employee not found');
+
+    // Search for existing private chat (is_group=false) that has both participants
+    const candidateRooms = await this.prisma.chatRoom.findMany({ where: { is_group: false }, include: { participants: true } });
+    let room = candidateRooms.find((r: any) => {
+      const parts = (r.participants || []).map((p: any) => Number(p.employee_id));
+      return parts.length === 2 && parts.includes(senderId) && parts.includes(targetEmployeeId);
+    });
+
+    if (!room) {
+      // create a private chat room and add participants
+      const createdRoom = await this.prisma.chatRoom.create({ data: { name: null, is_group: false } });
+      await this.prisma.chatParticipant.createMany({ data: [{ chat_id: createdRoom.chat_id, employee_id: senderId }, { chat_id: createdRoom.chat_id, employee_id: targetEmployeeId }] });
+      const newRoom = await this.prisma.chatRoom.findUnique({ where: { chat_id: createdRoom.chat_id }, include: { participants: true } });
+      if (!newRoom) throw new BadRequestException('Failed creating chat room');
+      room = newRoom as any;
+    }
+
+    if (!room) throw new BadRequestException('Failed creating/find chat room');
+
+    const created = await this.prisma.chatMessage.create({ data: { chat_id: room.chat_id, sender_id: senderId, content } });
+    try { await this.writeLog(senderId ?? undefined, Role.Admin, `DirectMessage: ${content?.slice(0, 80)}`, `dm:${created.message_id}`); } catch (e) { void e; }
+  return { message_id: created.message_id, chat_id: room.chat_id, sender_id: created.sender_id, content: created.content, sent_at: created.sent_at };
+  }
+
+  async getDirectMessages(targetEmployeeId: number, senderId: number) {
+    if (!targetEmployeeId) throw new BadRequestException('targetEmployeeId is required');
+    if (!senderId) throw new BadRequestException('senderId is required');
+
+    const candidateRooms = await this.prisma.chatRoom.findMany({ where: { is_group: false }, include: { participants: true } });
+    const room = candidateRooms.find((r: any) => {
+      const parts = (r.participants || []).map((p: any) => Number(p.employee_id));
+      return parts.length === 2 && parts.includes(senderId) && parts.includes(targetEmployeeId);
+    });
+    if (!room) return [];
+    const msgs = await this.prisma.chatMessage.findMany({ where: { chat_id: room.chat_id }, include: { sender: true }, orderBy: { sent_at: 'asc' } });
+  return msgs.map((m: any) => ({ message_id: m.message_id, chat_id: m.chat_id, sender_id: m.sender_id ?? m.sender?.employee_id ?? null, sender_name: m.sender?.full_name ?? m.sender?.username ?? null, content: m.content, sent_at: m.sent_at }));
+  }
+
   // Helper to write an action to SystemLog when an actor is available
   private async writeLog(
     actorId: number | undefined,

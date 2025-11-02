@@ -40,6 +40,94 @@ export class AdminController {
     return this.adminService.getStaff();
   }
 
+  // Chat rooms listing
+  @Get('chats')
+  async listChats() {
+    try {
+      return await this.adminService.listChats();
+    } catch (e: any) {
+      throw new InternalServerErrorException(e?.message ?? 'Failed listing chats');
+    }
+  }
+
+  // Messages for a chat
+  @Get('chats/:chatId/messages')
+  async getChatMessages(@Param('chatId') chatIdStr: string) {
+    try {
+      const chatId = Number(chatIdStr);
+      if (Number.isNaN(chatId)) throw new BadRequestException('Invalid chatId');
+      return await this.adminService.getChatMessages(chatId);
+    } catch (e: any) {
+      if (e instanceof BadRequestException) throw e;
+      throw new InternalServerErrorException(e?.message ?? 'Failed listing messages');
+    }
+  }
+
+  // Post a message to a chat (admin)
+  @UseGuards(AuthGuard)
+  @Post('chats/:chatId/messages')
+  async postChatMessage(@Param('chatId') chatIdStr: string, @Body() body: any, @Req() req: Request & { user?: any }) {
+    try {
+      const chatId = Number(chatIdStr);
+      if (Number.isNaN(chatId)) throw new BadRequestException('Invalid chatId');
+      const content = String(body?.content ?? '');
+      if (!content) throw new BadRequestException('content is required');
+      const senderId = req?.user?.sub ? Number(req.user.sub) : undefined;
+      return await this.adminService.postChatMessage(chatId, content, senderId);
+    } catch (e: any) {
+      if (e instanceof BadRequestException) throw e;
+      throw new InternalServerErrorException(e?.message ?? 'Failed posting message');
+    }
+  }
+
+  // Broadcast message to all users / all roles
+  @UseGuards(AuthGuard)
+  @Post('chats/broadcast')
+  async broadcast(@Body() body: any, @Req() req: Request & { user?: any }) {
+    try {
+      const content = String(body?.content ?? '');
+      if (!content) throw new BadRequestException('content is required');
+      const senderId = req?.user?.sub ? Number(req.user.sub) : undefined;
+      return await this.adminService.broadcastMessage(content, senderId);
+    } catch (e: any) {
+      if (e instanceof BadRequestException) throw e;
+      throw new InternalServerErrorException(e?.message ?? 'Failed broadcasting message');
+    }
+  }
+
+  // Send direct message to a specific employee (one-to-one)
+  @UseGuards(AuthGuard)
+  @Post('chats/direct/:employeeId/messages')
+  async postDirectMessage(@Param('employeeId') employeeIdStr: string, @Body() body: any, @Req() req: Request & { user?: any }) {
+    try {
+      const employeeId = Number(employeeIdStr);
+      if (Number.isNaN(employeeId)) throw new BadRequestException('Invalid employeeId');
+      const content = String(body?.content ?? '');
+      if (!content) throw new BadRequestException('content is required');
+      const senderId = req?.user?.sub ? Number(req.user.sub) : undefined;
+      return await this.adminService.postDirectMessage(employeeId, content, senderId);
+    } catch (e: any) {
+      if (e instanceof BadRequestException) throw e;
+      throw new InternalServerErrorException(e?.message ?? 'Failed posting direct message');
+    }
+  }
+
+  // Get direct messages between authenticated user and target employee
+  @UseGuards(AuthGuard)
+  @Get('chats/direct/:employeeId/messages')
+  async getDirectMessages(@Param('employeeId') employeeIdStr: string, @Req() req: Request & { user?: any }) {
+    try {
+      const employeeId = Number(employeeIdStr);
+      if (Number.isNaN(employeeId)) throw new BadRequestException('Invalid employeeId');
+      const senderId = req?.user?.sub ? Number(req.user.sub) : undefined;
+      if (!senderId) throw new BadRequestException('senderId missing');
+      return await this.adminService.getDirectMessages(employeeId, senderId);
+    } catch (e: any) {
+      if (e instanceof BadRequestException) throw e;
+      throw new InternalServerErrorException(e?.message ?? 'Failed getting direct messages');
+    }
+  }
+
   @Post('staff')
   async createStaff(@Body() dto: CreateStaffDto) {
     try {

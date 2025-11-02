@@ -1,6 +1,6 @@
 import { Stack } from "expo-router";
 import React, { useEffect } from 'react';
-import { SettingsProvider } from './_lib/SettingsProvider';
+import SettingsProvider from './lib/SettingsProvider';
 import { useWindowDimensions } from 'react-native';
 import * as ScreenOrientation from 'expo-screen-orientation';
 
