@@ -23,9 +23,19 @@ export default function TeamChats() {
   const [showDebug, setShowDebug] = useState(false);
 
   useEffect(() => {
+    // On mount: keep the clock ticking, fetch admin and then load the roster.
     const t = setInterval(() => setNow(new Date()), 1000);
-    fetchAdmin();
-    fetchRooms();
+    (async () => {
+      try {
+        const id = await fetchAdmin();
+        // pass the freshly-obtained id into fetchRooms so the initial fetch can
+        // immediately exclude the logged user without waiting for state update.
+        await fetchRooms(id ?? null);
+      } catch {
+        // even if fetchAdmin fails, try loading rooms without an id
+        await fetchRooms(null);
+      }
+    })();
     return () => { clearInterval(t); };
   }, []);
 
@@ -89,7 +99,7 @@ export default function TeamChats() {
     }
   };
 
-  const fetchRooms = async () => {
+  const fetchRooms = async (currentAdminId: number | null = null) => {
     setLoadingRooms(true);
     try {
       const baseUrl = await getBaseUrl();
@@ -101,8 +111,11 @@ export default function TeamChats() {
         const r2 = await fetch(`${baseUrl}/api/admin/staff`, { method: 'GET', credentials: 'include', headers: headers2 });
         if (r2.ok) {
           const staff = await r2.json();
+          try { console.log('fetchRooms: raw staff response', staff); } catch {}
           if (Array.isArray(staff) && staff.length) {
-            const mapped = staff.map((s: any) => ({ employee_id: Number(s.id ?? s.employee_id), name: s.full_name ?? s.username ?? `User ${s.id}`, role: s.role ?? '' }));
+            // Prefer explicit employee_id field when present
+            const mapped = staff.map((s: any) => ({ employee_id: Number(s.employee_id ?? s.id), name: s.full_name ?? s.username ?? `User ${s.id ?? s.employee_id}`, role: s.role ?? '' }));
+            try { console.log('fetchRooms: mapped staff', mapped, 'adminEmployeeId', adminEmployeeId); } catch {}
             roomsAcc.push(...mapped);
           }
         }
@@ -115,16 +128,31 @@ export default function TeamChats() {
           const key = it.employee_id ? it.employee_id : `chat-${it.chat_id ?? 'unknown'}`;
           if (!map.has(key)) map.set(key, it);
         }
-  return Array.from(map.values()).filter((r) => !(r.employee_id && adminEmployeeId && r.employee_id === adminEmployeeId));
+        // Exclude the logged-in employee and any staff with role 'serviceman'
+        const adminIdToCheck = currentAdminId ?? adminEmployeeId;
+        return Array.from(map.values()).filter((r) => {
+          const isSelf = Boolean(r.employee_id && adminIdToCheck && r.employee_id === adminIdToCheck);
+          const isServiceman = Boolean(r.role && String(r.role).toLowerCase() === 'serviceman');
+          return !isSelf && !isServiceman;
+        });
       };
 
-      const deduped = dedupeRooms(roomsAcc);
-      setRooms(deduped);
+  const deduped = dedupeRooms(roomsAcc);
+  try { console.log('fetchRooms: deduped roster', deduped); } catch {}
+  setRooms(deduped);
       // auto-select first staff by default
       if (deduped.length) setSelectedChat(deduped[0]);
     } catch {}
     finally { setLoadingRooms(false); }
   };
+
+  // If adminEmployeeId changes after mount (e.g., login completes), refresh rooms
+  useEffect(() => {
+    if (adminEmployeeId !== null) {
+      // re-run rooms fetch to ensure self is excluded
+      fetchRooms(adminEmployeeId);
+    }
+  }, [adminEmployeeId]);
 
   const fetchMessages = async (chatId: number) => {
     setLoadingMessages(true);
@@ -364,7 +392,7 @@ export default function TeamChats() {
       <View style={styles.bodyRow}>
         <View style={styles.rosterColumn}>
           <Text style={styles.rosterTitle}>Chat Roster</Text>
-          {loadingRooms ? <ActivityIndicator /> : (
+          {(loadingRooms || adminEmployeeId === null) ? <ActivityIndicator /> : (
             <FlatList
               data={rooms}
               renderItem={renderRoom}
