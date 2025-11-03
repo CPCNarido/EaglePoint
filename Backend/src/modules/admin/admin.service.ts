@@ -194,9 +194,7 @@ export class AdminService {
     const totalHours = Math.round((totalMs / (1000 * 60 * 60)) * 100) / 100;
 
     // bay utilization rate: occupied bays / total bays (current snapshot)
-    const bays = await this.prisma.bay.findMany({
-      select: { bay_id: true, status: true },
-    });
+    const bays = await this.prisma.bay.findMany({ select: { bay_id: true, status: true } });
     const totalBays = bays.length;
     const occupied = bays.filter(
       (b) => String(b.status) !== 'Available',
@@ -602,6 +600,172 @@ export class AdminService {
     return { ok: true };
   }
 
+  // Ensure the Bay table matches the given totalAvailableBays.
+  // - Promotes bay_number values like 'B1' -> '1' when possible.
+  // - Creates missing numeric bay rows (1..total) as Available.
+  // - Attempts to delete numeric bay rows above total when they have no assignments and are Available.
+  // This operation is best-effort and will skip deletions that would violate FK constraints or remove active/maintained bays.
+  private async syncBaysToTotal(total: number, force = false) {
+    if (!total || total <= 0) return { ok: false, reason: 'invalid total' };
+    try {
+      // Load all bays (atomic snapshot)
+      let bays = await this.prisma.bay.findMany({ orderBy: { bay_id: 'asc' } });
+
+      // helper to normalize bay_number like 'B12' -> '12', numeric strings stay numeric
+      const normalize = (s: any) => {
+        if (s === null || s === undefined) return null;
+        const str = String(s).trim();
+        const m = str.match(/^\d+$/);
+        if (m) return str;
+        const m2 = str.match(/^B(\d+)$/i);
+        if (m2) return m2[1];
+        return null;
+      };
+
+      const actions: any[] = [];
+      const blocked: any[] = [];
+
+      // 1) Promote promotable 'B#' entries when the numeric target is missing
+      for (const b of bays) {
+        const m = String(b.bay_number).match(/^B(\d+)$/i);
+        if (m) {
+          const target = m[1];
+          const exists = bays.find((x) => String(x.bay_number) === target);
+          if (!exists) {
+            try {
+              await this.prisma.bay.update({ where: { bay_id: b.bay_id }, data: { bay_number: target } });
+              actions.push({ type: 'promote', bay_id: b.bay_id, from: b.bay_number, to: target });
+            } catch (e) {
+              actions.push({ type: 'promote', bay_id: b.bay_id, from: b.bay_number, to: target, ok: false, error: (e && e.message) || e });
+            }
+          }
+        }
+      }
+
+      // Refresh bays after promotions
+      bays = await this.prisma.bay.findMany({ orderBy: { bay_id: 'asc' } });
+
+      // Build numeric map: key -> array of bay rows whose bay_number normalizes to that key
+      const numericMap = new Map<string, any[]>();
+      const others: any[] = [];
+      for (const b of bays) {
+        const n = normalize(b.bay_number);
+        if (n) {
+          if (!numericMap.has(n)) numericMap.set(n, []);
+          numericMap.get(n)!.push(b);
+        } else {
+          others.push(b);
+        }
+      }
+
+      // 2) Ensure exactly one row exists for each 1..total
+      for (let i = 1; i <= total; i++) {
+        const key = String(i);
+        const list = numericMap.get(key) || [];
+        if (list.length === 0) {
+          // create missing
+          try {
+            const created = await this.prisma.bay.create({ data: { bay_number: key, status: 'Available' } });
+            actions.push({ type: 'create', bay_number: key, createdId: created.bay_id });
+            // add to map to reflect current state
+            numericMap.set(key, [{ ...created }]);
+          } catch (e) {
+            actions.push({ type: 'create', bay_number: key, ok: false, error: (e && e.message) || e });
+          }
+        } else if (list.length > 1) {
+          // deduplicate: keep one, attempt to delete extras that are safe (no assignments, status Available)
+          // prefer to keep the lowest bay_id
+          list.sort((a: any, b: any) => a.bay_id - b.bay_id);
+          const keeper = list[0];
+          const extras = list.slice(1);
+          numericMap.set(key, [keeper]);
+          for (const ex of extras) {
+            try {
+              const asgCount = await this.prisma.bayAssignment.count({ where: { bay_id: ex.bay_id } });
+              if (asgCount === 0 && String(ex.status) === 'Available') {
+                await this.prisma.bay.delete({ where: { bay_id: ex.bay_id } });
+                actions.push({ type: 'delete-extra-duplicate', bay_id: ex.bay_id, bay_number: ex.bay_number });
+              } else if (force) {
+                // Force delete: remove dependent transactions, assignments, then bay
+                try {
+                  const assignments = await this.prisma.bayAssignment.findMany({ where: { bay_id: ex.bay_id }, select: { assignment_id: true } });
+                  const assignmentIds = assignments.map((a: any) => a.assignment_id);
+                  if (assignmentIds.length) {
+                    await this.prisma.ballTransaction.deleteMany({ where: { assignment_id: { in: assignmentIds } } });
+                  }
+                  await this.prisma.bayAssignment.deleteMany({ where: { bay_id: ex.bay_id } });
+                  await this.prisma.bay.delete({ where: { bay_id: ex.bay_id } });
+                  actions.push({ type: 'force-delete-extra-duplicate', bay_id: ex.bay_id, bay_number: ex.bay_number, deletedAssignments: assignmentIds.length });
+                } catch (innerErr) {
+                  blocked.push({ reason: 'duplicate-force-delete-error', bay_id: ex.bay_id, bay_number: ex.bay_number, error: (innerErr && innerErr.message) || innerErr });
+                }
+              } else {
+                blocked.push({ reason: 'duplicate-not-deletable', bay_id: ex.bay_id, bay_number: ex.bay_number, assignments: asgCount, status: ex.status });
+              }
+            } catch (e) {
+              blocked.push({ reason: 'duplicate-delete-error', bay_id: ex.bay_id, bay_number: ex.bay_number, error: (e && e.message) || e });
+            }
+          }
+        }
+      }
+
+      // 3) Any bay rows not in 1..total (others and numeric keys > total) should be removed if safe
+      // Collect candidates: others + numeric entries with key > total
+      const toCheck: any[] = [];
+      for (const b of others) toCheck.push(b);
+      for (const [k, arr] of numericMap.entries()) {
+        const n = Number(k);
+        if (!Number.isFinite(n) || n > total) {
+          for (const r of arr) toCheck.push(r);
+          // mark for removal from map so final count computation is accurate
+          numericMap.delete(k);
+        }
+      }
+
+      for (const c of toCheck) {
+        try {
+          const asgCount = await this.prisma.bayAssignment.count({ where: { bay_id: c.bay_id } });
+          if (asgCount === 0 && String(c.status) === 'Available') {
+            await this.prisma.bay.delete({ where: { bay_id: c.bay_id } });
+            actions.push({ type: 'delete-out-of-range', bay_id: c.bay_id, bay_number: c.bay_number });
+          } else if (force) {
+            try {
+              const assignments = await this.prisma.bayAssignment.findMany({ where: { bay_id: c.bay_id }, select: { assignment_id: true } });
+              const assignmentIds = assignments.map((a: any) => a.assignment_id);
+              if (assignmentIds.length) {
+                await this.prisma.ballTransaction.deleteMany({ where: { assignment_id: { in: assignmentIds } } });
+              }
+              await this.prisma.bayAssignment.deleteMany({ where: { bay_id: c.bay_id } });
+              await this.prisma.bay.delete({ where: { bay_id: c.bay_id } });
+              actions.push({ type: 'force-delete-out-of-range', bay_id: c.bay_id, bay_number: c.bay_number, deletedAssignments: assignmentIds.length });
+            } catch (innerErr) {
+              blocked.push({ reason: 'out-of-range-force-delete-error', bay_id: c.bay_id, bay_number: c.bay_number, error: (innerErr && innerErr.message) || innerErr });
+            }
+          } else {
+            blocked.push({ reason: 'out-of-range-not-deletable', bay_id: c.bay_id, bay_number: c.bay_number, assignments: asgCount, status: c.status });
+          }
+        } catch (e) {
+          blocked.push({ reason: 'out-of-range-delete-error', bay_id: c.bay_id, bay_number: c.bay_number, error: (e && e.message) || e });
+        }
+      }
+
+      // Final verification: count numericMap keys that are 1..total
+      const finalBays = await this.prisma.bay.findMany({ orderBy: { bay_id: 'asc' } });
+      const finalNumeric = finalBays.filter((b) => {
+        const n = normalize(b.bay_number);
+        if (!n) return false;
+        const num = Number(n);
+        return Number.isFinite(num) && num >= 1 && num <= total;
+      });
+
+      const finalCount = finalNumeric.length;
+
+      return { ok: true, desired: total, finalCount, actions, blocked };
+    } catch (e) {
+      return { ok: false, error: (e && e.message) || e };
+    }
+  }
+
   // Return application settings as a key -> value map
   async getSettings() {
     const rows = await (this.prisma as any).systemSetting.findMany({
@@ -645,137 +809,81 @@ export class AdminService {
 
   // Update multiple settings. Payload is a map of key->value strings.
   async updateSettings(payload: Record<string, any>) {
-    if (!payload || typeof payload !== 'object')
-      throw new BadRequestException('Invalid payload');
-    // If SiteConfig / PricingConfig / OperationalConfig keys are present, persist them into their typed tables
+    if (!payload || typeof payload !== 'object') throw new BadRequestException('Invalid payload');
+
     const siteKeys = ['siteName', 'currencySymbol', 'enableReservations'];
     const pricingKeys = ['timedSessionRate', 'openTimeRate'];
-    const operationalKeys = [
-      'totalAvailableBays',
-      'standardTeeIntervalMinutes',
-      'ballBucketWarningThreshold',
-    ];
+    const operationalKeys = ['totalAvailableBays', 'standardTeeIntervalMinutes', 'ballBucketWarningThreshold'];
 
     try {
-      const hasSiteKeys = Object.keys(payload).some((k) =>
-        siteKeys.includes(k),
-      );
+      // Site config
+      const hasSiteKeys = Object.keys(payload).some((k) => siteKeys.includes(k));
       if (hasSiteKeys) {
         const site = await (this.prisma as any).siteConfig.findFirst();
         const siteData: any = {};
-        if (payload.siteName !== undefined)
-          siteData.site_name = String(payload.siteName ?? '');
-        if (payload.currencySymbol !== undefined)
-          siteData.currency_symbol = String(payload.currencySymbol ?? '');
-        if (payload.enableReservations !== undefined)
-          siteData.enable_reservations =
-            payload.enableReservations === true ||
-            String(payload.enableReservations) === 'true';
-
-        if (site) {
-          await (this.prisma as any).siteConfig.update({
-            where: { site_id: site.site_id },
-            data: siteData,
-          });
-        } else {
-          await (this.prisma as any).siteConfig.create({ data: siteData });
-        }
+        if (payload.siteName !== undefined) siteData.site_name = String(payload.siteName ?? '');
+        if (payload.currencySymbol !== undefined) siteData.currency_symbol = String(payload.currencySymbol ?? '');
+        if (payload.enableReservations !== undefined) siteData.enable_reservations = payload.enableReservations === true || String(payload.enableReservations) === 'true';
+        if (site) await (this.prisma as any).siteConfig.update({ where: { site_id: site.site_id }, data: siteData });
+        else await (this.prisma as any).siteConfig.create({ data: siteData });
       }
 
-      const hasPricingKeys = Object.keys(payload).some((k) =>
-        pricingKeys.includes(k),
-      );
+      // Pricing config
+      const hasPricingKeys = Object.keys(payload).some((k) => pricingKeys.includes(k));
       if (hasPricingKeys) {
         const pricing = await (this.prisma as any).pricingConfig.findFirst();
         const pricingData: any = {};
-        if (payload.timedSessionRate !== undefined)
-          pricingData.timed_session_rate = String(
-            payload.timedSessionRate ?? '0',
-          );
-        if (payload.openTimeRate !== undefined)
-          pricingData.open_time_rate = String(payload.openTimeRate ?? '0');
-
-        if (pricing) {
-          await (this.prisma as any).pricingConfig.update({
-            where: { pricing_id: pricing.pricing_id },
-            data: pricingData,
-          });
-        } else {
-          await (this.prisma as any).pricingConfig.create({
-            data: pricingData,
-          });
-        }
+        if (payload.timedSessionRate !== undefined) pricingData.timed_session_rate = String(payload.timedSessionRate ?? '0');
+        if (payload.openTimeRate !== undefined) pricingData.open_time_rate = String(payload.openTimeRate ?? '0');
+        if (pricing) await (this.prisma as any).pricingConfig.update({ where: { pricing_id: pricing.pricing_id }, data: pricingData });
+        else await (this.prisma as any).pricingConfig.create({ data: pricingData });
       }
 
-      const hasOperationalKeys = Object.keys(payload).some((k) =>
-        operationalKeys.includes(k),
-      );
+      // Operational config
+      let syncSummary: any = null;
+      const hasOperationalKeys = Object.keys(payload).some((k) => operationalKeys.includes(k));
       if (hasOperationalKeys) {
         const ops = await (this.prisma as any).operationalConfig.findFirst();
         const opsData: any = {};
-        if (payload.totalAvailableBays !== undefined)
-          opsData.total_available_bays = Number(
-            payload.totalAvailableBays ?? 0,
-          );
-        if (payload.standardTeeIntervalMinutes !== undefined)
-          opsData.standard_tee_interval_minutes = Number(
-            payload.standardTeeIntervalMinutes ?? 0,
-          );
-        if (payload.ballBucketWarningThreshold !== undefined)
-          opsData.ball_bucket_warning_threshold = Number(
-            payload.ballBucketWarningThreshold ?? 0,
-          );
+        if (payload.totalAvailableBays !== undefined) opsData.total_available_bays = Number(payload.totalAvailableBays ?? 0);
+        if (payload.standardTeeIntervalMinutes !== undefined) opsData.standard_tee_interval_minutes = Number(payload.standardTeeIntervalMinutes ?? 0);
+        if (payload.ballBucketWarningThreshold !== undefined) opsData.ball_bucket_warning_threshold = Number(payload.ballBucketWarningThreshold ?? 0);
+        if (ops) await (this.prisma as any).operationalConfig.update({ where: { operational_id: ops.operational_id }, data: opsData });
+        else await (this.prisma as any).operationalConfig.create({ data: opsData });
 
-        if (ops) {
-          await (this.prisma as any).operationalConfig.update({
-            where: { operational_id: ops.operational_id },
-            data: opsData,
-          });
-        } else {
-          await (this.prisma as any).operationalConfig.create({
-            data: opsData,
-          });
-        }
+        // After persisting OperationalConfig, attempt a best-effort sync. Honor destructive force only if explicitly confirmed.
+        try {
+          const finalOps = await (this.prisma as any).operationalConfig.findFirst();
+          const desired = Number(finalOps?.total_available_bays ?? 0);
+          if (Number.isFinite(desired) && desired > 0) {
+            const forceRequested = payload.force === true || String(payload.force) === 'true';
+            const confirmed = String(payload.force_confirmation ?? '').trim() === 'I UNDERSTAND';
+            const forceFlag = forceRequested && confirmed;
+            try {
+              syncSummary = await this.syncBaysToTotal(desired, forceFlag);
+            } catch (e) { syncSummary = { ok: false, error: String(e) }; }
+          }
+        } catch (e) { void e; }
       }
+
+      // Persist remaining keys into the SystemSetting key/value store
+      const keys = Object.keys(payload).filter((k) => !siteKeys.includes(k) && !pricingKeys.includes(k) && !operationalKeys.includes(k));
+      for (const key of keys) {
+        const value = String(payload[key] ?? '');
+        await (this.prisma as any).systemSetting.upsert({ where: { key }, create: { key, value }, update: { value } });
+      }
+
+      // Best-effort logging for settings update
+      try {
+        const adminActor = await this.prisma.employee.findFirst({ where: { role: 'Admin' } });
+        await this.writeLog(adminActor?.employee_id, adminActor?.role as any, `UpdateSettings: ${Object.keys(payload).join(',')}`, 'settings');
+      } catch (e) { void e; }
+
+      return { ok: true, syncSummary };
     } catch (e) {
       void e;
-      // surface helpful message for migrations / db issues
-      throw new BadRequestException(
-        'Failed to persist typed settings - has migrations been applied?',
-      );
+      throw new BadRequestException('Failed to persist typed settings - has migrations been applied?');
     }
-
-    // Persist remaining keys into the SystemSetting key/value store
-    const keys = Object.keys(payload).filter(
-      (k) =>
-        !siteKeys.includes(k) &&
-        !pricingKeys.includes(k) &&
-        !operationalKeys.includes(k),
-    );
-    for (const key of keys) {
-      const value = String(payload[key] ?? '');
-      await (this.prisma as any).systemSetting.upsert({
-        where: { key },
-        create: { key, value },
-        update: { value },
-      });
-    }
-    // Best-effort logging for settings update
-    try {
-      const adminActor = await this.prisma.employee.findFirst({
-        where: { role: 'Admin' },
-      });
-      await this.writeLog(
-        adminActor?.employee_id,
-        adminActor?.role as any,
-        `UpdateSettings: ${Object.keys(payload).join(',')}`,
-        'settings',
-      );
-    } catch (e) {
-      void e;
-    }
-
-    return { ok: true };
   }
 
   /**
@@ -883,6 +991,27 @@ export class AdminService {
       void e;
     }
 
-    return result;
+    // After performing the override, attempt to run a best-effort non-force sync so UI reflects settings
+    let syncSummary: any = null;
+    try {
+      const ops = await (this.prisma as any).operationalConfig.findFirst();
+      const desired = Number(ops?.total_available_bays ?? 0);
+      if (Number.isFinite(desired) && desired > 0) {
+        try {
+          syncSummary = await this.syncBaysToTotal(desired, false);
+          try {
+            await this.writeLog(undefined as any, Role.Admin, `SyncBaysToTotal: ${desired}`, `sync:${desired}`);
+          } catch (e) {
+            void e;
+          }
+        } catch (e) {
+          syncSummary = { ok: false, error: String(e) };
+        }
+      }
+    } catch (e) {
+      void e;
+    }
+
+    return { ok: true, syncSummary };
   }
 }

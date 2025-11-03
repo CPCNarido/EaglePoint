@@ -1,0 +1,112 @@
+[
+  {
+    "assignment_id": 1,
+    "player_id": 1,
+    "bay_id": 1,
+    "dispatcher_id": 1,
+    "serviceman_id": 1,
+    "assigned_time": "2025-10-29T07:03:03.657Z",
+    "open_time": true,
+    "end_time": null,
+    "session_type": "Timed"
+  },
+  {
+    "assignment_id": 2,
+    "player_id": 2,
+    "bay_id": 2,
+    "dispatcher_id": 1,
+    "serviceman_id": 1,
+    "assigned_time": "2025-10-29T07:03:03.660Z",
+    "open_time": false,
+    "end_time": null,
+    "session_type": "Open"
+  },
+  {
+    "assignment_id": 3,
+    "player_id": 3,
+    "bay_id": 4,
+    "dispatcher_id": 1,
+    "serviceman_id": 1,
+    "assigned_time": "2025-10-29T07:03:03.661Z",
+    "open_time": false,
+    "end_time": null,
+    "session_type": "Open"
+  },
+  {
+    "assignment_id": 4,
+    "player_id": 5,
+    "bay_id": 5,
+    "dispatcher_id": 1,
+    "serviceman_id": 1,
+    "assigned_time": "2025-10-29T07:03:03.661Z",
+    "open_time": true,
+    "end_time": null,
+    "session_type": "Timed"
+  },
+  {
+    "assignment_id": 5,
+    "player_id": 4,
+    "bay_id": 3,
+    "dispatcher_id": 1,
+    "serviceman_id": 1,
+    "assigned_time": "2025-10-29T07:03:03.660Z",
+    "open_time": true,
+    "end_time": null,
+    "session_type": "Timed"
+  },
+  {
+    "assignment_id": 6,
+    "player_id": 6,
+    "bay_id": 1,
+    "dispatcher_id": 1,
+    "serviceman_id": 1,
+    "assigned_time": "2025-10-29T07:10:20.623Z",
+    "open_time": true,
+    "end_time": null,
+    "session_type": "Timed"
+  },
+  {
+    "assignment_id": 7,
+    "player_id": 7,
+    "bay_id": 3,
+    "dispatcher_id": 1,
+    "serviceman_id": 1,
+    "assigned_time": "2025-10-29T07:10:20.627Z",
+    "open_time": true,
+    "end_time": null,
+    "session_type": "Timed"
+  },
+  {
+    "assignment_id": 8,
+    "player_id": 8,
+    "bay_id": 2,
+    "dispatcher_id": 1,
+    "serviceman_id": 1,
+    "assigned_time": "2025-10-29T07:10:20.627Z",
+    "open_time": false,
+    "end_time": null,
+    "session_type": "Open"
+  },
+  {
+    "assignment_id": 9,
+    "player_id": 9,
+    "bay_id": 5,
+    "dispatcher_id": 1,
+    "serviceman_id": 1,
+    "assigned_time": "2025-10-29T07:10:20.627Z",
+    "open_time": true,
+    "end_time": null,
+    "session_type": "Timed"
+  },
+  {
+    "assignment_id": 10,
+    "player_id": 10,
+    "bay_id": 4,
+    "dispatcher_id": 1,
+    "serviceman_id": 1,
+    "assigned_time": "2025-10-29T07:10:20.627Z",
+    "open_time": false,
+    "end_time": null,
+    "session_type": "Open"
+  }
+]

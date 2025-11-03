@@ -229,35 +229,39 @@ export default function AdminDashboard() {
     return () => clearInterval(tick);
   }, []);
 
-  // existing useEffect continues after this
-  useEffect(() => {
-    const fetchOverview = async () => {
-      if (isFetchingRef.current) return;
-      isFetchingRef.current = true;
-      setLoadingOverview(true);
+  // fetchOverview is used from multiple places (initial load, polling, and tab changes)
+  const fetchOverview = React.useCallback(async () => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
+    setLoadingOverview(true);
+    try {
+      // Resolve persisted probe override if available (helps physical devices)
+      let baseUrl = Platform.OS === 'android' ? 'http://10.127.147.53:3000' : 'http://localhost:3000';
       try {
-          // Resolve persisted probe override if available (helps physical devices)
-          let baseUrl = Platform.OS === 'android' ? 'http://10.127.147.53:3000' : 'http://localhost:3000';
-          try {
-            // @ts-ignore - dynamic import to avoid bundler-time dependency
-            const AsyncStorageModule = await import('@react-native-async-storage/async-storage').catch(() => null);
-            const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
-            const override = AsyncStorage ? await AsyncStorage.getItem('backendBaseUrlOverride') : null;
-            if (override) baseUrl = override;
-          } catch {
-            // ignore
-          }
-          const res = await fetch(`${baseUrl}/api/admin/overview`, { method: 'GET', credentials: 'include' });
-          if (!res.ok) return setOverview(null);
-          const data = await res.json();
-          setOverview(data);
-        } catch {
-          setOverview(null);
-        } finally {
-          setLoadingOverview(false);
-          isFetchingRef.current = false;
-        }
-    };
+        // @ts-ignore - dynamic import to avoid bundler-time dependency
+        const AsyncStorageModule = await import('@react-native-async-storage/async-storage').catch(() => null);
+        const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
+        const override = AsyncStorage ? await AsyncStorage.getItem('backendBaseUrlOverride') : null;
+        if (override) baseUrl = override;
+      } catch {
+        // ignore
+      }
+      const res = await fetch(`${baseUrl}/api/admin/overview`, { method: 'GET', credentials: 'include' });
+      if (!res.ok) {
+        setOverview(null);
+        return;
+      }
+      const data = await res.json();
+      setOverview(data);
+    } catch {
+      setOverview(null);
+    } finally {
+      setLoadingOverview(false);
+      isFetchingRef.current = false;
+    }
+  }, []);
+
+  useEffect(() => {
     // initial fetch
     fetchOverview();
 
@@ -278,6 +282,7 @@ export default function AdminDashboard() {
     try {
       if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('overview:updated', onOverviewUpdated as EventListener);
     } catch {}
+
     // fetch admin identity for sidebar
     const fetchAdmin = async () => {
       try {
@@ -311,13 +316,13 @@ export default function AdminDashboard() {
           }
         }
         if (!d) return;
-    const name = d?.full_name || d?.name || d?.username || 'ADMIN';
-    // Prefer the database employee id. If not present, allow camelCase employeeId as a fallback.
-    // Do NOT fall back to internal ids — the sidebar must show the employee id from the DB.
-    const empId = d?.employee_id ?? d?.employeeId ?? null;
-    const id = empId != null ? String(empId) : '';
-    setAdminName(name);
-    setAdminId(id);
+        const name = d?.full_name || d?.name || d?.username || 'ADMIN';
+        // Prefer the database employee id. If not present, allow camelCase employeeId as a fallback.
+        // Do NOT fall back to internal ids — the sidebar must show the employee id from the DB.
+        const empId = d?.employee_id ?? d?.employeeId ?? null;
+        const id = empId != null ? String(empId) : '';
+        setAdminName(name);
+        setAdminId(id);
       } catch {
         // ignore
       }
@@ -333,7 +338,7 @@ export default function AdminDashboard() {
         if (typeof window !== 'undefined' && window.removeEventListener) window.removeEventListener('overview:updated', onOverviewUpdated as EventListener);
       } catch {}
     };
-  }, []);
+  }, [fetchOverview]);
 
   // ensure we exit fullscreen mode if the component unmounts while fullscreen is active
   useEffect(() => {
@@ -720,6 +725,21 @@ export default function AdminDashboard() {
     }
   };
 
+  // When switching tabs, refresh settings and overview so the UI reflects latest DB values.
+  const handleTabPress = async (name: string) => {
+    try {
+      if (name === activeTab) return;
+      // Refresh typed settings from server (OperationalConfig etc.)
+      try { await settings.refresh(); } catch {}
+      // Re-fetch overview from the backend to make sure UI shows up-to-date values
+      try { await fetchOverview(); } catch {}
+      setActiveTab(name);
+    } catch (e) {
+      // fallback to tab switch on error
+      setActiveTab(name);
+    }
+  };
+
   const tabs = [
     { name: "Dashboard", icon: "dashboard" },
     { name: "Staff Management", icon: "group" },
@@ -767,7 +787,7 @@ export default function AdminDashboard() {
               tw.mY1,
               activeTab === tab.name ? { backgroundColor: '#405C45' } : {},
             ]}
-            onPress={() => setActiveTab(tab.name)}
+            onPress={() => handleTabPress(tab.name)}
           >
             <MaterialIcons
               name={tab.icon as any}
