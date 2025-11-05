@@ -387,8 +387,6 @@ export default function TeamChats() {
           <Text style={styles.dateText}>{now.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })}</Text>
         </View>
       </View>
-      <View style={styles.divider} />
-
       <View style={styles.bodyRow}>
         <View style={styles.rosterColumn}>
           <Text style={styles.rosterTitle}>Chat Roster</Text>

@@ -1,17 +1,23 @@
 import React, { useState, useEffect } from "react";
-import { View, Text, TouchableOpacity, ScrollView, Alert, Platform, Modal, StyleSheet, useWindowDimensions, Animated, StatusBar as RNStatusBar, Image, ImageBackground, AppState } from "react-native";
+import { View, Text, TouchableOpacity, ScrollView, Alert, Platform, Modal, StyleSheet, useWindowDimensions, Animated, Image, ImageBackground, AppState, Pressable, TextInput } from "react-native";
 import { tw } from 'react-native-tailwindcss';
 import { useRouter } from "expo-router";
 import { useNavigation } from '@react-navigation/native';
-// Defer loading of icons to runtime
 import { logoutAndClear } from '../../_lib/auth';
 import { useSettings } from '../../lib/SettingsProvider';
+import { buildNotification } from '../../lib/notification';
 import StaffManagement from "./Tabs/StaffManagement";
 import BayManagement from "./Tabs/BayManagement";
 import SystemSettings from "./Tabs/SystemSettingsTab";
 import ReportsAndAnalytics from "./Tabs/ReportsAndAnalytics";
 import TeamChats from "./Tabs/TeamChats";
 import AuditLogs from "./Tabs/AuditLogs";
+import OverviewCard from '../../components/OverviewCard';
+import QuickOverview from '../../components/QuickOverview';
+import Legend from './components/Legend';
+import InfoPanel from './components/InfoPanel';
+import { clamp, getColorFromStatus, legendMatchesStatus } from '../utils/uiHelpers';
+import { enterFullScreen, exitFullScreen, reloadApp } from '../utils/fullscreen';
 
 
 type OverviewItem = { title: string; value: string; subtitle: string; color: string };
@@ -61,6 +67,58 @@ export default function AdminDashboard() {
   const settings = useSettings();
   const prevTotalRef = React.useRef<number | null>(null);
   const [highlightedBays, setHighlightedBays] = useState<number[]>([]);
+  // Selected bay for info popup
+  const [selectedBay, setSelectedBay] = useState<number | null>(null);
+  const [selectedBayDetails, setSelectedBayDetails] = useState<any>(null);
+  // Notifications for countdown alerts (10-minute warnings) and remaining-time map
+  const [notifications, setNotifications] = useState<Array<{ id: string; bay: number; message: string; when: number; threshold?: 't10' | 't5' | 't0' }>>([]);
+  const [remainingMap, setRemainingMap] = useState<Record<number, number>>({});
+  const notifiedRef = React.useRef<Record<number, Set<string>>>({});
+
+  // (Testing helpers removed)
+
+  const dismissNotification = (id: string) => {
+    try { setNotifications((prev) => (prev || []).filter((n) => n.id !== id)); } catch {}
+  };
+
+
+  // (Testing helpers removed)
+
+  // Use the same transient overlay behavior as System Settings but with a fade-out
+  // and longer auto-dismiss. Queue notifications and show them one at a time.
+  const ADMIN_NOTIF_DURATION_MS = 6000; // 6s (longer than default)
+  const adminNotifTimer = React.useRef<number | null>(null);
+  const [adminShowSavedNotification, setAdminShowSavedNotification] = useState<boolean>(false);
+  const notifAnimRef = React.useRef(new Animated.Value(0));
+
+  // When a new notification is added and overlay isn't showing, animate in and schedule auto-dismiss
+  useEffect(() => {
+    try {
+      if ((notifications || []).length > 0 && !adminShowSavedNotification) {
+        setAdminShowSavedNotification(true);
+        // animate in
+        try { Animated.timing(notifAnimRef.current, { toValue: 1, duration: 220, useNativeDriver: true }).start(); } catch {}
+        if (adminNotifTimer.current) { clearTimeout(adminNotifTimer.current as number); adminNotifTimer.current = null; }
+        adminNotifTimer.current = window.setTimeout(() => {
+          // animate out then remove first notification
+          try {
+            Animated.timing(notifAnimRef.current, { toValue: 0, duration: 300, useNativeDriver: true }).start(() => {
+              setNotifications((prev) => (prev || []).slice(1));
+              setAdminShowSavedNotification(false);
+            });
+          } catch (e) {
+            // fallback immediate
+            setNotifications((prev) => (prev || []).slice(1));
+            setAdminShowSavedNotification(false);
+          }
+          adminNotifTimer.current = null;
+        }, ADMIN_NOTIF_DURATION_MS) as unknown as number;
+      }
+    } catch (e) {
+      // ignore
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notifications]);
   // Prevent overlapping overview fetches
   const isFetchingRef = React.useRef(false);
   // Track recent user interactions to avoid spamming fullscreen calls
@@ -79,44 +137,54 @@ export default function AdminDashboard() {
     } catch {}
   };
 
+  // Keep a serialized snapshot of the last overview we saw so we can detect server-side changes.
+  const prevOverviewJsonRef = React.useRef<string | null>(null);
+
+  // Apply an incoming overview payload while preserving UI transient state
+  const applyOverviewUpdate = (newData: any) => {
+    try {
+      const json = JSON.stringify(newData);
+      prevOverviewJsonRef.current = json;
+    } catch {}
+
+    try {
+      // If a bay is currently selected, update its raw details if present in the new payload
+      if (selectedBay != null && newData && Array.isArray(newData.bays)) {
+        const found = newData.bays.find((b: any) => String(b?.bay_number ?? b?.bay_id) === String(selectedBay));
+        if (found) {
+          setSelectedBayDetails((prev: any) => {
+            if (!prev) return prev;
+            const player = prev.player ?? found.player_name ?? found.player ?? '—';
+            const balls = prev.ballsUsed ?? found.total_balls ?? found.balls_used ?? found.bucket_count ?? found.transactions_count ?? '—';
+            return { ...prev, raw: found, player, ballsUsed: balls };
+          });
+        }
+      }
+    } catch {}
+
+    // Finally update overview state so UI refreshes the bay grid and derived maps
+    try { setOverview(newData); } catch {}
+  };
+
   // Responsive helper: treat large screens/tablets specially
   const { width, height } = useWindowDimensions();
   const isTablet = Math.max(width, height) >= 900;
   const isLargeTablet = width >= 1800 || height >= 1200;
   // Responsive badge sizing and small position nudge (move left a few pixels)
-  const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
   // Scale relative to a 1200px baseline and clamp to avoid extreme sizes
   const badgeScale = clamp(width / 1200, 0.9, 1.3);
   const baseBadgeFont = isLargeTablet ? 14 : isTablet ? 12 : 10;
   const responsiveBadgeFontSize = Math.round(baseBadgeFont * badgeScale);
-  // Move the badge slightly to the left (2-5px is perceptible but not disruptive) - changeable
-   // Manual tweak knobs (change these at top-level to tune visuals)
-   // nudgeLeftPx: positive values move the badge further left (smaller negative `right`)
+
    const nudgeLeftPx = 8;
-   // badgeFontOffsetPx: additive manual adjustment to the computed responsive font size (px)
-   // Set to positive/negative values to increase/decrease text size without changing scale math
    const badgeFontOffsetPx = -4;
-   // badgeMinWidth / badgeMinHeight: enforce a minimum shape size for the badge
-   // Set to 0 to allow content-driven sizing.
+
    const badgeMinWidth = 50;
    const badgeMinHeight = 15;
   const baseRight = isLargeTablet ? -18 : isTablet ? -12 : -8;
   const adjustedBadgeRight = baseRight + nudgeLeftPx; // less negative => moves left
 
-  const getColorFromStatus = (status: string) => {
-    switch (status) {
-      case 'Maintenance':
-        return '#C62828';
-      case 'Occupied':
-        return '#A3784E';
-      case 'Open':
-      case 'OpenTime':
-        return '#BF930E';
-      case 'Available':
-      default:
-        return '#2E7D32';
-    }
-  };
+
 
   // Legend filter state: support multi-select so users can highlight multiple statuses
   const [legendFilter, setLegendFilter] = useState<string[]>([]);
@@ -142,85 +210,10 @@ export default function AdminDashboard() {
       if (animations.length) Animated.parallel(animations).start();
     }, [legendFilter, overview, settings.totalAvailableBays]);
 
-    const legendMatchesStatus = (labels: string[], status: string | null) => {
-      if (!labels || labels.length === 0 || !status) return false;
-      for (const label of labels) {
-        switch (label) {
-          case 'Available':
-            if (status === 'Available') return true;
-            break;
-          case 'Assigned':
-            if (status === 'Assigned' || status === 'Occupied') return true;
-            break;
-          case 'Open Time Session':
-            if (status === 'Open' || status === 'OpenTime') return true;
-            break;
-          case 'Maintenance':
-            if (status === 'Maintenance') return true;
-            break;
-          default:
-            break;
-        }
-      }
-      return false;
-    };
+    // legendMatchesStatus moved to ./utils/uiHelpers
 
     // Fullscreen helpers: dynamically import Expo modules so the code is resilient
-    const enterFullScreen = async () => {
-      try {
-        // hide React Native status bar
-        RNStatusBar.setHidden(true);
-
-        if (Platform.OS === 'android') {
-          // dynamic import to avoid bundler-time failure if package isn't installed
-          // @ts-ignore
-          const navModule = await import('expo-navigation-bar').catch(() => null);
-          const nav: any = navModule?.default ?? navModule;
-          if (nav && nav.setBehaviorAsync) {
-            // prefer immersive-sticky where available
-            try { await nav.setBehaviorAsync('immersive-sticky'); } catch {}
-            try { await nav.setVisibilityAsync('hidden'); } catch {}
-          }
-        }
-
-        // lock orientation to landscape for fullscreen experience (adjust if you prefer portrait)
-        // @ts-ignore
-        const soModule = await import('expo-screen-orientation').catch(() => null);
-        const so: any = soModule?.default ?? soModule;
-        if (so && so.lockAsync && so.OrientationLock) {
-          try { await so.lockAsync(so.OrientationLock.LANDSCAPE_RIGHT); } catch {}
-        }
-
-        setIsFullscreen(true);
-      } catch (e) {
-        console.warn('enterFullScreen error', e);
-      }
-    };
-
-    const exitFullScreen = async () => {
-      try {
-        RNStatusBar.setHidden(false);
-        if (Platform.OS === 'android') {
-          // @ts-ignore
-          const navModule = await import('expo-navigation-bar').catch(() => null);
-          const nav: any = navModule?.default ?? navModule;
-          if (nav && nav.setVisibilityAsync) {
-            try { await nav.setVisibilityAsync('visible'); } catch {}
-            try { await nav.setBehaviorAsync('overlay'); } catch {}
-          }
-        }
-        // unlock orientation
-        // @ts-ignore
-        const soModule = await import('expo-screen-orientation').catch(() => null);
-        const so: any = soModule?.default ?? soModule;
-        if (so && so.lockAsync && so.OrientationLock) {
-          try { await so.lockAsync(so.OrientationLock.DEFAULT); } catch {}
-        }
-        setIsFullscreen(false);
-      } catch (e) {
-        console.warn('exitFullScreen error', e);
-      }
-    };
+    // enterFullScreen / exitFullScreen moved to ./utils/fullscreen
 
   useEffect(() => {
     // live clock updater (updates every second)
@@ -228,6 +221,73 @@ export default function AdminDashboard() {
     // cleanup
     return () => clearInterval(tick);
   }, []);
+
+  // Countdown evaluator: compute remaining times and emit 10-minute notifications once per bay
+  useEffect(() => {
+    const iv = setInterval(() => {
+      try {
+        if (!overview || !Array.isArray(overview.bays)) return;
+        const nowTs = Date.now();
+        const nextMap: Record<number, number> = {};
+        const newNotifs: Array<any> = [];
+
+        for (const b of overview.bays) {
+          const num = Number(b?.bay_number ?? b?.bay_id ?? NaN);
+          if (Number.isNaN(num)) continue;
+          const endTs = b?.end_time ? new Date(b.end_time).getTime() : (b?.assignment_end_time ? new Date(b.assignment_end_time).getTime() : null);
+          if (endTs && Number.isFinite(endTs)) {
+            const msLeft = endTs - nowTs;
+            nextMap[num] = msLeft;
+
+            // ensure set exists
+            if (!notifiedRef.current[num]) notifiedRef.current[num] = new Set<string>();
+
+            // thresholds: 10min, 5min, expired
+            const TEN = 10 * 60 * 1000;
+            const FIVE = 5 * 60 * 1000;
+
+            // 10-minute warning (when remaining between 10 and 5 minutes)
+            if (msLeft <= TEN && msLeft > FIVE && !notifiedRef.current[num].has('t10')) {
+              const msg = `Bay ${num} has ${Math.max(1, Math.ceil(msLeft / (1000 * 60)))}m remaining`;
+              newNotifs.push({ id: `bay-${num}-t10-${Date.now()}`, bay: num, message: msg, when: Date.now(), threshold: 't10' });
+              notifiedRef.current[num].add('t10');
+            }
+
+            // 5-minute warning (when remaining between 5 minutes and 0)
+            if (msLeft <= FIVE && msLeft > 0 && !notifiedRef.current[num].has('t5')) {
+              const msg = `Bay ${num} has ${Math.max(1, Math.ceil(msLeft / (1000 * 60)))}m remaining`;
+              newNotifs.push({ id: `bay-${num}-t5-${Date.now()}`, bay: num, message: msg, when: Date.now(), threshold: 't5' });
+              notifiedRef.current[num].add('t5');
+            }
+
+            // time reached (expired)
+            if (msLeft <= 0 && !notifiedRef.current[num].has('t0')) {
+              const msg = `Bay ${num} time is up`;
+              newNotifs.push({ id: `bay-${num}-t0-${Date.now()}`, bay: num, message: msg, when: Date.now(), threshold: 't0' });
+              notifiedRef.current[num].add('t0');
+            }
+          }
+        }
+
+        // merge newNotifs into the existing notification queue, avoiding duplicates
+        if (newNotifs.length > 0) {
+          setNotifications((prev) => {
+            const existing = prev || [];
+            const existingIds = new Set(existing.map((n: any) => n.id));
+            const merged = [...existing];
+            for (const n of newNotifs) if (!existingIds.has(n.id)) merged.push(n);
+            // keep a reasonable history cap
+            const MAX = 80;
+            return merged.slice(-MAX);
+          });
+        }
+
+        // update remaining map every tick
+        setRemainingMap(nextMap);
+      } catch (e) { void e; }
+    }, 1000);
+    return () => clearInterval(iv);
+  }, [overview]);
 
   // fetchOverview is used from multiple places (initial load, polling, and tab changes)
   const fetchOverview = React.useCallback(async () => {
@@ -252,6 +312,15 @@ export default function AdminDashboard() {
         return;
       }
       const data = await res.json();
+      try {
+        const dataJson = JSON.stringify(data);
+        // If we've previously loaded an overview, treat a differing payload as a DB change and reload the app.
+        if (prevOverviewJsonRef.current && prevOverviewJsonRef.current !== dataJson) {
+          try { applyOverviewUpdate(data); } catch {}
+          return;
+        }
+        prevOverviewJsonRef.current = dataJson;
+      } catch {}
       setOverview(data);
     } catch {
       setOverview(null);
@@ -371,7 +440,19 @@ export default function AdminDashboard() {
             es.onmessage = (ev: any) => {
               try {
                 const payload = JSON.parse(ev.data);
-                if (payload) setOverview(payload);
+                // If we've previously loaded an overview, treat this SSE event as a DB change
+                // and reload the whole app. For the very first payload we just populate overview.
+                (async () => {
+                  try {
+                    const json = JSON.stringify(payload);
+                    if (prevOverviewJsonRef.current && prevOverviewJsonRef.current !== json) {
+                      try { applyOverviewUpdate(payload); } catch {}
+                    } else {
+                      setOverview(payload);
+                      prevOverviewJsonRef.current = json;
+                    }
+                  } catch {}
+                })();
               } catch {}
             };
             es.onerror = () => {
@@ -476,40 +557,8 @@ export default function AdminDashboard() {
     prevTotalRef.current = current;
   }, [settings.totalAvailableBays]);
 
-  const Legend: React.FC<{ color: string; label: string }> = ({ color, label }) => {
-    const selected = legendFilter.includes(label);
-    const toggle = () => {
-      setLegendFilter((prev) => {
-        if (prev.includes(label)) return prev.filter((l) => l !== label);
-        return [...prev, label];
-      });
-    };
-    const count = (() => {
-      if (!overview || !overview.bays) return 0;
-      return (overview.bays as any[]).filter((b) => legendMatchesStatus([label], b?.status ?? null)).length;
-    })();
-    return (
-      <TouchableOpacity onPress={toggle} style={[styles.legendItem, selected ? styles.legendItemSelected : null]}>
-        <View style={[styles.legendColor, { backgroundColor: color }]} />
-        <Text style={[styles.legendText, selected ? styles.legendTextSelected : null]}>{label}</Text>
-        <View style={styles.legendCountBadge}>
-          <Text style={styles.legendCountText}>{count}</Text>
-        </View>
-      </TouchableOpacity>
-    );
-  };
-
-  (Legend as any).displayName = 'Legend';
-
-  const OverviewCard: React.FC<OverviewItem> = ({ title, value, subtitle, color }) => (
-    <View style={[styles.overviewCard, { borderLeftColor: color }]}>
-      <Text style={styles.overviewLabel}>{title}</Text>
-      <Text style={[styles.overviewValue, { color }]}>{value}</Text>
-      <Text style={styles.overviewSubtitle}>{subtitle}</Text>
-    </View>
-  );
-
-(OverviewCard as any).displayName = 'OverviewCard';
+  // Legend, OverviewCard and the small InfoPanel were extracted to separate files in
+  // order to make them reusable by other screens (user side, Team Chats, etc.).
 
   const renderContent = () => {
     switch (activeTab) {
@@ -536,70 +585,8 @@ export default function AdminDashboard() {
 
               {/* Quick Overview */}
               <Text style={styles.sectionTitle}>Quick Overview</Text>
-              <View style={styles.overviewContainer}>
-                <OverviewCard
-                  title="Total Revenue (Today)"
-                  value={overview ? `${settings.currencySymbol}${overview.totalRevenueToday}` : '—'}
-                  subtitle="Compared to previous period"
-                  color="#2E7D32"
-                />
-                {(() => {
-                  if (!overview) {
-                    return <OverviewCard title="Available Bays" value={'—'} subtitle={''} color="#558B2F" />;
-                  }
-
-                  const total = Number(settings.totalAvailableBays ?? overview.totalBays ?? 45);
-
-                  // Prefer server-provided availableBays when present.
-                  let avail: number | null = typeof overview.availableBays === 'number' ? overview.availableBays : null;
-
-                  // If server didn't provide a pre-computed availableBays, derive it from bay rows.
-                  if (avail === null) {
-                    const bays = overview.bays ?? [];
-                    const occupied = bays.filter((b: any) => {
-                      const st = String(b?.status ?? b?.originalStatus ?? '').trim();
-                      return ['Occupied', 'Assigned', 'Open', 'OpenTime', 'Maintenance', 'SpecialUse'].includes(st);
-                    }).length;
-                    avail = Math.max(0, total - occupied);
-                  }
-
-                  return (
-                    <OverviewCard
-                      title="Available Bays"
-                      value={String(avail)}
-                      subtitle={`${avail} / ${total} available`}
-                      color="#558B2F"
-                    />
-                  );
-                })()}
-                <OverviewCard
-                  title="Staff on Duty"
-                  value={overview ? String(overview.staffOnDuty) : '—'}
-                  subtitle="Total staff"
-                  color="#C62828"
-                />
-                <OverviewCard
-                  title="Next Tee Time"
-                  value={(() => {
-                    if (!overview || !overview.nextTeeTime) return '—';
-                    if (overview.nextTeeTime === 'Bay Ready') return 'Bay Ready';
-                    try {
-                      return new Date(overview.nextTeeTime).toLocaleTimeString();
-                    } catch {
-                      return String(overview.nextTeeTime);
-                    }
-                  })()}
-                  subtitle={(() => {
-                    if (!overview || !overview.nextTeeTime) return '';
-                    if (overview.nextTeeTime === 'Bay Ready') return '';
-                    try {
-                      return new Date(overview.nextTeeTime).toLocaleDateString();
-                    } catch {
-                      return '';
-                    }
-                  })()}
-                  color="#6D4C41"
-                />
+              <View>
+                <QuickOverview overview={overview} settings={settings} currencySymbol={settings.currencySymbol} />
               </View>
 
               {/* Real-Time Bay Overview */}
@@ -612,7 +599,7 @@ export default function AdminDashboard() {
               <View style={styles.bayContainer}>
                 {overview && overview.bays && overview.bays.length > 0 ? (
                   // Render bay grid 1..N in numerical order, using overview data when available
-                  Array.from({ length: settings.totalAvailableBays ?? 45 }).map((_, i) => {
+                    Array.from({ length: settings.totalAvailableBays ?? 45 }).map((_, i) => {
                     const num = i + 1;
                     const numStr = String(num);
                     const b = overview.bays.find((x: any) => String(x.bay_number) === numStr || String(x.bay_id) === numStr);
@@ -630,8 +617,23 @@ export default function AdminDashboard() {
                       anim = new Animated.Value(isLegendActive ? 1 : 0);
                       bayAnimMap.current[animKey] = anim;
                     }
+                    const handlePress = () => {
+                      // toggle select
+                      if (selectedBay === num) {
+                        setSelectedBay(null);
+                        setSelectedBayDetails(null);
+                      } else {
+                        // Build best-effort details from overview row
+                        const player = b?.player_name ?? b?.player ?? b?.playerName ?? b?.player_name_display ?? (b?.player?.nickname ?? null) ?? null;
+                        // compute ballsUsed and store raw; remaining will be computed live using `now`
+                        const ballsUsed = b?.total_balls ?? b?.balls_used ?? b?.bucket_count ?? b?.transactions_count ?? null;
+                        setSelectedBay(num);
+                        setSelectedBayDetails({ player: player ?? (b?.player || '—'), ballsUsed: ballsUsed ?? '—', raw: b });
+                      }
+                    };
+
                     return (
-                      <View key={b?.bay_id ?? `bay-${num}`} style={[
+                      <TouchableOpacity key={b?.bay_id ?? `bay-${num}`} onPress={handlePress} activeOpacity={0.9} style={[
                         styles.bayBox,
                         bayBoxDynamic,
                         { position: 'relative' },
@@ -655,7 +657,12 @@ export default function AdminDashboard() {
                             ]}>Reserved</Text>
                           </View>
                         )}
-                      </View>
+
+                        {/* Info panel shown when this bay is selected (extracted to component) */}
+                        {selectedBay === num && selectedBayDetails && (
+                          <InfoPanel num={num} details={selectedBayDetails} now={now} />
+                        )}
+                      </TouchableOpacity>
                     );
                   })
                 ) : (
@@ -689,10 +696,10 @@ export default function AdminDashboard() {
               </View>
 
               <View style={styles.legendContainer}>
-                <Legend color="#2E7D32" label="Available" />
-                <Legend color="#A3784E" label="Assigned" />
-                <Legend color="#BF930E" label="Open Time Session" />
-                <Legend color="#C62828" label="Maintenance" />
+                <Legend color="#2E7D32" label="Available" legendFilter={legendFilter} setLegendFilter={setLegendFilter} overview={overview} />
+                <Legend color="#A3784E" label="Assigned" legendFilter={legendFilter} setLegendFilter={setLegendFilter} overview={overview} />
+                <Legend color="#BF930E" label="Open Time Session" legendFilter={legendFilter} setLegendFilter={setLegendFilter} overview={overview} />
+                <Legend color="#C62828" label="Maintenance" legendFilter={legendFilter} setLegendFilter={setLegendFilter} overview={overview} />
               </View>
             </View>
           </ScrollView>
@@ -729,11 +736,13 @@ export default function AdminDashboard() {
   const handleTabPress = async (name: string) => {
     try {
       if (name === activeTab) return;
-      // Refresh typed settings from server (OperationalConfig etc.)
-      try { await settings.refresh(); } catch {}
-      // Re-fetch overview from the backend to make sure UI shows up-to-date values
-      try { await fetchOverview(); } catch {}
+      // Switch UI immediately for a smooth user experience
       setActiveTab(name);
+      // Refresh typed settings and overview in background (do not block the tab switch)
+      (async () => {
+        try { await settings.refresh(); } catch {}
+        try { await fetchOverview(); } catch {}
+      })();
     } catch (e) {
       // fallback to tab switch on error
       setActiveTab(name);
@@ -812,6 +821,76 @@ export default function AdminDashboard() {
 
       {/* Main Content */}
   <View style={[tw.flex1, tw.p6]}>{renderContent()}</View>
+      {/* Transient saved-style overlay (matches System Settings behavior) */}
+      {adminShowSavedNotification && (notifications || []).length > 0 && (
+        <Pressable
+          style={styles.notifOverlay}
+          onPress={() => {
+            try {
+              // when user taps overlay, reset auto-dismiss timer
+              if (adminNotifTimer.current) { clearTimeout(adminNotifTimer.current as number); adminNotifTimer.current = null; }
+              adminNotifTimer.current = window.setTimeout(() => {
+                try {
+                  Animated.timing(notifAnimRef.current, { toValue: 0, duration: 300, useNativeDriver: true }).start(() => {
+                    setNotifications((prev) => (prev || []).slice(1));
+                    setAdminShowSavedNotification(false);
+                  });
+                } catch (e) {
+                  setNotifications((prev) => (prev || []).slice(1));
+                  setAdminShowSavedNotification(false);
+                }
+              }, ADMIN_NOTIF_DURATION_MS) as unknown as number;
+            } catch (e) { /* ignore */ }
+          }}
+        >
+    <Animated.View style={[styles.notifBox, { opacity: notifAnimRef.current, transform: [{ translateY: notifAnimRef.current.interpolate({ inputRange: [0, 1], outputRange: [-8, 0] }) }] }] }>
+            <TouchableOpacity
+              style={styles.notifClose}
+              onPress={() => {
+                try {
+                  if (adminNotifTimer.current) { clearTimeout(adminNotifTimer.current as number); adminNotifTimer.current = null; }
+                } catch {}
+                try {
+                  Animated.timing(notifAnimRef.current, { toValue: 0, duration: 300, useNativeDriver: true }).start(() => {
+                    setNotifications((prev) => (prev || []).slice(1));
+                    setAdminShowSavedNotification(false);
+                  });
+                } catch (e) {
+                  setNotifications((prev) => (prev || []).slice(1));
+                  setAdminShowSavedNotification(false);
+                }
+              }}
+            >
+              <Text style={{ color: '#2E3B2B', fontWeight: '800' }}>×</Text>
+            </TouchableOpacity>
+            {(() => {
+              const first = (notifications || [])[0];
+              // determine severity from remainingMap or threshold
+              const threshold = (first as any)?.threshold;
+              let prefSeverity: 'low' | 'medium' | 'high' | undefined = undefined;
+              if (threshold === 't10') prefSeverity = 'low';
+              else if (threshold === 't5') prefSeverity = 'medium';
+              else if (threshold === 't0') prefSeverity = 'high';
+              const built = buildNotification(first, remainingMap, first?.message ?? '', { defaultTitle: first?.message ?? 'Notification', preferredType: 'bay', preferredSeverity: prefSeverity });
+              // choose visuals based on severity
+              const notifBg = built.severity === 'high' ? '#FDECEA' : built.severity === 'medium' ? '#FFF9E6' : '#EAF6EE';
+              const titleColor = built.severity === 'high' ? '#7E0000' : built.severity === 'medium' ? '#8A6B00' : '#1B5E20';
+              return (
+                <>
+                  <Animated.View style={{ backgroundColor: notifBg, padding: 0, borderRadius: 6 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      {MaterialIcons ? <MaterialIcons name={built.icon as any} size={18} color={titleColor} style={{ marginRight: 8 }} /> : null}
+                      <Text style={[styles.notifTitle, { color: titleColor }]}>{built.title}</Text>
+                    </View>
+                    <View style={{ height: 1, backgroundColor: '#D6D6D6', marginVertical: 8 }} />
+                    <Text style={styles.notifBody}>{built.body}</Text>
+                  </Animated.View>
+                </>
+              );
+            })()}
+          </Animated.View>
+        </Pressable>
+      )}
       <Modal
         visible={logoutModalVisible}
         transparent
@@ -833,6 +912,7 @@ export default function AdminDashboard() {
           </View>
         </View>
       </Modal>
+      {/* (Preview modal removed) */}
     </View>
   );
 }
@@ -993,4 +1073,27 @@ const styles = StyleSheet.create({
   modalButtonCancel: { backgroundColor: "#EEE", marginRight: 8 },
   modalButtonConfirm: { backgroundColor: "#C62828" },
   modalButtonText: { color: "#fff", fontWeight: "600" },
+  /* Info panel above clicked bay */
+  infoPanel: { position: 'absolute', bottom: 56, left: '50%', transform: [{ translateX: -80 }], zIndex: 50, alignItems: 'center' },
+  infoCaret: { width: 0, height: 0, borderLeftWidth: 8, borderRightWidth: 8, borderBottomWidth: 8, borderLeftColor: 'transparent', borderRightColor: 'transparent', borderBottomColor: '#fff', marginBottom: -1 },
+  infoCard: { minWidth: 160, backgroundColor: '#fff', borderRadius: 8, padding: 8, shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 6, elevation: 8, borderWidth: 1, borderColor: '#E6E6E6' },
+  infoTitle: { fontWeight: '800', color: '#17321d', marginBottom: 6 },
+  infoRow: { fontSize: 13, color: '#333', marginBottom: 4 },
+  notificationsPanel: { position: 'absolute', right: 20, top: 90, width: 260, backgroundColor: '#fff', borderRadius: 8, padding: 8, shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 8, elevation: 10, borderWidth: 1, borderColor: '#E6E6E6', zIndex: 2000, maxHeight: 420 },
+  notifItem: { flexDirection: 'row', alignItems: 'center', padding: 8, borderBottomWidth: 1, borderBottomColor: '#F0F0F0', marginBottom: 6, borderRadius: 6, backgroundColor: '#FFF' },
+  // Alternate styles that match System Settings "Saved" notification
+  notifItemAlt: { flexDirection: 'row', alignItems: 'center', padding: 12, borderBottomWidth: 1, borderBottomColor: '#E6E6E6', marginBottom: 8, borderRadius: 8, backgroundColor: '#F4F8F3' },
+  notifTitleAlt: { fontSize: 15, color: '#2E3B2B', fontWeight: '800' },
+  notifBodyAlt: { fontSize: 13, color: '#444', marginTop: 6 },
+  notifDismissButtonAlt: { backgroundColor: 'transparent', paddingHorizontal: 8, paddingVertical: 6, borderRadius: 6, marginLeft: 8 },
+  // legacy simple styles (kept for backward compatibility)
+  notifMessage: { fontSize: 13, color: '#111', fontWeight: '700' },
+  notifTime: { fontSize: 12, color: '#666', marginTop: 4 },
+  notifDismissButton: { backgroundColor: '#C62828', paddingHorizontal: 8, paddingVertical: 6, borderRadius: 6, marginLeft: 8 },
+  // Transient overlay styles (match System Settings)
+  notifOverlay: { position: 'absolute', top: 18, right: 18, zIndex: 9999 },
+  notifBox: { width: 300, maxWidth: '90%', backgroundColor: '#F4F8F3', borderRadius: 8, padding: 12, shadowColor: '#000', shadowOpacity: 0.06, shadowRadius: 4, elevation: 4 },
+  notifClose: { position: 'absolute', top: 8, right: 8, padding: 6 },
+  notifTitle: { fontSize: 16, fontWeight: '800', color: '#2E3B2B', paddingRight: 28 },
+  notifBody: { fontSize: 14, color: '#444', marginTop: 6 },
 });

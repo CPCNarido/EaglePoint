@@ -143,16 +143,17 @@ async function addSamplePlayersAndAssignments(createdSpecials) {
     const ballHandler = await prisma.employee.findFirst({ where: { username: 'BallHandler' } });
 
     // create two players
+    const creatorConnect = admin ? { connect: { employee_id: admin.employee_id } } : { connect: { employee_id: 1 } };
     const p1 = await prisma.player.upsert({
       where: { receipt_number: 'R-SEED-001' },
-      update: { nickname: 'SeedPlayer1', start_time: new Date(), end_time: null, price_per_hour: new Prisma.Decimal('500.00'), created_by: admin ? admin.employee_id : 1 },
-      create: { nickname: 'SeedPlayer1', receipt_number: 'R-SEED-001', start_time: new Date(), end_time: null, price_per_hour: new Prisma.Decimal('500.00'), created_by: admin ? admin.employee_id : 1 },
+      update: { nickname: 'SeedPlayer1', start_time: new Date(), end_time: null, price_per_hour: new Prisma.Decimal('500.00'), creator: creatorConnect },
+      create: { nickname: 'SeedPlayer1', receipt_number: 'R-SEED-001', start_time: new Date(), end_time: null, price_per_hour: new Prisma.Decimal('500.00'), creator: creatorConnect },
     });
 
     const p2 = await prisma.player.upsert({
       where: { receipt_number: 'R-SEED-002' },
-      update: { nickname: 'SeedPlayer2', start_time: new Date(), end_time: null, price_per_hour: new Prisma.Decimal('450.00'), created_by: admin ? admin.employee_id : 1 },
-      create: { nickname: 'SeedPlayer2', receipt_number: 'R-SEED-002', start_time: new Date(), end_time: null, price_per_hour: new Prisma.Decimal('450.00'), created_by: admin ? admin.employee_id : 1 },
+      update: { nickname: 'SeedPlayer2', start_time: new Date(), end_time: null, price_per_hour: new Prisma.Decimal('450.00'), creator: creatorConnect },
+      create: { nickname: 'SeedPlayer2', receipt_number: 'R-SEED-002', start_time: new Date(), end_time: null, price_per_hour: new Prisma.Decimal('450.00'), creator: creatorConnect },
     });
 
     // find a free bay (1..45) and assign player1

@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, Platform, ActivityIndicator, Alert, Modal, Pressable, Switch } from 'react-native';
 import { tw } from 'react-native-tailwindcss';
 import { useSettings } from '../../../lib/SettingsProvider';
+import { buildNotification } from '../../../lib/notification';
 
 export default function SystemSettingsTab() {
   const provider = useSettings();
@@ -279,14 +280,21 @@ export default function SystemSettingsTab() {
             notifTimer.current = window.setTimeout(() => { setShowSavedNotification(false); notifTimer.current = null; }, 2000) as unknown as number;
           }}
         >
-          <View style={styles.notifBox}>
-            <TouchableOpacity style={styles.notifClose} onPress={() => { if (notifTimer.current) { clearTimeout(notifTimer.current as unknown as number); notifTimer.current = null; } setShowSavedNotification(false); }}>
-              <Text style={{ color: '#2E3B2B', fontWeight: '800' }}>×</Text>
-            </TouchableOpacity>
-            <Text style={styles.notifTitle}>Report Notification</Text>
-            <View style={{ height: 1, backgroundColor: '#D6D6D6', marginVertical: 8 }} />
-            <Text style={styles.notifBody}>Changes have been successfully made.</Text>
-          </View>
+              <View style={styles.notifBox}>
+                <TouchableOpacity style={styles.notifClose} onPress={() => { if (notifTimer.current) { clearTimeout(notifTimer.current as unknown as number); notifTimer.current = null; } setShowSavedNotification(false); }}>
+                  <Text style={{ color: '#2E3B2B', fontWeight: '800' }}>×</Text>
+                </TouchableOpacity>
+                {(() => {
+                  const built = buildNotification(null, null, 'Changes have been successfully made.', { defaultTitle: 'Report Notification', preferredType: 'success' });
+                  return (
+                    <>
+                      <Text style={styles.notifTitle}>{built.title}</Text>
+                      <View style={{ height: 1, backgroundColor: '#D6D6D6', marginVertical: 8 }} />
+                      <Text style={styles.notifBody}>{built.body}</Text>
+                    </>
+                  );
+                })()}
+              </View>
         </Pressable>
       )}
 

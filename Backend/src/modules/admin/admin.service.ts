@@ -328,17 +328,41 @@ export class AdminService {
     const baysRaw = await this.prisma.bay.findMany({
       select: { bay_id: true, bay_number: true, status: true },
     });
+
+    // Fetch active assignments so we can enrich bay rows with assignment/player/transactions
+    const openAssignments = await this.prisma.bayAssignment.findMany({
+      where: { open_time: true },
+      include: { player: true, transactions: true },
+    });
+    const assignmentByBay = new Map<number, any>();
+    for (const a of openAssignments) assignmentByBay.set(a.bay_id, a);
+
     // Treat bays with a SpecialUse status (reserved) as occupied for dashboard counts
     const bays = baysRaw.map((b) => {
       const originalStatus = String(b.status);
       const isOccupied =
         occupiedBayIds.has(b.bay_id) || originalStatus === 'SpecialUse';
       const computedStatus = isOccupied ? 'Occupied' : originalStatus;
+
+      const assignment = assignmentByBay.get(b.bay_id) ?? null;
+      // derive some helpful fields the frontend expects (best-effort)
+      const playerName = assignment?.player?.nickname ?? assignment?.player?.full_name ?? null;
+      const endTime = assignment?.end_time ?? assignment?.player?.end_time ?? null;
+      const totalBalls = assignment?.transactions ? assignment.transactions.reduce((s: number, t: any) => s + (Number(t.bucket_count) || 0), 0) : null;
+
       return {
         bay_id: b.bay_id,
         bay_number: b.bay_number,
         status: computedStatus,
         originalStatus,
+        // assignment-derived fields (optional)
+        player_name: playerName,
+        player: assignment?.player ? { nickname: assignment.player.nickname, full_name: assignment.player.full_name, player_id: assignment.player.player_id } : null,
+        end_time: endTime,
+        assignment_end_time: assignment?.end_time ?? null,
+        total_balls: totalBalls,
+        bucket_count: totalBalls,
+        transactions_count: assignment?.transactions ? assignment.transactions.length : 0,
       };
     });
 

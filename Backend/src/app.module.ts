@@ -5,13 +5,9 @@ import { AppService } from './app.service';
 import { AuthModule } from './modules/auth/auth.module';
 // import { LostFoundModule } from './modules/lost-found/lost-found.module';
 import { PrismaModule } from './common/prisma/prisma.module';
-// import { ContentsModule } from './modules/contents/contents.module';
-// import { NotificationsModule } from './modules/notifications/notifications.module';
-// import { RolesSerializerInterceptor } from 'common/decorator/roles-serializer.interceptor';
-// import { MeModule } from './modules/me/me.module';
-// import { EmailModule } from './modules/email/email.module';
 import { ConfigModule } from '@nestjs/config';
 import { AdminModule } from './modules/admin/admin.module';
+import { DispatcherModule } from './modules/dispatcher/dispatcher.module';
 // import { BusinessModule } from './modules/business/business.module';
 
 @Module({
@@ -20,6 +16,7 @@ import { AdminModule } from './modules/admin/admin.module';
     ConfigModule.forRoot({ isGlobal: true }),
     AuthModule,
     AdminModule,
+    DispatcherModule,
   ],
   controllers: [AppController],
   providers: [

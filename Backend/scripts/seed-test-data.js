@@ -62,15 +62,16 @@ async function main() {
   console.log('Upserted inventory id', inv.inventory_id);
 
   // Players
+  const creatorConnect = created['Admin'] ? { connect: { employee_id: created['Admin'].employee_id } } : { connect: { employee_id: 1 } };
   const player1 = await prisma.player.upsert({
     where: { receipt_number: 'R-1001' },
-    update: { nickname: 'PlayerOne', start_time: new Date(), end_time: new Date(Date.now() + 60*60*1000), price_per_hour: new Prisma.Decimal('50.00'), created_by: created['Admin'].employee_id },
-    create: { nickname: 'PlayerOne', receipt_number: 'R-1001', start_time: new Date(), end_time: new Date(Date.now() + 60*60*1000), price_per_hour: new Prisma.Decimal('50.00'), created_by: created['Admin'].employee_id },
+    update: { nickname: 'PlayerOne', start_time: new Date(), end_time: new Date(Date.now() + 60*60*1000), price_per_hour: new Prisma.Decimal('50.00'), creator: creatorConnect },
+    create: { nickname: 'PlayerOne', receipt_number: 'R-1001', start_time: new Date(), end_time: new Date(Date.now() + 60*60*1000), price_per_hour: new Prisma.Decimal('50.00'), creator: creatorConnect },
   });
   const player2 = await prisma.player.upsert({
     where: { receipt_number: 'R-1002' },
-    update: { nickname: 'PlayerTwo', start_time: new Date(), end_time: new Date(Date.now() + 2*60*60*1000), price_per_hour: new Prisma.Decimal('30.00'), created_by: created['Admin'].employee_id },
-    create: { nickname: 'PlayerTwo', receipt_number: 'R-1002', start_time: new Date(), end_time: new Date(Date.now() + 2*60*60*1000), price_per_hour: new Prisma.Decimal('30.00'), created_by: created['Admin'].employee_id },
+    update: { nickname: 'PlayerTwo', start_time: new Date(), end_time: new Date(Date.now() + 2*60*60*1000), price_per_hour: new Prisma.Decimal('30.00'), creator: creatorConnect },
+    create: { nickname: 'PlayerTwo', receipt_number: 'R-1002', start_time: new Date(), end_time: new Date(Date.now() + 2*60*60*1000), price_per_hour: new Prisma.Decimal('30.00'), creator: creatorConnect },
   });
   console.log('Upserted players', player1.player_id, player2.player_id);
 

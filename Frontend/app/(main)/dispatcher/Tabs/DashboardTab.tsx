@@ -1,319 +1,222 @@
-import React, { useState } from "react";
-import {
-  View,
-  Text,
-  ScrollView,
-  TouchableOpacity,
-  Modal,
-  StyleSheet,
-} from "react-native";
+import React, { useEffect, useState } from "react";
+import { View, Text, ScrollView, TouchableOpacity, Modal, StyleSheet, ActivityIndicator, useWindowDimensions } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 
-type Bay = { id: number; status: string; player: string; sm: string; time: string };
+type BayRow = {
+  bay_id: number;
+  bay_number: string | number;
+  status: string | null;
+  player_name?: string | null;
+  player?: { nickname?: string; full_name?: string; player_id?: number } | null;
+  end_time?: string | null;
+  total_balls?: number | null;
+};
 
-type StatusColors = { border: string; text: string; bg: string };
-
-type LegendProps = { color: string; label: string };
-
-type OverviewCardProps = { title: string; value: string; subtitle: string; color: string };
+const getColorFromStatus = (status: string | null) => {
+  switch (String(status)) {
+    case 'Maintenance':
+      return '#C62828';
+    case 'Occupied':
+    case 'Assigned':
+      return '#A3784E';
+    case 'Open':
+    case 'OpenTime':
+      return '#BF930E';
+    case 'Available':
+    default:
+      return '#2E7D32';
+  }
+};
 
 export default function DashboardTab() {
-  // Pagination + selected
-  const [currentPage, setCurrentPage] = useState(1);
-  const [selectedBay, setSelectedBay] = useState<Bay | null>(null);
+  const [overview, setOverview] = useState<any | null>(null);
+  const [bays, setBays] = useState<BayRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedBay, setSelectedBay] = useState<BayRow | null>(null);
+  const { width } = useWindowDimensions();
 
-  // ✅ Quick Overview Data
-  const overviewData = [
-    {
-      title: "Available Bays Currently",
-      value: "30/45",
-      subtitle: "15 Bays are Occupied",
-      color: "#2E7D32",
-    },
-    {
-      title: "Service Man Available",
-      value: "30/45",
-      subtitle: "15 Service Man are Assigned",
-      color: "#33691E",
-    },
-    {
-      title: "Waiting Queue",
-      value: "5 Players",
-      subtitle: "Waiting to be Assigned by Staff",
-      color: "#BF930E",
-    },
-    {
-      title: "Urgent Attention",
-      value: "5 Alerts",
-      subtitle: "Check Bay Status",
-      color: "#C62828",
-    },
-  ];
+  // determine baseUrl similarly to Admin UI (supports override)
+  const resolveBaseUrl = async () => {
+    let baseUrl = PlatformOS === 'android' ? 'http://10.127.147.53:3000' : 'http://localhost:3000';
+    try {
+      // dynamic require to avoid bundler trouble
+      // @ts-ignore
+      const AsyncStorageModule = await import('@react-native-async-storage/async-storage').catch(() => null);
+      const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
+      if (AsyncStorage) {
+        const override = await AsyncStorage.getItem('backendBaseUrlOverride');
+        if (override) baseUrl = override;
+      }
+    } catch {}
+    return baseUrl;
+  };
 
-  // ✅ Bay Data
-  const bayData = [
-    { id: 1, status: "Timed Session", player: "Motea", sm: "Narido", time: "1:18:00 Remaining" },
-    { id: 2, status: "Open Time", player: "Camarillo", sm: "Narido", time: "1:03:26 Elapsed" },
-    { id: 3, status: "Available", player: "Lamadora", sm: "Narido", time: "1:03:26 Remaining" },
-    { id: 4, status: "Maintenance", player: "Serviceman John", sm: "Fixing Ball Sensor", time: "—" },
-    { id: 5, status: "Timed Session", player: "Motea", sm: "Narido", time: "0:03:26 Remaining" },
-    { id: 6, status: "Timed Session", player: "Camarillo", sm: "Narido", time: "0:03:26 Remaining" },
-    { id: 7, status: "Open Time", player: "Lamadora", sm: "Narido", time: "1:03:26 Elapsed" },
-    { id: 8, status: "Timed Session", player: "Motea", sm: "Narido", time: "0:03:26 Remaining" },
-    { id: 9, status: "Maintenance", player: "Serviceman Luis", sm: "Fixing Lighting", time: "—" },
-    { id: 10, status: "Available", player: "Camarillo", sm: "Narido", time: "1:03:26 Remaining" },
-    { id: 11, status: "Open Time", player: "Lamadora", sm: "Narido", time: "1:03:26 Elapsed" },
-    { id: 12, status: "Maintenance", player: "Serviceman Noel", sm: "Fixing Tee Mat", time: "—" },
-    { id: 13, status: "Maintenance", player: "Serviceman Jay", sm: "Fixing Net Sensor", time: "—" },
-    { id: 14, status: "Maintenance", player: "Serviceman Lea", sm: "Fixing Cable", time: "—" },
-    { id: 15, status: "Timed Session", player: "Motea", sm: "Narido", time: "1:03:26 Remaining" },
-  ];
-
-  // ✅ Color Scheme
-  const getStatusColors = (status: string): StatusColors => {
-    switch (status) {
-      case "Available":
-        return { border: "#2E7D32", text: "#fff", bg: "#2E7D32" };
-      case "Open Time":
-        return { border: "#BF930E", text: "#fff", bg: "#BF930E" };
-      case "Timed Session":
-        return { border: "#A3784E", text: "#fff", bg: "#A3784E" };
-      case "Maintenance":
-        return { border: "#C62828", text: "#fff", bg: "#C62828" };
-      default:
-        return { border: "#999", text: "#fff", bg: "#999" };
+  const fetchOverview = async () => {
+    try {
+      setLoading(true);
+      const baseUrl = await resolveBaseUrl();
+      const res = await fetch(`${baseUrl}/api/dispatcher/overview`, { method: 'GET', credentials: 'include' });
+      if (!res.ok) {
+        setOverview(null);
+        return;
+      }
+      const data = await res.json();
+      setOverview(data);
+    } catch (e) {
+      setOverview(null);
+    } finally {
+      setLoading(false);
     }
   };
 
-  // ✅ Legend component
-  const Legend = ({ color, label }: LegendProps) => (
-    <View style={styles.legendItem}>
-      <View style={[styles.legendColor, { backgroundColor: color }]} />
-      <Text style={styles.legendText}>{label}</Text>
-    </View>
-  );
+  const fetchBays = async () => {
+    try {
+      const baseUrl = await resolveBaseUrl();
+      const res = await fetch(`${baseUrl}/api/dispatcher/bays`, { method: 'GET', credentials: 'include' });
+      if (!res.ok) return setBays([]);
+      const data = await res.json();
+      setBays(Array.isArray(data) ? data : []);
+    } catch (e) {
+      setBays([]);
+    }
+  };
 
-  // ✅ Overview Card component
-  const OverviewCard = ({ title, value, subtitle, color }: OverviewCardProps) => (
-    <View style={[styles.overviewCard, { borderLeftColor: color }]}>
-      <Text style={styles.overviewTitle}>{title}</Text>
-      <Text style={[styles.overviewValue, { color }]}>{value}</Text>
-      <Text style={styles.overviewSubtitle}>{subtitle}</Text>
-    </View>
-  );
+  useEffect(() => {
+    // initial load and polling
+    fetchOverview();
+    fetchBays();
+    const iv = setInterval(() => {
+      fetchOverview();
+      fetchBays();
+    }, 2000);
+    return () => clearInterval(iv);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // ✅ Render Dashboard
-  const renderDashboard = () => (
+  const renderOverviewCards = () => {
+    const total = overview?.totalBays ?? '—';
+    const available = overview?.availableBays ?? '—';
+    const occupied = overview?.occupiedBays ?? '—';
+    const staff = overview?.staffOnDuty ?? '—';
+    return (
+      <View style={styles.overviewContainer}>
+        <View style={[styles.overviewCard, { borderLeftColor: '#2E7D32' }]}>
+          <Text style={styles.overviewTitle}>Available Bays</Text>
+          <Text style={[styles.overviewValue, { color: '#2E7D32' }]}>{String(available)}</Text>
+          <Text style={styles.overviewSubtitle}>{`${available} / ${total}`}</Text>
+        </View>
+        <View style={[styles.overviewCard, { borderLeftColor: '#33691E' }]}>
+          <Text style={styles.overviewTitle}>Staff On Duty</Text>
+          <Text style={[styles.overviewValue, { color: '#33691E' }]}>{String(staff)}</Text>
+          <Text style={styles.overviewSubtitle}>Total staff</Text>
+        </View>
+        <View style={[styles.overviewCard, { borderLeftColor: '#BF930E' }]}>
+          <Text style={styles.overviewTitle}>Occupied</Text>
+          <Text style={[styles.overviewValue, { color: '#BF930E' }]}>{String(occupied)}</Text>
+          <Text style={styles.overviewSubtitle}>Bays currently occupied</Text>
+        </View>
+        <View style={[styles.overviewCard, { borderLeftColor: '#C62828' }]}>
+          <Text style={styles.overviewTitle}>Next Tee Time</Text>
+          <Text style={[styles.overviewValue, { color: '#C62828' }]}>{overview?.nextTeeTime ? (overview.nextTeeTime === 'Bay Ready' ? 'Bay Ready' : new Date(overview.nextTeeTime).toLocaleTimeString()) : '—'}</Text>
+          <Text style={styles.overviewSubtitle}>{overview?.nextTeeTime && overview.nextTeeTime !== 'Bay Ready' ? new Date(overview.nextTeeTime).toLocaleDateString() : ''}</Text>
+        </View>
+      </View>
+    );
+  };
+
+  const renderBays = () => {
+    const total = Number(overview?.totalBays ?? 45);
+    const grid = Array.from({ length: total }).map((_, idx) => {
+      const num = idx + 1;
+      const row = bays.find((b) => String(b.bay_number) === String(num) || String(b.bay_id) === String(num));
+      const status = row?.status ?? 'Available';
+      const color = getColorFromStatus(status);
+      const player = row?.player_name ?? row?.player?.nickname ?? '—';
+      const time = (() => {
+        try {
+          const end = row?.end_time ? new Date(row.end_time) : null;
+          if (!end) return '—';
+          const ms = end.getTime() - Date.now();
+          if (ms <= 0) return '0m 0s';
+          const mins = Math.floor(ms / (1000 * 60));
+          const secs = Math.floor((ms % (1000 * 60)) / 1000);
+          return `${mins}m ${secs}s`;
+        } catch { return '—'; }
+      })();
+
+      return (
+        <TouchableOpacity key={num} style={[styles.bayBox, { borderColor: color }]} onPress={() => setSelectedBay(row ?? null)}>
+          <View style={[styles.statusCapsule, { backgroundColor: color }]}>
+            <Text style={styles.statusCapsuleText}>{status} #{num}</Text>
+          </View>
+          <Text style={styles.bayInfo}>{player}</Text>
+          <Text style={styles.timeText}>{time}</Text>
+        </TouchableOpacity>
+      );
+    });
+    return <View style={styles.bayContainer}>{grid}</View>;
+  };
+
+  if (loading) return <View style={{ padding: 20 }}><ActivityIndicator /></View>;
+
+  return (
     <ScrollView style={styles.scrollArea}>
       <View style={styles.contentBox}>
         <Text style={styles.welcomeText}>Welcome back, Dispatcher!</Text>
-        <Text style={styles.dateText}>October 25, 2025 | 09:00 AM</Text>
+        <Text style={styles.dateText}>{new Date().toLocaleString()}</Text>
+        <Text style={styles.sectionTitle}>Quick Overview</Text>
+        {renderOverviewCards()}
 
-        {/* Quick Overview */}
-        <View style={styles.quickOverviewHeader}>
-          <Text style={styles.sectionTitle}>Quick Overview</Text>
-          <TouchableOpacity style={styles.addButton}>
-            <MaterialIcons name="add" size={20} color="#1E2B20" />
-            <Text style={styles.addButtonText}>Add New Assignment</Text>
-          </TouchableOpacity>
-        </View>
+        <Text style={[styles.sectionTitle, { marginTop: 14 }]}>Real-Time Bay Monitoring</Text>
+        {renderBays()}
 
-        <View style={styles.overviewContainer}>
-          {overviewData.map((item, idx) => (
-            <OverviewCard key={idx} {...item} />
-          ))}
-        </View>
-
-        {/* Real-Time Bay Monitoring */}
-        <Text style={styles.sectionTitle}>Real-Time Bay Monitoring</Text>
-        <View style={styles.legendContainer}>
-          <Legend color="#2E7D32" label="Available" />
-          <Legend color="#A3784E" label="Assigned" />
-          <Legend color="#C62828" label="Maintenance" />
-          <Legend color="#BF930E" label="Open Time Session" />
-        </View>
-
-        <View style={styles.bayContainer}>
-          {bayData.map((bay) => {
-            const { border, bg } = getStatusColors(bay.status);
-            return (
-              <View key={bay.id} style={[styles.bayCard, { borderColor: border }]}>
-                <View style={[styles.statusCapsule, { backgroundColor: bg }]}>
-                  <Text style={styles.statusCapsuleText}>
-                    {bay.status} #{bay.id}
-                  </Text>
-                </View>
-
-                <Text style={styles.bayInfo}>Player Name: {bay.player}</Text>
-                <Text style={styles.bayInfo}>SM: {bay.sm}</Text>
-                <Text style={styles.timeText}>{bay.time}</Text>
-
-                <TouchableOpacity
-                  style={[styles.editButton, { borderColor: border }]}
-                  onPress={() => setSelectedBay(bay)}
-                >
-                  <Text style={[styles.editText, { color: border }]}>Edit</Text>
-                </TouchableOpacity>
-              </View>
-            );
-          })}
-        </View>
-
-        {/* Pagination */}
-        <View style={styles.paginationContainer}>
-          <TouchableOpacity
-            style={styles.pageButton}
-            onPress={() => setCurrentPage(Math.max(1, currentPage - 1))}
-          >
-            <Text style={styles.pageText}>Previous</Text>
-          </TouchableOpacity>
-          <View style={styles.pageIndicator}>
-            <Text style={styles.pageNumber}>{currentPage}</Text>
+        {/* Edit Modal */}
+        <Modal visible={!!selectedBay} transparent animationType="slide" onRequestClose={() => setSelectedBay(null)}>
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalBox}>
+              {selectedBay ? (
+                <>
+                  <Text style={styles.modalTitle}>Bay {selectedBay.bay_number}</Text>
+                  <Text style={styles.modalText}>Status: {selectedBay.status}</Text>
+                  <Text style={styles.modalText}>Player: {selectedBay.player_name ?? (selectedBay.player?.nickname ?? '—')}</Text>
+                  <Text style={styles.modalText}>Balls used: {String(selectedBay.total_balls ?? '—')}</Text>
+                  <TouchableOpacity style={styles.closeButton} onPress={() => setSelectedBay(null)}>
+                    <Text style={styles.closeButtonText}>Close</Text>
+                  </TouchableOpacity>
+                </>
+              ) : null}
+            </View>
           </View>
-          <TouchableOpacity
-            style={styles.pageButton}
-            onPress={() => setCurrentPage(Math.min(3, currentPage + 1))}
-          >
-            <Text style={styles.pageText}>Next</Text>
-          </TouchableOpacity>
-        </View>
+        </Modal>
       </View>
-
-      {/* Edit Modal */}
-      <Modal
-        visible={!!selectedBay}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setSelectedBay(null)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalBox}>
-            {selectedBay && (
-              <>
-                <Text style={styles.modalTitle}>Edit Bay #{selectedBay.id}</Text>
-                <Text style={styles.modalText}>Status: {selectedBay.status}</Text>
-                <Text style={styles.modalText}>Player: {selectedBay.player}</Text>
-                <Text style={styles.modalText}>SM: {selectedBay.sm}</Text>
-                <Text style={styles.modalText}>Time: {selectedBay.time}</Text>
-                <TouchableOpacity
-                  style={styles.closeButton}
-                  onPress={() => setSelectedBay(null)}
-                >
-                  <Text style={styles.closeButtonText}>Close</Text>
-                </TouchableOpacity>
-              </>
-            )}
-          </View>
-        </View>
-      </Modal>
     </ScrollView>
   );
-
-  // ✅ Main Render
-  return <View style={{ flex: 1 }}>{renderDashboard()}</View>;
 }
+
+// small compatibility helper for dynamic platform imports used above
+const PlatformOS = typeof (global as any).navigator !== 'undefined' && (global as any).navigator.product === 'ReactNative' ? (require('react-native').Platform.OS) : (typeof process !== 'undefined' && process.env && process.env.PLATFORM === 'android' ? 'android' : 'web');
 
 const styles = StyleSheet.create({
   scrollArea: { flex: 1 },
   contentBox: { padding: 16 },
-  welcomeText: { fontSize: 20, fontWeight: "bold", marginBottom: 4 },
-  dateText: { color: "#666", marginBottom: 12 },
-  sectionTitle: { fontSize: 18, fontWeight: "bold", marginVertical: 10 },
-  quickOverviewHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 10,
-  },
-  addButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    backgroundColor: "#E8F5E9",
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
-  },
-  addButtonText: { color: "#1E2B20", fontWeight: "600" },
-  overviewContainer: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
-  overviewCard: {
-    backgroundColor: "#fff",
-    borderRadius: 10,
-    padding: 12,
-    borderLeftWidth: 5,
-    width: "47%",
-    shadowColor: "#000",
-    shadowOpacity: 0.1,
-    shadowRadius: 5,
-    elevation: 3,
-  },
-  overviewTitle: { fontSize: 14, fontWeight: "600" },
-  overviewValue: { fontSize: 20, fontWeight: "bold", marginVertical: 5 },
-  overviewSubtitle: { color: "#555", fontSize: 12 },
-  legendContainer: { flexDirection: "row", flexWrap: "wrap", marginBottom: 10 },
-  legendItem: { flexDirection: "row", alignItems: "center", marginRight: 15 },
-  legendColor: { width: 15, height: 15, borderRadius: 3, marginRight: 5 },
-  legendText: { fontSize: 13 },
-  bayContainer: { flexWrap: "wrap", flexDirection: "row", gap: 10 },
-  bayCard: {
-    width: "20%",
-    borderWidth: 2,
-    borderRadius: 12,
-    padding: 10,
-    backgroundColor: "#fff",
-  },
-  statusCapsule: {
-    paddingVertical: 4,
-    borderRadius: 8,
-    alignItems: "center",
-    marginBottom: 6,
-  },
-  statusCapsuleText: { color: "#fff", fontWeight: "600", fontSize: 13 },
-  bayInfo: { fontSize: 13, color: "#222" },
-  timeText: { fontSize: 12, color: "#666", marginVertical: 3 },
-  editButton: {
-    borderWidth: 1.5,
-    borderRadius: 8,
-    paddingVertical: 4,
-    alignItems: "center",
-    marginTop: 6,
-  },
-  editText: { fontWeight: "600" },
-  paginationContainer: {
-    flexDirection: "row",
-    justifyContent: "center",
-    alignItems: "center",
-    marginVertical: 15,
-  },
-  pageButton: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    backgroundColor: "#E0E0E0",
-    borderRadius: 8,
-  },
-  pageText: { fontWeight: "bold" },
-  pageIndicator: { marginHorizontal: 10 },
-  pageNumber: { fontSize: 16, fontWeight: "bold" },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.4)",
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  modalBox: {
-    backgroundColor: "#fff",
-    borderRadius: 10,
-    padding: 20,
-    width: "80%",
-  },
-  modalTitle: { fontSize: 18, fontWeight: "bold", marginBottom: 8 },
-  modalText: { fontSize: 14, marginBottom: 4 },
-  closeButton: {
-    backgroundColor: "#007bff",
-    paddingVertical: 10,
-    borderRadius: 8,    
-    alignItems: "center",
-    marginTop: 10,
-  },
-  closeButtonText: { color: "#fff", fontWeight: "600" },
+  welcomeText: { fontSize: 20, fontWeight: 'bold', marginBottom: 4 },
+  dateText: { color: '#666', marginBottom: 12 },
+  sectionTitle: { fontSize: 18, fontWeight: 'bold', marginVertical: 10 },
+  overviewContainer: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  overviewCard: { backgroundColor: '#fff', borderRadius: 10, padding: 12, borderLeftWidth: 5, width: '47%', shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 5, elevation: 3 },
+  overviewTitle: { fontSize: 14, fontWeight: '600' },
+  overviewValue: { fontSize: 20, fontWeight: 'bold', marginVertical: 5 },
+  overviewSubtitle: { color: '#555', fontSize: 12 },
+  bayContainer: { flexWrap: 'wrap', flexDirection: 'row', gap: 10 },
+  bayBox: { width: 180, borderWidth: 2, borderRadius: 12, padding: 10, backgroundColor: '#fff', margin: 6 },
+  statusCapsule: { paddingVertical: 6, borderRadius: 8, alignItems: 'center', marginBottom: 8 },
+  statusCapsuleText: { color: '#fff', fontWeight: '600', fontSize: 12 },
+  bayInfo: { fontSize: 13, color: '#222' },
+  timeText: { fontSize: 12, color: '#666', marginTop: 4 },
+  modalOverlay: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.4)' },
+  modalBox: { backgroundColor: '#fff', borderRadius: 10, padding: 20, width: '80%' },
+  modalTitle: { fontSize: 18, fontWeight: '700', marginBottom: 8 },
+  modalText: { fontSize: 14, color: '#333', marginBottom: 6 },
+  closeButton: { marginTop: 10, backgroundColor: '#007bff', paddingVertical: 10, borderRadius: 8, alignItems: 'center' },
+  closeButtonText: { color: '#fff', fontWeight: '700' },
 });
