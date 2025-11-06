@@ -21,6 +21,7 @@
     "seed": "node scripts/seed-test-accounts.js",
     "seed:data": "node scripts/seed-test-data.js",
     "seed:bays": "node scripts/seed-bays.js",
+  "seed:staff40": "node scripts/seed-40-staff.js",
   "seed:notify": "node scripts/seed-test-notif-bay.js",
   "seed:full-bays": "node scripts/seed-full-bays.js",
     "seed:large": "node scripts/seed-large.js",

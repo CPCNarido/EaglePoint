@@ -114,8 +114,9 @@ export function buildNotification(
     if (opts && opts.preferredSeverity) severity = opts.preferredSeverity;
 
     // If this is a generic 'info' notification (a simple saved/notification message),
-    // only show the title — the UI should not display a body for such notifications.
-    if (type === 'info') {
+    // only show the title — the UI should not display a body for such notifications
+    // UNLESS a fallback/default message was explicitly provided by the caller.
+    if (type === 'info' && !defaultMessage) {
       body = '';
     }
 

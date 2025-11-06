@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, ScrollView, TouchableOpacity, Modal, StyleSheet, ActivityIndicator, useWindowDimensions } from "react-native";
+import { View, Text, ScrollView, TouchableOpacity, Modal, StyleSheet, ActivityIndicator, useWindowDimensions, Platform } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 
 type BayRow = {
@@ -37,16 +37,13 @@ export default function DashboardTab() {
 
   // determine baseUrl similarly to Admin UI (supports override)
   const resolveBaseUrl = async () => {
-    let baseUrl = PlatformOS === 'android' ? 'http://10.127.147.53:3000' : 'http://localhost:3000';
+    let baseUrl = Platform.OS === 'android' ? 'http://10.127.147.53:3000' : 'http://localhost:3000';
     try {
-      // dynamic require to avoid bundler trouble
-      // @ts-ignore
+      // @ts-ignore dynamic import to avoid bundler issues on web
       const AsyncStorageModule = await import('@react-native-async-storage/async-storage').catch(() => null);
       const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
-      if (AsyncStorage) {
-        const override = await AsyncStorage.getItem('backendBaseUrlOverride');
-        if (override) baseUrl = override;
-      }
+      const override = AsyncStorage ? await AsyncStorage.getItem('backendBaseUrlOverride') : null;
+      if (override) baseUrl = override;
     } catch {}
     return baseUrl;
   };
@@ -193,8 +190,7 @@ export default function DashboardTab() {
   );
 }
 
-// small compatibility helper for dynamic platform imports used above
-const PlatformOS = typeof (global as any).navigator !== 'undefined' && (global as any).navigator.product === 'ReactNative' ? (require('react-native').Platform.OS) : (typeof process !== 'undefined' && process.env && process.env.PLATFORM === 'android' ? 'android' : 'web');
+
 
 const styles = StyleSheet.create({
   scrollArea: { flex: 1 },

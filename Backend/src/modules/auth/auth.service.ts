@@ -1,6 +1,6 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { PrismaService } from 'common/prisma/prisma.service';
+import { PrismaService } from '../../common/prisma/prisma.service';
 import * as bcrypt from 'bcrypt';
 import { ConfigService } from '@nestjs/config';
 
@@ -149,6 +149,20 @@ export class AuthService {
       user.employee_id,
       user.role as unknown as string,
     );
+    // Best-effort audit log for sign-in (avoid DI in tests by writing directly)
+    try {
+      await this.prisma.systemLog.create({
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+        // @ts-ignore
+        data: {
+          employee_id: user.employee_id,
+          role: user.role as any,
+          action: 'SignIn',
+        } as any,
+      });
+    } catch (e) {
+      void e;
+    }
     return {
       accessToken: tokens.accessToken,
       refreshToken: tokens.refreshToken,

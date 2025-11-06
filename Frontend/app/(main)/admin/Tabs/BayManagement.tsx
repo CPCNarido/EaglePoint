@@ -22,6 +22,7 @@ export default function BayManagement() {
   const [filter, setFilter] = useState("All");
   // header info
   const [adminName, setAdminName] = useState<string>('Admin');
+  const [adminId, setAdminId] = useState<number | undefined>(undefined);
   const [now, setNow] = useState<Date>(new Date());
 
   // dynamic bays loaded from backend
@@ -126,6 +127,9 @@ export default function BayManagement() {
       const data = await res.json();
       const name = data?.full_name || data?.name || data?.username || data?.displayName || 'Admin';
       setAdminName(name);
+      // store admin id if available so we can pass it on admin actions
+      const id = data?.employee_id ?? data?.id ?? data?.employeeId ?? null;
+      if (id) setAdminId(Number(id));
     } catch {
       // ignore
     }
@@ -386,7 +390,7 @@ export default function BayManagement() {
                       method: 'POST',
                       credentials: 'include',
                       headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ action: selectedAction, bayId }),
+                      body: JSON.stringify({ action: selectedAction, bayId, adminId }),
                     });
                     if (!res.ok) {
                       // fallback to generic endpoint
@@ -394,7 +398,7 @@ export default function BayManagement() {
                         method: 'POST',
                         credentials: 'include',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ bayNo, action: selectedAction, bayId }),
+                        body: JSON.stringify({ bayNo, action: selectedAction, bayId, adminId }),
                       });
                     }
                     if (!res.ok) {

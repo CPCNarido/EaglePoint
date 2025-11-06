@@ -1,5 +1,6 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { LoggingService } from '../../common/logging/logging.service';
 import { CreateStaffDto } from './dto/create-staff.dto';
 import * as bcrypt from 'bcryptjs';
 import { Role } from '@prisma/client';
@@ -7,7 +8,7 @@ import * as fs from 'fs';
 
 @Injectable()
 export class AdminService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService, private loggingService: LoggingService) {}
 
   // Return the public profile for a given employee id
   async getProfile(userId: number) {
@@ -58,10 +59,10 @@ export class AdminService {
       } else roomId = existing.chat_id;
     }
 
-  const created = await this.prisma.chatMessage.create({ data: { chat_id: roomId, sender_id: senderId, content } });
+    const created = await this.prisma.chatMessage.create({ data: { chat_id: roomId, sender_id: senderId, content } });
     // Optionally write a system log (best-effort)
     try {
-      await this.writeLog(senderId ?? undefined, Role.Admin, `ChatMessage: chat:${roomId}`, `msg:${created.message_id}`);
+      await this.loggingService.writeLog(senderId ?? undefined, Role.Admin, `ChatMessage: chat:${roomId}`, `msg:${created.message_id}`);
     } catch (e) { void e; }
   return { message_id: created.message_id, chat_id: created.chat_id, sender_id: created.sender_id, content: created.content, sent_at: created.sent_at };
   }
@@ -75,7 +76,7 @@ export class AdminService {
       room = await this.prisma.chatRoom.create({ data: { name: 'All Roles', is_group: true } });
     }
   const created = await this.prisma.chatMessage.create({ data: { chat_id: room.chat_id, sender_id: senderId, content } });
-    try { await this.writeLog(senderId ?? undefined, Role.Admin, `Broadcast: ${content?.slice(0, 80)}`, `broadcast:${created.message_id}`); } catch (e) { void e; }
+  try { await this.loggingService.writeLog(senderId ?? undefined, Role.Admin, `Broadcast: ${content?.slice(0, 80)}`, `broadcast:${created.message_id}`); } catch (e) { void e; }
   return { ok: true, message_id: created.message_id, chat_id: room.chat_id, sender_id: created.sender_id };
   }
 
@@ -111,8 +112,8 @@ export class AdminService {
 
     if (!room) throw new BadRequestException('Failed creating/find chat room');
 
-    const created = await this.prisma.chatMessage.create({ data: { chat_id: room.chat_id, sender_id: senderId, content } });
-    try { await this.writeLog(senderId ?? undefined, Role.Admin, `DirectMessage: ${content?.slice(0, 80)}`, `dm:${created.message_id}`); } catch (e) { void e; }
+  const created = await this.prisma.chatMessage.create({ data: { chat_id: room.chat_id, sender_id: senderId, content } });
+  try { await this.loggingService.writeLog(senderId ?? undefined, Role.Admin, `DirectMessage: ${content?.slice(0, 80)}`, `dm:${created.message_id}`); } catch (e) { void e; }
   return { message_id: created.message_id, chat_id: room.chat_id, sender_id: created.sender_id, content: created.content, sent_at: created.sent_at };
   }
 
@@ -130,29 +131,48 @@ export class AdminService {
   return msgs.map((m: any) => ({ message_id: m.message_id, chat_id: m.chat_id, sender_id: m.sender_id ?? m.sender?.employee_id ?? null, sender_name: m.sender?.full_name ?? m.sender?.username ?? null, content: m.content, sent_at: m.sent_at }));
   }
 
-  // Helper to write an action to SystemLog when an actor is available
-  private async writeLog(
-    actorId: number | undefined,
-    role: Role | undefined,
-    action: string,
-    related?: string,
-    approvedBy?: number,
-  ) {
+  // Return lightweight previews for roster: last message involving each staff member (sender or recipient)
+  async getChatPreviews() {
+    // load staff (exclude serviceman to match frontend filter)
+    const staff = await this.prisma.employee.findMany({ select: { employee_id: true, full_name: true, role: true } });
+    const ids = staff.map((s) => s.employee_id);
+    if (!ids.length) return [];
+
+    // fetch recent messages where staff were sender or recipient
+    const msgs = await this.prisma.chatMessage.findMany({
+      where: { OR: [{ sender_id: { in: ids } }, { recipient_id: { in: ids } }] },
+      orderBy: { sent_at: 'desc' },
+      take: 1000,
+      include: { sender: true },
+    });
+
+    const map: Record<number, { content: string; sent_at: Date | string | null }> = {};
+    for (const m of msgs) {
+      // determine which staff this message should be associated with: prefer sender if sender is a staff member, otherwise recipient
+      const sid = ids.includes(m.sender_id) ? m.sender_id : (ids.includes(m.recipient_id ?? -1) ? m.recipient_id : null);
+      if (!sid) continue;
+      if (!map[sid]) map[sid] = { content: String(m.content ?? ''), sent_at: m.sent_at ?? null };
+    }
+
+    // build output combining staff metadata and preview
+    const out: any[] = staff.map((s) => ({ employee_id: s.employee_id, full_name: s.full_name, role: s.role, preview: map[s.employee_id]?.content ?? null, preview_at: map[s.employee_id]?.sent_at ?? null }));
+
+    // Also include group chat previews (e.g. All Roles). Find group chat rooms and attach their latest message preview
     try {
-      if (!actorId) return;
-      await this.prisma.systemLog.create({
-        data: {
-          employee_id: actorId,
-          role: role as any,
-          action,
-          related_record: related ?? undefined,
-          approved_by: approvedBy ?? undefined,
-        },
-      });
+      const groups = await this.prisma.chatRoom.findMany({ where: { is_group: true }, select: { chat_id: true, name: true } });
+      for (const g of groups) {
+        const m = await this.prisma.chatMessage.findFirst({ where: { chat_id: g.chat_id }, orderBy: { sent_at: 'desc' } });
+        out.push({ chat_id: g.chat_id, name: g.name ?? null, preview: m ? String(m.content ?? '') : null, preview_at: m?.sent_at ?? null });
+      }
     } catch (e) {
+      // best-effort; if group chat lookup fails, ignore
       void e;
     }
+
+    return out;
   }
+
+
 
   // Basic reports summary — returns aggregate metrics used by Reports & Analytics UI
   async getReportsSummary() {
@@ -275,7 +295,7 @@ export class AdminService {
         const adminActor = await this.prisma.employee.findFirst({
           where: { role: 'Admin' },
         });
-        await this.writeLog(
+        await this.loggingService.writeLog(
           adminActor?.employee_id,
           adminActor?.role as any,
           `ExportReport: ${reportType}`,
@@ -508,12 +528,93 @@ export class AdminService {
         role: true,
       },
     });
-    return staff.map((s) => ({
-      id: s.employee_id,
-      full_name: s.full_name,
-      username: s.username,
-      role: s.role,
+
+    // Compute a lightweight presence indicator:
+    // - online if the staff sent a chat message within the last 5 minutes
+    // - OR if they are referenced on an open bay assignment (dispatcher or serviceman)
+    try {
+      const ids = staff.map((s) => s.employee_id).filter(Boolean);
+      const onlineSet = new Set<number>();
+
+      if (ids.length) {
+        const recentThreshold = new Date(Date.now() - 5 * 60 * 1000); // 5 minutes
+        try {
+          const recentMsgs = await this.prisma.chatMessage.findMany({
+            where: { sender_id: { in: ids }, sent_at: { gte: recentThreshold } },
+            select: { sender_id: true },
+          });
+          for (const m of recentMsgs) if (m.sender_id) onlineSet.add(m.sender_id);
+        } catch (e) {
+          // best-effort; ignore errors querying messages
+          void e;
+        }
+
+        try {
+          const openAssignments = await this.prisma.bayAssignment.findMany({
+            where: { open_time: true },
+            select: { dispatcher_id: true, serviceman_id: true },
+          });
+          for (const a of openAssignments) {
+            if (a.dispatcher_id) onlineSet.add(a.dispatcher_id);
+            if (a.serviceman_id) onlineSet.add(a.serviceman_id);
+          }
+        } catch (e) {
+          void e;
+        }
+      }
+
+      return staff.map((s) => ({
+        employee_id: s.employee_id,
+        id: s.employee_id,
+        full_name: s.full_name,
+        username: s.username,
+        role: s.role,
+        online: onlineSet.has(s.employee_id),
+      }));
+    } catch (e) {
+      // If presence calculation fails for any reason, fall back to a safe basic mapping
+      return staff.map((s) => ({
+        employee_id: s.employee_id,
+        id: s.employee_id,
+        full_name: s.full_name,
+        username: s.username,
+        role: s.role,
+        online: false,
+      }));
+    }
+  }
+
+  // Return recent system logs (audit entries)
+  async getAuditLogs(opts: { limit?: number; startDate?: string; endDate?: string; userId?: number } = {}) {
+    const limit = Number(opts.limit ?? 200);
+    const where: any = {};
+    if (opts.userId) where.employee_id = Number(opts.userId);
+    if (opts.startDate || opts.endDate) {
+      where.timestamp = {} as any;
+      if (opts.startDate) where.timestamp.gte = new Date(opts.startDate as any);
+      if (opts.endDate) where.timestamp.lte = new Date(opts.endDate as any);
+    }
+    // compute total count matching filters (for pagination / UI)
+    const total = await this.prisma.systemLog.count({ where }).catch(() => 0);
+    const rows = await this.prisma.systemLog.findMany({
+      where,
+      include: { employee: true, approvedBy: true },
+      orderBy: { timestamp: 'desc' },
+      take: limit,
+    });
+
+    const mapped = rows.map((r: any) => ({
+      log_id: r.log_id,
+      timestamp: r.timestamp,
+      action: r.action,
+      session_type: r.session_type ?? null,
+      employee_id: r.employee_id,
+      employee_name: r.employee?.full_name ?? r.employee?.username ?? null,
+      related_record: r.related_record,
+      approved_by: r.approved_by,
     }));
+
+    return { total, rows: mapped };
   }
 
   async createStaff(dto: CreateStaffDto) {
@@ -547,7 +648,7 @@ export class AdminService {
       const adminActor = await this.prisma.employee.findFirst({
         where: { role: 'Admin' },
       });
-      await this.writeLog(
+      await this.loggingService.writeLog(
         adminActor?.employee_id,
         adminActor?.role as any,
         `CreateStaff: ${created.full_name} (${created.username})`,
@@ -585,7 +686,7 @@ export class AdminService {
       const adminActor = await this.prisma.employee.findFirst({
         where: { role: 'Admin' },
       });
-      await this.writeLog(
+      await this.loggingService.writeLog(
         adminActor?.employee_id,
         adminActor?.role as any,
         `UpdateStaff: ${updated.full_name} (id:${updated.employee_id})`,
@@ -605,13 +706,36 @@ export class AdminService {
 
   async deleteStaff(id: number) {
     if (!id) throw new BadRequestException('Invalid id');
-    await this.prisma.employee.delete({ where: { employee_id: id } });
+    // Best-effort cleanup of dependent rows that would otherwise block deletion.
+    // 1) Remove any ServicemanQueue entries referencing this employee (non-null FK)
+    // 2) Nullify serviceman references on BayAssignment (nullable FK)
+    try {
+      await this.prisma.$transaction([
+        this.prisma.servicemanQueue.deleteMany({ where: { serviceman_id: id } }),
+        this.prisma.bayAssignment.updateMany({ where: { serviceman_id: id }, data: { serviceman_id: null } }),
+      ]);
+    } catch (e) {
+      // ignore best-effort cleanup errors — we'll attempt delete and surface meaningful errors below
+      void e;
+    }
+
+    try {
+      await this.prisma.employee.delete({ where: { employee_id: id } });
+    } catch (e: any) {
+      // Surface a clearer message when foreign key constraints remain.
+      if (e && e.code === 'P2003') {
+        const constraint = e.meta?.constraint ?? 'unknown_constraint';
+        throw new BadRequestException(`Cannot delete employee; dependent records exist (constraint: ${constraint}). Reassign or remove related records before retrying.`);
+      }
+      throw e;
+    }
+
     // Best-effort logging
     try {
       const adminActor = await this.prisma.employee.findFirst({
         where: { role: 'Admin' },
       });
-      await this.writeLog(
+      await this.loggingService.writeLog(
         adminActor?.employee_id,
         adminActor?.role as any,
         `DeleteStaff: id:${id}`,
@@ -716,8 +840,17 @@ export class AdminService {
                   const assignmentIds = assignments.map((a: any) => a.assignment_id);
                   if (assignmentIds.length) {
                     await this.prisma.ballTransaction.deleteMany({ where: { assignment_id: { in: assignmentIds } } });
+                    // Best-effort log each deleted transaction set
+                    try {
+                      const adminActor = await this.prisma.employee.findFirst({ where: { role: 'Admin' } });
+                      await this.loggingService.writeLog(adminActor?.employee_id, adminActor?.role as any, `ForceDeleteTransactions`, `bay:${ex.bay_id}`, undefined, 'Unknown');
+                    } catch (e) { void e; }
                   }
                   await this.prisma.bayAssignment.deleteMany({ where: { bay_id: ex.bay_id } });
+                  try {
+                    const adminActor = await this.prisma.employee.findFirst({ where: { role: 'Admin' } });
+                    await this.loggingService.writeLog(adminActor?.employee_id, adminActor?.role as any, `ForceDeleteAssignments`, `bay:${ex.bay_id}`, undefined, 'Unknown');
+                  } catch (e) { void e; }
                   await this.prisma.bay.delete({ where: { bay_id: ex.bay_id } });
                   actions.push({ type: 'force-delete-extra-duplicate', bay_id: ex.bay_id, bay_number: ex.bay_number, deletedAssignments: assignmentIds.length });
                 } catch (innerErr) {
@@ -758,8 +891,16 @@ export class AdminService {
               const assignmentIds = assignments.map((a: any) => a.assignment_id);
               if (assignmentIds.length) {
                 await this.prisma.ballTransaction.deleteMany({ where: { assignment_id: { in: assignmentIds } } });
+                try {
+                  const adminActor = await this.prisma.employee.findFirst({ where: { role: 'Admin' } });
+                  await this.loggingService.writeLog(adminActor?.employee_id, adminActor?.role as any, `ForceDeleteTransactions`, `bay:${c.bay_id}`, undefined, 'Unknown');
+                } catch (e) { void e; }
               }
               await this.prisma.bayAssignment.deleteMany({ where: { bay_id: c.bay_id } });
+              try {
+                const adminActor = await this.prisma.employee.findFirst({ where: { role: 'Admin' } });
+                await this.loggingService.writeLog(adminActor?.employee_id, adminActor?.role as any, `ForceDeleteAssignments`, `bay:${c.bay_id}`, undefined, 'Unknown');
+              } catch (e) { void e; }
               await this.prisma.bay.delete({ where: { bay_id: c.bay_id } });
               actions.push({ type: 'force-delete-out-of-range', bay_id: c.bay_id, bay_number: c.bay_number, deletedAssignments: assignmentIds.length });
             } catch (innerErr) {
@@ -900,7 +1041,7 @@ export class AdminService {
       // Best-effort logging for settings update
       try {
         const adminActor = await this.prisma.employee.findFirst({ where: { role: 'Admin' } });
-        await this.writeLog(adminActor?.employee_id, adminActor?.role as any, `UpdateSettings: ${Object.keys(payload).join(',')}`, 'settings');
+        await this.loggingService.writeLog(adminActor?.employee_id, adminActor?.role as any, `UpdateSettings: ${Object.keys(payload).join(',')}`, 'settings');
       } catch (e) { void e; }
 
       return { ok: true, syncSummary };
@@ -954,8 +1095,11 @@ export class AdminService {
       const assignment = await this.prisma.bayAssignment.findFirst({
         where: { bay_id: bay.bay_id, open_time: true },
         orderBy: { assigned_time: 'desc' },
+        include: { player: true },
       });
       if (assignment) {
+        // determine session type: if player.end_time exists treat as Timed, otherwise Open
+        const prevSessionType = assignment.player?.end_time ? 'Timed' : 'Open';
         await this.prisma.bayAssignment.update({
           where: { assignment_id: assignment.assignment_id },
           data: { open_time: false, end_time: new Date() },
@@ -967,6 +1111,10 @@ export class AdminService {
         });
         result.assignment_id = assignment.assignment_id;
         result.message = 'Session ended';
+        // log the session end with session type
+        try {
+          await this.loggingService.writeLog(adminId ?? undefined, Role.Admin, `EndSession: assignment:${assignment.assignment_id}`, `bay:${bay.bay_id}`, undefined, prevSessionType);
+        } catch (e) { void e; }
       } else {
         // nothing to end — still mark bay available
         await this.prisma.bay.update({
@@ -1002,14 +1150,7 @@ export class AdminService {
     // create a system log entry if we have an admin id
     try {
       if (adminId) {
-        await this.prisma.systemLog.create({
-          data: {
-            employee_id: adminId,
-            role: Role.Admin,
-            action: `Override: ${action}`,
-            related_record: `bay:${bay.bay_id}`,
-          },
-        });
+        await this.loggingService.writeLog(adminId, Role.Admin, `Override: ${action}`, `bay:${bay.bay_id}`);
       }
     } catch (e) {
       void e;
@@ -1021,14 +1162,14 @@ export class AdminService {
       const ops = await (this.prisma as any).operationalConfig.findFirst();
       const desired = Number(ops?.total_available_bays ?? 0);
       if (Number.isFinite(desired) && desired > 0) {
-        try {
-          syncSummary = await this.syncBaysToTotal(desired, false);
           try {
-            await this.writeLog(undefined as any, Role.Admin, `SyncBaysToTotal: ${desired}`, `sync:${desired}`);
+            syncSummary = await this.syncBaysToTotal(desired, false);
+            try {
+              await this.loggingService.writeLog(undefined as any, Role.Admin, `SyncBaysToTotal: ${desired}`, `sync:${desired}`);
+            } catch (e) {
+              void e;
+            }
           } catch (e) {
-            void e;
-          }
-        } catch (e) {
           syncSummary = { ok: false, error: String(e) };
         }
       }

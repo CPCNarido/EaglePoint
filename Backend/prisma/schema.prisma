@@ -83,6 +83,8 @@ model BayAssignment {
   assigned_time  DateTime
   open_time      Boolean   @default(false)
   end_time       DateTime?
+  // Optional human-friendly session type stored on assignments for historical data (e.g. 'Timed' | 'Open')
+  session_type   String?
 
   player       Player?    @relation(fields: [player_id], references: [player_id])
   bay          Bay        @relation(fields: [bay_id], references: [bay_id])
@@ -118,6 +120,8 @@ model SystemLog {
   employee_id    Int
   role           Role
   action         String
+  // Optional human-friendly session type name (e.g. "Timed", "Open")
+  session_type   String?
   timestamp      DateTime  @default(now())
   related_record String?
   approved_by    Int?

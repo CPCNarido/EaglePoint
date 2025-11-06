@@ -1,6 +1,7 @@
 import {
   Controller,
   Get,
+  Query,
   Post,
   Body,
   InternalServerErrorException,
@@ -47,6 +48,17 @@ export class AdminController {
       return await this.adminService.listChats();
     } catch (e: any) {
       throw new InternalServerErrorException(e?.message ?? 'Failed listing chats');
+    }
+  }
+
+  // Lightweight previews for roster (last message per staff)
+  @Get('chats/previews')
+  async chatPreviews() {
+    try {
+      return await this.adminService.getChatPreviews();
+    } catch (e: any) {
+      Logger.error('Failed to get chat previews', e, 'AdminController');
+      throw new InternalServerErrorException(e?.message ?? 'Failed getting chat previews');
     }
   }
 
@@ -276,6 +288,21 @@ export class AdminController {
       throw new InternalServerErrorException(
         e && e.message ? e.message : 'Failed getting recent sessions',
       );
+    }
+  }
+
+  @UseGuards(AuthGuard)
+  @Get('audit')
+  async auditLogs(@Query() query: any) {
+    try {
+      const limit = Number(query?.limit ?? 200);
+      const startDate = query?.startDate ? String(query.startDate) : undefined;
+      const endDate = query?.endDate ? String(query.endDate) : undefined;
+      const userId = query?.userId ? Number(query.userId) : undefined;
+      return await this.adminService.getAuditLogs({ limit, startDate, endDate, userId });
+    } catch (e: any) {
+      Logger.error('Failed to get audit logs', e, 'AdminController');
+      throw new InternalServerErrorException(e && e.message ? e.message : 'Failed getting audit logs');
     }
   }
 

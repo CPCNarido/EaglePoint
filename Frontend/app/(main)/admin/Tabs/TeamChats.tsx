@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, Platform, TextInput, TouchableOpacity, FlatList, KeyboardAvoidingView, ActivityIndicator } from 'react-native';
+import { View, Text, ScrollView, SectionList, StyleSheet, Platform, TextInput, TouchableOpacity, FlatList, KeyboardAvoidingView, ActivityIndicator, useWindowDimensions } from 'react-native';
 
-type ChatRoom = { chat_id?: number; name?: string | null; is_group?: boolean; employee_id?: number; role?: string };
+type ChatRoom = { chat_id?: number; name?: string | null; is_group?: boolean; employee_id?: number; role?: string; online?: boolean };
 type ChatMessage = { message_id?: number; tempId?: string; chat_id: number; sender_name?: string; sender_id?: number; content: string; sent_at?: string; status?: 'pending' | 'sent' | 'failed' };
 
 export default function TeamChats() {
@@ -13,12 +13,35 @@ export default function TeamChats() {
   const [rooms, setRooms] = useState<ChatRoom[]>([]);
   const [loadingRooms, setLoadingRooms] = useState(false);
 
+  // compute role counts for an "Online users" quick section (derived from rooms list)
+  // Each role maps to an object with total and online counts.
+  const roleCounts = React.useMemo(() => {
+    const counts: Record<string, { total: number; online: number }> = {};
+    for (const r of rooms) {
+      if (!r.employee_id) continue;
+      const role = (r.role ?? 'Other') as string;
+      if (!counts[role]) counts[role] = { total: 0, online: 0 };
+      counts[role].total += 1;
+      if (r.online) counts[role].online += 1;
+    }
+    return counts;
+  }, [rooms]);
+
   const [selectedChat, setSelectedChat] = useState<ChatRoom | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loadingMessages, setLoadingMessages] = useState(false);
 
   const [composer, setComposer] = useState('');
-  const listRef = useRef<any>(null);
+  const [lastPreview, setLastPreview] = useState<Record<string, string>>({});
+  const [rosterSearch, setRosterSearch] = useState<string>('');
+  const listRef = useRef<FlatList<ChatMessage> | null>(null);
+  const listKey = selectedChat ? (selectedChat.employee_id ? `emp-${selectedChat.employee_id}` : `chat-${selectedChat.chat_id}`) : 'none';
+  const [isAtBottom, setIsAtBottom] = useState<boolean>(true);
+  const [unseenCounts, setUnseenCounts] = useState<Record<string, number>>({});
+  const [loadingEarlier, setLoadingEarlier] = useState<boolean>(false);
+  const { height: windowHeight } = useWindowDimensions();
+  // Strict percentage of viewport: 60% of window height (no min/max)
+  const rosterHeight = Math.floor(windowHeight * 0.5);
   const prevMessagesCount = useRef(0);
   const [showDebug, setShowDebug] = useState(false);
 
@@ -113,8 +136,13 @@ export default function TeamChats() {
           const staff = await r2.json();
           try { console.log('fetchRooms: raw staff response', staff); } catch {}
           if (Array.isArray(staff) && staff.length) {
-            // Prefer explicit employee_id field when present
-            const mapped = staff.map((s: any) => ({ employee_id: Number(s.employee_id ?? s.id), name: s.full_name ?? s.username ?? `User ${s.id ?? s.employee_id}`, role: s.role ?? '' }));
+            // Prefer explicit employee_id field when present. Map presence if provided by API.
+            const mapped = staff.map((s: any) => ({
+              employee_id: Number(s.employee_id ?? s.id),
+              name: s.full_name ?? s.username ?? `User ${s.id ?? s.employee_id}`,
+              role: s.role ?? '',
+              online: Boolean(s.online ?? false),
+            }));
             try { console.log('fetchRooms: mapped staff', mapped, 'adminEmployeeId', adminEmployeeId); } catch {}
             roomsAcc.push(...mapped);
           }
@@ -137,10 +165,13 @@ export default function TeamChats() {
         });
       };
 
-  const deduped = dedupeRooms(roomsAcc);
-  try { console.log('fetchRooms: deduped roster', deduped); } catch {}
-  setRooms(deduped);
-      // auto-select first staff by default
+      // Previously we included chat rooms in the roster. For this build we only want staff entries
+      // so we do not fetch or append chat rooms here. Keep roomsAcc limited to staff entries.
+
+      const deduped = dedupeRooms(roomsAcc);
+      try { console.log('fetchRooms: deduped roster', deduped); } catch {}
+      setRooms(deduped);
+      // auto-select first staff or first group by preference
       if (deduped.length) setSelectedChat(deduped[0]);
     } catch {}
     finally { setLoadingRooms(false); }
@@ -152,6 +183,40 @@ export default function TeamChats() {
       // re-run rooms fetch to ensure self is excluded
       fetchRooms(adminEmployeeId);
     }
+    // also fetch previews whenever admin id becomes available
+    (async () => {
+      try {
+        const baseUrl = await getBaseUrl();
+        const headers = await getAuthHeaders();
+        const r = await fetch(`${baseUrl}/api/admin/chats/previews`, { method: 'GET', credentials: 'include', headers });
+        if (!r.ok) return;
+        const d = await r.json();
+        if (Array.isArray(d)) {
+          const map: Record<string, string> = {};
+          for (const p of d) {
+            const key = p.employee_id ? `emp-${p.employee_id}` : `chat-${p.chat_id}`;
+            map[key] = p.preview ? String(p.preview).slice(0, 80) : '';
+          }
+            // compute diffs to increment unseen counts for rooms that updated while not selected
+            setLastPreview((prev) => {
+              const next = { ...prev, ...map };
+              try {
+                const updated: Record<string, number> = { ...unseenCounts };
+                const selectedKey = selectedChat ? (selectedChat.employee_id ? `emp-${selectedChat.employee_id}` : `chat-${selectedChat.chat_id}`) : null;
+                for (const k of Object.keys(map)) {
+                  const prevVal = String(prev[k] ?? '');
+                  const newVal = String(map[k] ?? '');
+                  if (k !== selectedKey && newVal && newVal !== prevVal) {
+                    updated[k] = (updated[k] ?? 0) + 1;
+                  }
+                }
+                setUnseenCounts(updated);
+              } catch {}
+              return next;
+            });
+        }
+      } catch {}
+    })();
   }, [adminEmployeeId]);
 
   const fetchMessages = async (chatId: number) => {
@@ -188,6 +253,13 @@ export default function TeamChats() {
               } as ChatMessage;
             });
             setMessages(normalized);
+            // clear unseen count for this chat since user loaded it
+            try { setUnseenCounts((prev) => { const cp = { ...prev }; delete cp[`chat-${chatId}`]; return cp; }); } catch {}
+            // update preview for this chat
+            try {
+              const last = normalized.length ? normalized[normalized.length - 1] : null;
+              if (last) setLastPreview((p) => ({ ...p, [`chat-${chatId}`]: String(last.content).slice(0, 80) }));
+            } catch {}
             return;
           }
         } catch {}
@@ -206,7 +278,7 @@ export default function TeamChats() {
       if (!r.ok) { setMessages([]); return; }
       const d = await r.json();
           if (Array.isArray(d)) {
-        const normalized = d.map((m: any) => {
+  const normalized = d.map((m: any) => {
           const sentAt = m.sent_at ?? m.sentAt ?? m.created_at ?? new Date().toISOString();
           let senderId = Number(m.sender_id ?? m.sender?.id ?? m.sender?.employee_id ?? null) || undefined;
           let senderName = m.sender_name ?? (m.sender?.full_name ?? 'Unknown');
@@ -224,6 +296,12 @@ export default function TeamChats() {
           } as ChatMessage;
         });
         setMessages(normalized);
+  // clear unseen count for this emp chat
+  try { setUnseenCounts((prev) => { const cp = { ...prev }; delete cp[`emp-${employeeId}`]; return cp; }); } catch {}
+        try {
+          const last = normalized.length ? normalized[normalized.length - 1] : null;
+          if (last) setLastPreview((p) => ({ ...p, [`emp-${employeeId}`]: String(last.content).slice(0, 80) }));
+        } catch {}
         return;
       }
       setMessages([]);
@@ -236,11 +314,15 @@ export default function TeamChats() {
     try {
       if (messages.length > prevMessagesCount.current) {
         // scroll to end
-        if (listRef.current && listRef.current.scrollToEnd) {
-          listRef.current.scrollToEnd({ animated: true });
-        } else if (listRef.current && listRef.current.scrollToOffset) {
-          listRef.current.scrollToOffset({ offset: 99999, animated: true });
-        }
+        // Prefer FlatList.scrollToEnd when available, otherwise fall back to scrollToOffset
+        try {
+          if (listRef.current && typeof (listRef.current as any).scrollToEnd === 'function') {
+            // small delay helps avoid a visual jump when switching chats
+            setTimeout(() => { try { (listRef.current as any).scrollToEnd({ animated: true }); } catch {} }, 60);
+          } else if (listRef.current && typeof (listRef.current as any).scrollToOffset === 'function') {
+            setTimeout(() => { try { (listRef.current as any).scrollToOffset({ offset: 99999, animated: true }); } catch {} }, 60);
+          }
+        } catch {}
       }
     } catch {}
     prevMessagesCount.current = messages.length;
@@ -267,6 +349,7 @@ export default function TeamChats() {
           // replace temp message with server message
           const serverSentAt = m?.sent_at ?? new Date().toISOString();
           setMessages((prev) => prev.map((it) => (it.tempId === tempId ? { message_id: m?.message_id ?? undefined, chat_id: chatId, sender_name: adminName, sender_id: adminEmployeeId ?? undefined, content, sent_at: serverSentAt, status: 'sent' } : it)));
+          try { setLastPreview((p) => ({ ...p, [`chat-${chatId}`]: String(content).slice(0, 80) })); } catch {}
           try { if (typeof window !== 'undefined' && window.dispatchEvent) window.dispatchEvent(new Event('overview:updated')); } catch {}
           // re-fetch to get canonical message(s) from db
           await fetchMessages(chatId);
@@ -298,7 +381,8 @@ export default function TeamChats() {
   // Re-fetch conversation to pick up DB record (ownership will be resolved by sender_id or sender_name fallback)
       try { if (typeof window !== 'undefined' && window.dispatchEvent) window.dispatchEvent(new Event('overview:updated')); } catch {}
       // re-fetch conversation to pick up DB record
-      await fetchDirectMessages(employeeId);
+  await fetchDirectMessages(employeeId);
+  try { setLastPreview((p) => ({ ...p, [`emp-${employeeId}`]: String(content).slice(0, 80) })); } catch {}
       return true;
     } catch {
       setMessages((prev) => prev.map((it) => (it.tempId === tempId ? { ...it, status: 'failed' } : it)));
@@ -343,21 +427,134 @@ export default function TeamChats() {
     }
   };
 
+  const loadEarlierMessages = async () => {
+    if (!selectedChat) return;
+    if (messages.length === 0) return;
+    setLoadingEarlier(true);
+    try {
+      const baseUrl = await getBaseUrl();
+      const oldest = messages[0]?.sent_at ?? new Date().toISOString();
+      const endpoints = selectedChat.employee_id ?
+        [`/api/admin/chats/direct/${selectedChat.employee_id}/messages?before=${encodeURIComponent(oldest)}`] :
+        [`/api/admin/chats/${selectedChat.chat_id}/messages?before=${encodeURIComponent(oldest)}`, `/api/chats/${selectedChat.chat_id}/messages?before=${encodeURIComponent(oldest)}`];
+      for (const ep of endpoints) {
+        try {
+          const headers = await getAuthHeaders();
+          const r = await fetch(`${baseUrl}${ep}`, { method: 'GET', credentials: 'include', headers });
+          if (!r.ok) continue;
+          const d = await r.json();
+          const msgs = Array.isArray(d) ? d : (d?.messages ?? d?.chatMessages ?? []);
+          if (Array.isArray(msgs) && msgs.length) {
+            const normalized = msgs.map((m: any) => ({
+              message_id: m.message_id ?? m.id,
+              chat_id: m.chat_id ?? selectedChat.chat_id ?? 0,
+              sender_name: m.sender_name ?? m.sender?.full_name ?? 'Unknown',
+              sender_id: Number(m.sender_id ?? m.sender?.id ?? m.sender?.employee_id ?? null) || undefined,
+              content: m.content,
+              sent_at: m.sent_at ?? m.sentAt ?? m.created_at ?? new Date().toISOString(),
+            } as ChatMessage));
+            setMessages((prev) => [...normalized, ...prev]);
+            // attempt to keep scroll position stable
+            try { if (listRef.current && typeof (listRef.current as any).scrollToOffset === 'function') (listRef.current as any).scrollToOffset({ offset: normalized.length * 80, animated: false }); } catch {}
+            break;
+          }
+        } catch {}
+      }
+    } catch {}
+    finally { setLoadingEarlier(false); }
+  };
+
   const renderRoom = ({ item }: { item: ChatRoom }) => (
     <TouchableOpacity
       style={[styles.roomCard, (selectedChat && ((item.employee_id && selectedChat.employee_id === item.employee_id) || (item.chat_id && selectedChat.chat_id === item.chat_id))) ? styles.roomCardActive : null]}
-      onPress={() => setSelectedChat(item)}
+      onPress={() => {
+        const key = item.employee_id ? `emp-${item.employee_id}` : `chat-${item.chat_id}`;
+        // clear unseen count when user selects
+        setUnseenCounts((prev) => { const cp = { ...prev }; delete cp[key]; return cp; });
+        setSelectedChat(item);
+      }}
     >
-      <Text style={styles.roomName}>{item.name ?? (item.employee_id ? item.name : `Chat ${item.chat_id}`)}</Text>
-      <Text style={styles.roomMeta}>{item.employee_id ? (item.role ?? 'User') : (item.is_group ? 'Group' : 'Chat')}</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+        <View style={[styles.avatarCircleSmall, { backgroundColor: roleColor(item.role) }]}> 
+          <Text style={[styles.avatarInitialsSmall, { color: avatarInitialColor(item.role) }]}>{String((item.name ?? '').split(' ').map((s:any)=>s[0]).join('').slice(0,2)).toUpperCase() || 'U'}</Text>
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.roomName}>{item.name ?? (item.employee_id ? item.name : `Chat ${item.chat_id}`)}</Text>
+          <Text style={styles.roomMeta}>{item.employee_id ? (item.role ?? 'User') : (item.is_group ? 'Group' : 'Chat')}</Text>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Text style={styles.roomSubMeta}>{ lastPreview[item.employee_id ? `emp-${item.employee_id}` : `chat-${item.chat_id}`] ?? 'Last: Emergency Alert' }</Text>
+            {(() => {
+              const key = item.employee_id ? `emp-${item.employee_id}` : `chat-${item.chat_id}`;
+              const c = unseenCounts[key] ?? 0;
+              if (c > 0) return (<View style={styles.unseenBadge}><Text style={styles.unseenBadgeText}>{String(c)}</Text></View>);
+              return null;
+            })()}
+          </View>
+        </View>
+      </View>
     </TouchableOpacity>
   );
+
+  const roleColor = (role?: string) => {
+    if (!role) return '#FFFFFF';
+    const r = String(role).toLowerCase();
+    if (r.includes('dispatcher')) return '#E9F6EE';
+    if (r.includes('cashier')) return '#F1F7F0';
+    if (r.includes('ball')) return '#FFF8EE';
+    if (r.includes('admin')) return '#EAF6E9';
+    return '#FFFFFF';
+  };
+
+  const avatarInitialColor = (_role?: string) => {
+    return '#27421A';
+  };
+
+  // Filter rooms by rosterSearch then group by role for roster sections (preserve desired display order)
+  const groupedRooms = React.useMemo(() => {
+    const order = ['Dispatcher', 'Cashier', 'BallHandler', 'Admin', 'Other'];
+    const titleMap: Record<string, string> = { Dispatcher: 'Dispatchers', Cashier: 'Cashiers', BallHandler: 'Ball Handler', Admin: 'Admins', Other: 'Other' };
+    const groups: Array<{ key: string; title: string; items: ChatRoom[] }> = [];
+
+    // apply roster search filter (name or role)
+    const filtered = (rooms || []).filter((ro) => {
+      if (!rosterSearch || rosterSearch.trim().length === 0) return true;
+      const q = rosterSearch.toLowerCase().trim();
+      const name = String(ro.name ?? '').toLowerCase();
+      const role = String(ro.role ?? '').toLowerCase();
+      return name.includes(q) || role.includes(q);
+    });
+
+    const byRole: Record<string, ChatRoom[]> = {};
+    for (const r of filtered) {
+      // Only include staff/direct entries in the roster (skip chat rooms)
+      if (r.employee_id) {
+        const k = (r.role ?? 'Other') as string;
+        if (!byRole[k]) byRole[k] = [];
+        byRole[k].push(r);
+      }
+    }
+    for (const k of order) {
+      const items = byRole[k] ?? [];
+      if (items.length) groups.push({ key: k, title: titleMap[k] ?? k, items });
+    }
+    // include any other roles not present in order
+    for (const k of Object.keys(byRole)) {
+      if (!order.includes(k)) {
+        groups.push({ key: k, title: titleMap[k] ?? k, items: byRole[k] });
+      }
+    }
+
+    return groups;
+  }, [rooms]);
 
   const renderMessage = ({ item }: { item: ChatMessage }) => {
   const fromMe = (item.sender_id !== undefined && adminEmployeeId !== null) ? item.sender_id === adminEmployeeId : (item.sender_name === adminName);
     return (
       <View style={[styles.messageRow, fromMe ? styles.messageRowRight : styles.messageRowLeft]}>
-        {!fromMe && <Text style={styles.messageSender}>{item.sender_name}</Text>}
+        {/* Timestamp + sender line above the bubble */}
+        <View style={{ width: '100%', flexDirection: 'row', justifyContent: fromMe ? 'flex-end' : 'flex-start' }}>
+          <Text style={styles.messageTimeTop}>{`${item.sender_name ?? ''}${item.sent_at ? ' - ' + new Date(item.sent_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}`}</Text>
+        </View>
         <View style={[styles.messageBubble, fromMe ? styles.messageBubbleMe : styles.messageBubbleOther]}>
           <Text style={fromMe ? styles.messageTextMe : styles.messageTextOther}>{item.content}</Text>
           {item.status === 'pending' && <ActivityIndicator size="small" color="#666" style={{ marginTop: 6 }} />}
@@ -370,13 +567,12 @@ export default function TeamChats() {
             </View>
           )}
         </View>
-        <Text style={styles.messageTime}>{item.sent_at ? new Date(item.sent_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}</Text>
       </View>
     );
   };
 
   return (
-    <View style={styles.root}>
+    <View style={[styles.root, { padding: 20 }]}>
       <View style={styles.headerRow}>
         <View>
           <Text style={styles.title}>Team Chats</Text>
@@ -386,47 +582,134 @@ export default function TeamChats() {
           <Text style={styles.dateText}>{now.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}</Text>
           <Text style={styles.dateText}>{now.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })}</Text>
         </View>
-      </View>
-      <View style={styles.bodyRow}>
+  </View>
+  <View style={styles.bodyRow}>
         <View style={styles.rosterColumn}>
-          <Text style={styles.rosterTitle}>Chat Roster</Text>
-          {(loadingRooms || adminEmployeeId === null) ? <ActivityIndicator /> : (
-            <FlatList
-              data={rooms}
-              renderItem={renderRoom}
-              keyExtractor={(r) => (r.employee_id ? `emp-${r.employee_id}` : `chat-${r.chat_id ?? 'unknown'}`)}
-              style={styles.rosterList}
-            />
-          )}
-          <TouchableOpacity style={styles.urgentButton} onPress={undefined} disabled={true}>
-            <Text style={styles.urgentText}>Send to All (Urgent)</Text>
-          </TouchableOpacity>
-          
-          {showDebug && (
-            <ScrollView style={styles.debugPanel}>
-              <Text style={styles.debugTitle}>Rooms (deduped)</Text>
-              <Text style={styles.debugBody}>{JSON.stringify(rooms, null, 2)}</Text>
+          <View style={styles.rosterCard}>
+            <Text style={styles.rosterCardTitle}>Chat Roster</Text>
+            <View style={styles.emergencyTagRow}>
+            </View>
+
+            {/* Online users / active roles quick chips */}
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.roleChipsRow} contentContainerStyle={{ paddingVertical: 6 }}>
+              <TouchableOpacity style={[styles.roleChip, !rosterSearch ? styles.roleChipActive : null]} onPress={() => setRosterSearch('')}>
+                <Text style={styles.roleChipText}>All</Text>
+              </TouchableOpacity>
+              {Object.keys(roleCounts).map((role) => {
+                  const rc = roleCounts[role] ?? { total: 0, online: 0 };
+                  return (
+                    <TouchableOpacity key={role} style={[styles.roleChip, rosterSearch && rosterSearch.toLowerCase() === String(role).toLowerCase() ? styles.roleChipActive : null]} onPress={() => setRosterSearch(role)}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                        {rc.online > 0 ? <View style={styles.roleOnlineDot} /> : <View style={{ width: 8, height: 8, marginRight: 8 }} />}
+                        <Text style={styles.roleChipText}>{role} ({rc.online}/{rc.total})</Text>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
             </ScrollView>
-          )}
+
+            <View style={{ marginBottom: 10 }}>
+              <TextInput value={rosterSearch} onChangeText={setRosterSearch} placeholder="Search name or role" style={styles.rosterSearchInput} />
+            </View>
+
+            {/* All Roles quick entry removed when no group chats are present */}
+            {/* (Chats/general entries intentionally not shown in roster) */}
+
+            {(loadingRooms || adminEmployeeId === null) ? <ActivityIndicator style={{ marginTop: 12 }} /> : (
+              <SectionList
+                sections={groupedRooms.map((g) => ({ title: g.title, data: g.items }))}
+                keyExtractor={(item: ChatRoom, index) => `room-${item.employee_id ?? item.chat_id ?? 'unk'}-${index}`}
+                renderSectionHeader={({ section }) => (
+                  <>
+                    <Text style={styles.groupHeader}>{section.title}</Text>
+                    <View style={styles.groupDivider} />
+                  </>
+                )}
+                renderItem={({ item }) => renderRoom({ item })}
+                ItemSeparatorComponent={() => <View style={{ height: 8 }} />}
+                contentContainerStyle={{ paddingBottom: 13 }}
+                showsVerticalScrollIndicator={false}
+                style={[styles.rosterList, { height: rosterHeight }]}
+                nestedScrollEnabled={true}
+                stickySectionHeadersEnabled={true}
+              />
+            )}
+
+            <TouchableOpacity style={styles.urgentButton} onPress={undefined} disabled={true}>
+              <Text style={styles.urgentText}>Urgent Alerts</Text>
+            </TouchableOpacity>
+
+            {showDebug && (
+              <ScrollView style={styles.debugPanel}>
+                <Text style={styles.debugTitle}>Rooms (deduped)</Text>
+                <Text style={styles.debugBody}>{JSON.stringify(rooms, null, 2)}</Text>
+              </ScrollView>
+            )}
+          </View>
         </View>
 
         <View style={styles.chatColumn}>
-          <Text style={styles.chatTitle}>{selectedChat ? (selectedChat.name ?? 'Chat') : 'Select a chat'}</Text>
-          <View style={styles.chatWindow}>
-            {loadingMessages ? <ActivityIndicator /> : (
-                  <FlatList
-                    ref={listRef}
-                    data={messages}
-                    renderItem={renderMessage}
-                    keyExtractor={(m, idx) => String(m.tempId ?? m.message_id ?? idx)}
-                  />
-            )}
+          <View style={styles.chatHeaderRow}>
+            <Text style={styles.chatTitleLarge}>{selectedChat ? `Chat with ${selectedChat.name ?? 'Chat'}` : 'Select a chat'}</Text>
+            <View />
           </View>
+          <View style={styles.chatWindowCard}>
+            {loadingMessages ? <ActivityIndicator /> : (
+              <FlatList
+                key={listKey}
+                ref={listRef}
+                data={messages}
+                renderItem={renderMessage}
+                keyExtractor={(m, idx) => String(m.tempId ?? m.message_id ?? idx)}
+                contentContainerStyle={{ padding: 12, flexGrow: 1, justifyContent: 'flex-end', paddingBottom: 120 }}
+                keyboardShouldPersistTaps="handled"
+                ListHeaderComponent={() => (
+                  messages.length ? (
+                    <View style={{ alignItems: 'center', marginVertical: 6 }}>
+                      {loadingEarlier ? <ActivityIndicator /> : (
+                        <TouchableOpacity onPress={loadEarlierMessages} style={styles.loadEarlierButton}><Text style={styles.loadEarlierText}>Load earlier messages</Text></TouchableOpacity>
+                      )}
+                    </View>
+                  ) : null
+                )}
+                onContentSizeChange={() => {
+                  try {
+                    if (isAtBottom && listRef.current && typeof (listRef.current as any).scrollToEnd === 'function') {
+                      // small timeout to allow layout to stabilize and avoid flicker when switching chats
+                      setTimeout(() => { try { (listRef.current as any).scrollToEnd({ animated: true }); } catch {} }, 60);
+                    }
+                  } catch {}
+                }}
+                onScroll={(e: any) => {
+                  try {
+                    const { layoutMeasurement, contentOffset, contentSize } = e.nativeEvent;
+                    const paddingToBottom = 40;
+                    const atBottom = (layoutMeasurement.height + contentOffset.y) >= (contentSize.height - paddingToBottom);
+                    setIsAtBottom(Boolean(atBottom));
+                  } catch {}
+                }}
+                initialNumToRender={20}
+                scrollEventThrottle={100}
+              />
+            )}
 
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.composerRow}>
-            <TextInput value={composer} onChangeText={setComposer} placeholder="Type your message in here" style={styles.composerInput} />
-            <TouchableOpacity style={styles.sendButton} onPress={onSendPressed}><Text style={styles.sendIcon}>➤</Text></TouchableOpacity>
-          </KeyboardAvoidingView>
+            {/* Jump-to-latest floating button when user scrolled up */}
+            {!isAtBottom && (
+              <TouchableOpacity
+                style={styles.floatingLatestButton}
+                onPress={() => {
+                  try { if (listRef.current && typeof (listRef.current as any).scrollToEnd === 'function') (listRef.current as any).scrollToEnd({ animated: true }); setIsAtBottom(true); } catch {}
+                }}
+              >
+                <Text style={styles.floatingLatestText}>Latest ↓</Text>
+              </TouchableOpacity>
+            )}
+
+            <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.composerRowInside}>
+              <TextInput value={composer} onChangeText={setComposer} placeholder="Type your message in here" style={styles.composerInputInside} />
+              <TouchableOpacity style={styles.sendButtonInside} onPress={onSendPressed}><Text style={styles.sendIcon}>➤</Text></TouchableOpacity>
+            </KeyboardAvoidingView>
+          </View>
         </View>
       </View>
     </View>
@@ -440,11 +723,26 @@ const styles = StyleSheet.create({
   subtitle: { color: '#666', marginTop: 6 },
   dateText: { textAlign: 'right', fontSize: 12, color: '#555' },
   divider: { height: 1, backgroundColor: '#D6D6D6', marginVertical: 12 },
-  bodyRow: { flexDirection: 'row', gap: 12 },
-  rosterColumn: { width: 320 },
+  bodyRow: { flexDirection: 'row' },
+  rosterColumn: { width: 360 },
+  rosterCard: { backgroundColor: '#F7FBF6', borderRadius: 12, padding: 14, shadowColor: '#000', shadowOpacity: 0.04, elevation: 2 },
+  rosterCardTitle: { fontWeight: '800', color: '#27421A', fontSize: 16, marginBottom: 8 },
+  emergencyTagRow: { marginBottom: 8 },
+  emergencyLabel: { color: '#B00000', fontWeight: '800', fontSize: 11 },
   rosterTitle: { fontWeight: '700', marginBottom: 8 },
-  rosterList: { marginBottom: 12 },
+  rosterList: { marginBottom: 12, maxHeight: 600 },
+  rosterSearchInput: { backgroundColor: '#fff', paddingHorizontal: 10, paddingVertical: 8, borderRadius: 6, borderWidth: 1, borderColor: '#E6EDE4' },
+  roomSubMeta: { color: '#9A9A9A', fontSize: 12, marginTop: 4 },
+  messageTimeTop: { fontSize: 12, color: '#27421A', marginBottom: 6 },
+  groupHeader: { fontSize: 13, fontWeight: '800', color: '#27421A', marginTop: 8, marginBottom: 6 },
+  groupDivider: { height: 1, backgroundColor: '#E6EDE4', marginBottom: 8 },
+  sectionSpacer: { height: 8 },
+  avatarCircleSmall: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#FFF', borderWidth: 1, borderColor: '#E6E6E6', alignItems: 'center', justifyContent: 'center', marginRight: 10 },
+  avatarInitialsSmall: { color: '#27421A', fontWeight: '700', fontSize: 12 },
   roomCard: { backgroundColor: '#F8FBF6', padding: 12, borderRadius: 8, marginBottom: 8, borderWidth: 1, borderColor: '#EDEFE8' },
+  allRolesCard: { flexDirection: 'row', alignItems: 'center', paddingVertical: 10 },
+  avatarCircle: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#E9F6EE', alignItems: 'center', justifyContent: 'center', marginRight: 10 },
+  avatarInitials: { color: '#27421A', fontWeight: '800' },
   roomCardActive: { backgroundColor: '#E9F6EE', borderColor: '#C9DABF' },
   roomName: { fontWeight: '700', color: '#27421A' },
   roomMeta: { color: '#7A7A7A', fontSize: 12, marginTop: 4 },
@@ -455,9 +753,10 @@ const styles = StyleSheet.create({
   debugPanel: { marginTop: 8, backgroundColor: '#0f1720', padding: 8, borderRadius: 6, maxHeight: 240 },
   debugTitle: { color: '#fff', fontWeight: '800', marginBottom: 6 },
   debugBody: { color: '#ddd', fontFamily: Platform.OS === 'web' ? 'monospace' : undefined, fontSize: 12 },
-  chatColumn: { flex: 1, marginLeft: 12, minHeight: 400, backgroundColor: '#fff', borderRadius: 10, padding: 12, shadowColor: '#000', shadowOpacity: 0.04, elevation: 2 },
-  chatTitle: { fontWeight: '700', marginBottom: 8 },
-  chatWindow: { flex: 1, minHeight: 240, maxHeight: 720, padding: 8 },
+  chatColumn: { flex: 1, marginLeft: 18, minHeight: 420 },
+  chatHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  chatTitleLarge: { fontWeight: '800', fontSize: 18, color: '#2E3B2B' },
+  chatWindowCard: { flex: 1, minHeight: 300, backgroundColor: '#FBFEFD', borderRadius: 12, padding: 0, overflow: 'hidden', borderWidth: 1, borderColor: '#EEF6EB' },
   messageRow: { marginVertical: 6 },
   messageRowLeft: { alignItems: 'flex-start' },
   messageRowRight: { alignItems: 'flex-end' },
@@ -468,8 +767,20 @@ const styles = StyleSheet.create({
   messageTextMe: { color: '#1B2B1C' },
   messageTextOther: { color: '#1B2B1C' },
   messageTime: { fontSize: 11, color: '#999', marginTop: 4 },
-  composerRow: { flexDirection: 'row', alignItems: 'center', borderTopWidth: 1, borderTopColor: '#EDEDED', paddingTop: 8, marginTop: 8 },
-  composerInput: { flex: 1, backgroundColor: '#F6F6F6', paddingVertical: 10, paddingHorizontal: 12, borderRadius: 6, borderWidth: 1, borderColor: '#E8E8E8' },
-  sendButton: { marginLeft: 8, backgroundColor: '#2E7D32', padding: 12, borderRadius: 6 },
+  chatWindowCard: { flex: 1, minHeight: 300, backgroundColor: '#FBFEFD', borderRadius: 12, padding: 0, overflow: 'hidden', borderWidth: 1, borderColor: '#EEF6EB', position: 'relative' },
+  composerRowInside: { position: 'absolute', bottom: 0, left: 0, right: 0, flexDirection: 'row', alignItems: 'center', borderTopWidth: 1, borderTopColor: '#E6EDE4', padding: 12, backgroundColor: 'transparent' },
+  composerInputInside: { flex: 1, backgroundColor: '#fff', paddingVertical: 12, paddingHorizontal: 14, borderRadius: 8, borderWidth: 1, borderColor: '#E6EDE4', marginRight: 8 },
+  sendButtonInside: { marginLeft: 8, backgroundColor: '#17321d', padding: 12, borderRadius: 8, alignItems: 'center', justifyContent: 'center' },
   sendIcon: { color: '#fff', fontWeight: '700' },
+  floatingLatestButton: { position: 'absolute', right: 16, bottom: 140, backgroundColor: '#17321d', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 20, elevation: 6, zIndex: 60 },
+  floatingLatestText: { color: '#fff', fontWeight: '800' },
+  unseenBadge: { backgroundColor: '#B00000', minWidth: 20, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  unseenBadgeText: { color: '#fff', fontSize: 11, fontWeight: '800' },
+  loadEarlierButton: { backgroundColor: '#EDEFF0', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8 },
+  loadEarlierText: { color: '#27421A', fontWeight: '700' },
+  roleChipsRow: { marginBottom: 3 },
+  roleChip: { backgroundColor: '#F0F6F0', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 18, marginRight: 8, borderWidth: 1, borderColor: '#E6EDE4' },
+  roleChipActive: { backgroundColor: '#E9F6EE', borderColor: '#C9DABF'  },
+  roleChipText: { color: '#27421A', fontWeight: '700', marginLeft: 6 },
+  roleOnlineDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#1fbf4a', marginRight: 8 },
 });

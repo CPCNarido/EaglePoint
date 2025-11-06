@@ -1,5 +1,5 @@
 // DispatcherDashboard.tsx
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   Modal,
   Platform,
   Alert,
+  Image,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { MaterialIcons } from "@expo/vector-icons";
@@ -24,6 +25,9 @@ export default function DispatcherDashboard() {
   const [logoutModalVisible, setLogoutModalVisible] = useState(false);
   const router = useRouter();
   const settings = useSettings();
+  // show logged-in user info (fetch from API similar to admin sidebar)
+  const [userName, setUserName] = useState<string>("DISPATCHER");
+  const [userEmployeeId, setUserEmployeeId] = useState<string>("");
 
   const handleLogout = () => {
     if (Platform.OS === "web") {
@@ -49,6 +53,48 @@ export default function DispatcherDashboard() {
     { name: "Session Control", icon: "settings" },
   ];
 
+  // fetch the logged-in user (employee) info for the sidebar (tries cookie first, then bearer token)
+  useEffect(() => {
+    (async () => {
+      try {
+        let baseUrl = Platform.OS === 'android' ? 'http://10.127.147.53:3000' : 'http://localhost:3000';
+        try {
+          // dynamic import to avoid bundler-time dependency
+          // @ts-ignore
+          const AsyncStorageModule = await import('@react-native-async-storage/async-storage').catch(() => null);
+          const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
+          const override = AsyncStorage ? await AsyncStorage.getItem('backendBaseUrlOverride') : null;
+          if (override) baseUrl = override;
+        } catch {}
+
+        let r = await fetch(`${baseUrl}/api/admin/me`, { method: 'GET', credentials: 'include' });
+        let data: any = null;
+        if (r.ok) data = await r.json();
+        else {
+          // fallback to bearer token saved in AsyncStorage
+          try {
+            // @ts-ignore
+            const AsyncStorageModule = await import('@react-native-async-storage/async-storage').catch(() => null);
+            const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
+            const token = AsyncStorage ? await AsyncStorage.getItem('authToken') : null;
+            if (token) {
+              const r2 = await fetch(`${baseUrl}/api/admin/me`, { method: 'GET', headers: { Authorization: `Bearer ${token}` } });
+              if (r2.ok) data = await r2.json();
+            }
+          } catch {}
+        }
+
+        if (!data) return;
+        const name = data?.full_name || data?.name || data?.username || 'DISPATCHER';
+        const empId = data?.employee_id ?? data?.employeeId ?? null;
+        setUserName(name);
+        setUserEmployeeId(empId != null ? String(empId) : '');
+      } catch (e) {
+        // ignore
+      }
+    })();
+  }, []);
+
   const renderActiveTab = () => {
     switch (activeTab) {
       case "Dashboard":
@@ -68,7 +114,18 @@ export default function DispatcherDashboard() {
     <View style={styles.container}>
       {/* Sidebar */}
       <View style={styles.sidebar}>
-        <Text style={styles.logo}>{settings.siteName}{"\n"}Dispatcher</Text>
+        <View style={styles.logoContainer}>
+          <Image
+            source={require('../../../assets/General/Logo.png')}
+            style={styles.logoImage}
+            resizeMode="contain"
+          />
+          <View style={styles.logoTextContainer}>
+            <Text style={styles.logoAppName}>{settings.siteName}</Text>
+            <Text style={styles.logoRole}>DISPATCHER</Text>
+          </View>
+        </View>
+        <View style={styles.logoDivider} />
 
         {tabs.map((tab) => (
           <TouchableOpacity
@@ -97,8 +154,8 @@ export default function DispatcherDashboard() {
         ))}
 
         <View style={styles.logoutContainer}>
-          <Text style={styles.loggedInText}>Logged in as: Cashier Anne</Text>
-          <Text style={styles.loggedInText}>Cashier ID: 1022101</Text>
+          <Text style={styles.loggedInText}>Logged in as: {userName}</Text>
+          <Text style={styles.loggedInText}>Employee ID: {userEmployeeId || '—'}</Text>
           <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
             <Text style={styles.logoutText}>LOG OUT</Text>
           </TouchableOpacity>
@@ -144,13 +201,13 @@ export default function DispatcherDashboard() {
 const styles = StyleSheet.create({
   container: { flex: 1, flexDirection: "row", backgroundColor: "#F6F6F2" },
   sidebar: { width: 250, backgroundColor: "#1E2B20", padding: 20 },
-  logo: {
-    color: "#fff",
-    fontWeight: "bold",
-    fontSize: 20,
-    marginBottom: 40,
-    lineHeight: 26,
-  },
+  // Logo block (mirrors admin sidebar styling)
+  logoContainer: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
+  logoImage: { width: 60, height: 60, borderRadius: 8, marginRight: 10, backgroundColor: 'transparent', overflow: 'hidden' },
+  logoTextContainer: { flexDirection: 'column' },
+  logoAppName: { color: '#fff', fontWeight: '700', fontSize: 20 },
+  logoRole: { color: '#DADADA', fontSize: 15, marginTop: 2 },
+  logoDivider: { height: 1, backgroundColor: 'rgba(255,255,255,0.14)', marginVertical: 0, alignSelf: 'stretch' },
   tabButton: {
     flexDirection: "row",
     alignItems: "center",
