@@ -13,7 +13,7 @@ import {
 // Defer loading of icon library to runtime to avoid possible environment-time errors
 let MaterialIcons: any = null;
 
-export default function StaffManagement() {
+export default function StaffManagement({ refreshKey }: { refreshKey?: number }) {
   // require icons at runtime to avoid bundler/runtime initialization errors
   try {
     // allow runtime require here (deliberate) - disable the specific rule
@@ -68,6 +68,17 @@ export default function StaffManagement() {
   }, []);
   /* eslint-enable react-hooks/exhaustive-deps */
 
+  // silently refresh staff list when parent admin signals an update
+  useEffect(() => {
+    if (typeof refreshKey === 'undefined') return;
+    // small debounce to allow backend writes to complete
+    const id = setTimeout(() => {
+      fetchStaff();
+    }, 400);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshKey]);
+
   const fetchAdminInfo = async () => {
     try {
       const res = await fetch(`${baseUrl}/api/admin/me`, { method: 'GET', credentials: 'include' });
@@ -117,9 +128,9 @@ export default function StaffManagement() {
     return list;
   })();
 
-  // Pagination (client-side) - 5 items per page
+  // Pagination (client-side) - 8 items per page
   const [page, setPage] = useState<number>(1);
-  const pageSize = 5;
+  const pageSize = 4;
   const totalPages = Math.max(1, Math.ceil(filteredStaff.length / pageSize));
   // Reset page to 1 when filters/search or staff list change
   useEffect(() => {
@@ -147,7 +158,20 @@ export default function StaffManagement() {
       }
   // refresh and show acknowledgement popup
   await fetchStaff();
-  try { if (typeof window !== 'undefined' && window.dispatchEvent) window.dispatchEvent(new Event('overview:updated')); } catch {}
+  try {
+    if (typeof window !== 'undefined' && window.dispatchEvent) {
+      window.dispatchEvent(new Event('overview:updated'));
+    } else if ((global as any).triggerOverviewUpdate) {
+      (global as any).triggerOverviewUpdate();
+    }
+  } catch {}
+  try {
+    if (typeof window !== 'undefined' && window.dispatchEvent) {
+      window.dispatchEvent(new Event('admin:refresh'));
+    } else if ((global as any).triggerAdminRefresh) {
+      (global as any).triggerAdminRefresh();
+    }
+  } catch {}
   setShowAdd(false);
   setFullName(''); setUsername(''); setPassword(''); setRole('Dispatcher');
   openApprovalPopup('Staff have been successfully added!.');
@@ -185,7 +209,20 @@ export default function StaffManagement() {
       }
   // show approval popup with manual close (X) and 2s auto-close
   openApprovalPopup('Changes have been successfully made.');
-  try { if (typeof window !== 'undefined' && window.dispatchEvent) window.dispatchEvent(new Event('overview:updated')); } catch {}
+  try {
+    if (typeof window !== 'undefined' && window.dispatchEvent) {
+      window.dispatchEvent(new Event('overview:updated'));
+    } else if ((global as any).triggerOverviewUpdate) {
+      (global as any).triggerOverviewUpdate();
+    }
+  } catch {}
+  try {
+    if (typeof window !== 'undefined' && window.dispatchEvent) {
+      window.dispatchEvent(new Event('admin:refresh'));
+    } else if ((global as any).triggerAdminRefresh) {
+      (global as any).triggerAdminRefresh();
+    }
+  } catch {}
     } catch {
       alert('Error updating staff');
     }
@@ -196,6 +233,9 @@ export default function StaffManagement() {
   // Remove-confirmation modal state
   const [showRemoveConfirmModal, setShowRemoveConfirmModal] = useState(false);
   const [removeTarget, setRemoveTarget] = useState<{ id: number; full_name?: string; role?: string } | null>(null);
+  // trigger flags so actions run inside useEffect instead of inline handlers
+  const [confirmEditTrigger, setConfirmEditTrigger] = useState(false);
+  const [confirmRemoveTrigger, setConfirmRemoveTrigger] = useState(false);
 
   // Opens the approval popup and starts a 2s auto-close timer. If the user
   // presses the X button the popup will close immediately and the timer
@@ -261,11 +301,43 @@ export default function StaffManagement() {
       setShowRemoveConfirmModal(false);
       setRemoveTarget(null);
   openApprovalPopup('Staff has been removed successfully.');
-  try { if (typeof window !== 'undefined' && window.dispatchEvent) window.dispatchEvent(new Event('overview:updated')); } catch {}
+  try {
+    if (typeof window !== 'undefined' && window.dispatchEvent) {
+      window.dispatchEvent(new Event('overview:updated'));
+    } else if ((global as any).triggerOverviewUpdate) {
+      (global as any).triggerOverviewUpdate();
+    }
+  } catch {}
+  try {
+    if (typeof window !== 'undefined' && window.dispatchEvent) {
+      window.dispatchEvent(new Event('admin:refresh'));
+    } else if ((global as any).triggerAdminRefresh) {
+      (global as any).triggerAdminRefresh();
+    }
+  } catch {}
     } catch {
       Alert.alert('Error', 'Error deleting staff');
     }
   };
+
+  // useEffect to trigger remove when confirmed via modal button
+  useEffect(() => {
+    if (!confirmRemoveTrigger) return;
+    // clear the trigger first to avoid re-entry
+    setConfirmRemoveTrigger(false);
+    // perform remove (uses current removeTarget)
+    performRemove();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [confirmRemoveTrigger]);
+
+  // useEffect to trigger edit when confirmed via modal button
+  useEffect(() => {
+    if (!confirmEditTrigger) return;
+    setConfirmEditTrigger(false);
+    // re-use existing submitEdit implementation
+    submitEdit();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [confirmEditTrigger]);
 
   return (
     <View style={styles.container}>
@@ -464,7 +536,7 @@ export default function StaffManagement() {
               <Pressable style={styles.cancelButton} onPress={() => setShowConfirmModal(false)}>
                 <Text style={styles.cancelButtonText}>Cancel</Text>
               </Pressable>
-              <Pressable style={styles.confirmButton} onPress={() => { setShowConfirmModal(false); submitEdit(); }}>
+              <Pressable style={styles.confirmButton} onPress={() => { setShowConfirmModal(false); setConfirmEditTrigger(true); }}>
                 <Text style={styles.confirmButtonText}>Confirm</Text>
               </Pressable>
             </View>
@@ -500,7 +572,7 @@ export default function StaffManagement() {
               <Pressable style={styles.cancelButton} onPress={() => { setShowRemoveConfirmModal(false); setRemoveTarget(null); }}>
                 <Text style={styles.cancelButtonText}>Cancel</Text>
               </Pressable>
-              <Pressable style={styles.confirmButton} onPress={() => performRemove()}>
+              <Pressable style={styles.confirmButton} onPress={() => { setShowRemoveConfirmModal(false); setConfirmRemoveTrigger(true); }}>
                 <Text style={styles.confirmButtonText}>Remove</Text>
               </Pressable>
             </View>
@@ -577,14 +649,24 @@ export default function StaffManagement() {
         </TouchableOpacity>
 
         <View style={styles.pageList}>
-          {Array.from({ length: totalPages }).map((_, idx) => {
-            const p = idx + 1;
-            return (
-              <TouchableOpacity key={p} style={[styles.pageButton, page === p ? styles.pageButtonActive : {}]} onPress={() => setPage(p)}>
-                <Text style={page === p ? styles.pageButtonTextActive : styles.pageButtonText}>{p}</Text>
-              </TouchableOpacity>
-            );
-          })}
+          {(() => {
+            const computePages = (cur: number, total: number) => {
+              if (total <= 4) return Array.from({ length: total }, (_, i) => i + 1);
+              if (cur <= 4) return [1, 2, 3, 4, 'ellipsis', total];
+              if (cur >= total - 2) return [1, 'ellipsis', total - 3, total - 2, total - 1, total];
+              return [cur - 2, cur - 1, cur, 'ellipsis', total];
+            };
+            const pages = computePages(page, totalPages);
+            return pages.map((p: any, idx: number) => {
+              if (p === 'ellipsis') return (<Text key={`ell-${idx}`} style={{ paddingHorizontal: 8 }}>…</Text>);
+              const num = Number(p);
+              return (
+                <TouchableOpacity key={`page-${num}`} style={[styles.pageButton, page === num ? styles.pageButtonActive : {}]} onPress={() => setPage(num)}>
+                  <Text style={page === num ? styles.pageButtonTextActive : styles.pageButtonText}>{num}</Text>
+                </TouchableOpacity>
+              );
+            });
+          })()}
         </View>
 
         <TouchableOpacity

@@ -8,7 +8,7 @@ export default function AuditLogs() {
   const [logs, setLogs] = useState<any[]>([]);
   const [totalCount, setTotalCount] = useState<number | null>(null);
   const [page, setPage] = useState<number>(1);
-  const pageSize = 25; // entries per page for audit logs
+  const pageSize = 8; // entries per page for audit logs
   const [loading, setLoading] = useState(false);
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
@@ -382,14 +382,25 @@ export default function AuditLogs() {
             </TouchableOpacity>
 
             <View style={styles.pageList}>
-              {Array.from({ length: Math.max(1, Math.ceil((totalCount ?? logs.length) / pageSize)) }).map((_, idx) => {
-                const p = idx + 1;
-                return (
-                  <TouchableOpacity key={p} style={[styles.pageButton, page === p ? styles.pageButtonActive : {}]} onPress={() => { setPage(p); fetchLogs(p); }}>
-                    <Text style={page === p ? styles.pageButtonTextActive : styles.pageButtonText}>{p}</Text>
-                  </TouchableOpacity>
-                );
-              })}
+              {(() => {
+                const totalPages = Math.max(1, Math.ceil((totalCount ?? logs.length) / pageSize));
+                const computePages = (cur: number, total: number) => {
+                  if (total <= 4) return Array.from({ length: total }, (_, i) => i + 1);
+                  if (cur <= 4) return [1, 2, 3, 4, 'ellipsis', total];
+                  if (cur >= total - 2) return [1, 'ellipsis', total - 3, total - 2, total - 1, total];
+                  return [cur - 2, cur - 1, cur, 'ellipsis', total];
+                };
+                const pagesToRender = computePages(page, totalPages);
+                return pagesToRender.map((p: any, idx: number) => {
+                  if (p === 'ellipsis') return (<Text key={`ellipsis-${idx}`} style={{ paddingHorizontal: 8 }}>…</Text>);
+                  const num = Number(p);
+                  return (
+                    <TouchableOpacity key={`page-${num}`} style={[styles.pageButton, page === num ? styles.pageButtonActive : {}]} onPress={() => { setPage(num); fetchLogs(num); }}>
+                      <Text style={page === num ? styles.pageButtonTextActive : styles.pageButtonText}>{num}</Text>
+                    </TouchableOpacity>
+                  );
+                });
+              })()}
             </View>
 
             <TouchableOpacity

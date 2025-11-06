@@ -162,7 +162,7 @@ export default function BayManagement() {
 
   // Pagination
   const [page, setPage] = useState<number>(1);
-  const pageSize = 5;
+  const pageSize = 8;
   const totalPages = Math.max(1, Math.ceil((displayedBays || []).length / pageSize));
 
   useEffect(() => {
@@ -284,14 +284,24 @@ export default function BayManagement() {
           </TouchableOpacity>
 
           <View style={styles.pageList}>
-            {Array.from({ length: totalPages }).map((_, idx) => {
-              const p = idx + 1;
-              return (
-                <TouchableOpacity key={p} style={[styles.pageButton, page === p ? styles.pageButtonActive : {}]} onPress={() => setPage(p)}>
-                  <Text style={page === p ? styles.pageButtonTextActive : styles.pageButtonText}>{p}</Text>
-                </TouchableOpacity>
-              );
-            })}
+            {(() => {
+              const computePages = (cur: number, total: number) => {
+                if (total <= 4) return Array.from({ length: total }, (_, i) => i + 1);
+                if (cur <= 4) return [1, 2, 3, 4, 'ellipsis', total];
+                if (cur >= total - 2) return [1, 'ellipsis', total - 3, total - 2, total - 1, total];
+                return [cur - 2, cur - 1, cur, 'ellipsis', total];
+              };
+              const pages = computePages(page, totalPages);
+              return pages.map((p: any, idx: number) => {
+                if (p === 'ellipsis') return (<Text key={`ell-${idx}`} style={{ paddingHorizontal: 8 }}>…</Text>);
+                const num = Number(p);
+                return (
+                  <TouchableOpacity key={`page-${num}`} style={[styles.pageButton, page === num ? styles.pageButtonActive : {}]} onPress={() => setPage(num)}>
+                    <Text style={page === num ? styles.pageButtonTextActive : styles.pageButtonText}>{num}</Text>
+                  </TouchableOpacity>
+                );
+              });
+            })()}
           </View>
 
           <TouchableOpacity
