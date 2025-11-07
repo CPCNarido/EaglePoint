@@ -180,13 +180,25 @@ export class AdminService {
 
 
   // Basic reports summary — returns aggregate metrics used by Reports & Analytics UI
-  async getReportsSummary() {
+  async getReportsSummary(opts: { timeRange?: string; sessionType?: string; bay?: any } = {}) {
     const now = new Date();
-    const startOfDay = new Date(now);
-    startOfDay.setHours(0, 0, 0, 0);
+    // determine startDate based on timeRange
+    let startDate = new Date(0);
+    const tr = String(opts.timeRange ?? '').toLowerCase();
+    if (!tr || tr === '' || tr.includes('last 10')) {
+      // last 10 days
+      startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 9);
+    } else if (tr.includes('month')) {
+      startDate = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
+    } else if (tr.includes('year')) {
+      startDate = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
+    } else {
+      // default: start of today
+      startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    }
 
-    // total sessions (players created) for the site
-    const totalSessions = await this.prisma.player.count();
+  // total sessions (players created) within range
+  const totalSessions = await this.prisma.player.count({ where: { start_time: { gte: startDate, lte: now } } });
 
     // total buckets dispensed (sum of ballTransaction.bucket_count)
     const buckets = await this.prisma.ballTransaction
@@ -199,6 +211,7 @@ export class AdminService {
     // Some databases may have end_time non-nullable; to be robust we'll select all players
     // and compute durations only for rows that have an end_time value.
     const playersForDur = await this.prisma.player.findMany({
+      where: { start_time: { gte: startDate, lte: now } },
       select: { start_time: true, end_time: true },
     });
     const sessionsWithEnd = playersForDur.filter((p) => p.end_time != null);
@@ -215,11 +228,11 @@ export class AdminService {
       ? Math.round(totalMs / sessionsWithEnd.length)
       : 0;
 
-    // total play duration (hours for all completed sessions)
-    const totalHours = Math.round((totalMs / (1000 * 60 * 60)) * 100) / 100;
+  // total play duration (hours for all completed sessions)
+  const totalHours = Math.round((totalMs / (1000 * 60 * 60)) * 100) / 100;
 
-    // bay utilization rate: occupied bays / total bays (current snapshot)
-    const bays = await this.prisma.bay.findMany({ select: { bay_id: true, status: true } });
+  // bay utilization rate: occupied bays / total bays (current snapshot)
+  const bays = await this.prisma.bay.findMany({ select: { bay_id: true, status: true } });
     const totalBays = bays.length;
     const occupied = bays.filter(
       (b) => String(b.status) !== 'Available',
@@ -311,6 +324,18 @@ export class AdminService {
       }
 
       return rows.join('\n');
+    }
+    if (reportType === 'overview') {
+      // produce a small CSV with key summary metrics
+      const summary = await this.getReportsSummary({ timeRange: String(payload.timeRange ?? '') });
+      const cols = ['metric', 'value'];
+      const outRows = [cols.join(',')];
+      outRows.push(`totalSessions,${summary.totalSessions}`);
+      outRows.push(`totalBuckets,${summary.totalBuckets}`);
+      outRows.push(`avgSessionDurationMs,${summary.avgSessionDurationMs}`);
+      outRows.push(`totalPlayDurationHours,${summary.totalPlayDurationHours}`);
+      outRows.push(`bayUtilizationRate,${summary.bayUtilizationRate}`);
+      return outRows.join('\n');
     }
     return '';
   }
@@ -454,27 +479,62 @@ export class AdminService {
   }
 
   // Return recent sessions with assignment and aggregated info for frontend tables/charts
-  async getRecentSessions(opts: { limit?: number } = {}) {
+  async getRecentSessions(opts: { limit?: number; timeRange?: string; sessionType?: string; bay?: any; page?: number; perPage?: number } = {}) {
     const limit = Number(opts.limit ?? 200);
-    const players = await this.prisma.player.findMany({
-      orderBy: { start_time: 'desc' },
-      take: limit,
+    // apply optional filters: timeRange, sessionType, bay
+    let startDate: Date | undefined = undefined;
+    if (opts && (opts as any).timeRange) {
+      const tr = String((opts as any).timeRange || '').toLowerCase();
+      const now = new Date();
+      if (tr.includes('last 10') || tr === '') startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 9);
+      else if (tr.includes('month')) startDate = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
+      else if (tr.includes('year')) startDate = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
+    }
+
+    const where: any = {};
+    if (startDate) where.start_time = { gte: startDate };
+    if ((opts as any).sessionType && String((opts as any).sessionType).toLowerCase() === 'timed') where.end_time = { not: null };
+    if ((opts as any).sessionType && String((opts as any).sessionType).toLowerCase() === 'open') where.end_time = null;
+    // bay filter: filter by assignment bay number or bay id
+    const includeAssignments = {
       include: {
-        assignments: {
-          include: {
-            bay: true,
-            dispatcher: true,
-            serviceman: true,
-            transactions: true,
-          },
-          orderBy: { assigned_time: 'desc' },
-          take: 1,
-        },
+        bay: true,
+        dispatcher: true,
+        serviceman: true,
+        transactions: true,
       },
+      orderBy: { assigned_time: 'desc' },
+      take: 1,
+    } as any;
+
+    if ((opts as any).bay) {
+      // attempt to find bay id by number
+      const bayVal = (opts as any).bay;
+      try {
+        const bayRow = await this.prisma.bay.findFirst({ where: { OR: [{ bay_number: String(bayVal) }, { bay_id: Number(bayVal) }] } });
+        if (bayRow) {
+          where.assignments = { some: { bay_id: bayRow.bay_id } };
+        }
+      } catch (e) { void e; }
+    }
+
+    // support pagination
+    const page = Number((opts as any).page ?? 0);
+    const perPage = Number((opts as any).perPage ?? limit);
+    const skip = page && page > 0 ? (page - 1) * perPage : 0;
+
+    const total = await this.prisma.player.count({ where }).catch(() => 0);
+
+    const players = await this.prisma.player.findMany({
+      where,
+      orderBy: { start_time: 'desc' },
+      take: perPage,
+      skip,
+      include: { assignments: includeAssignments },
     });
 
     // Map to a lean representation used by the frontend
-    return players.map((p) => {
+    const mapped = players.map((p) => {
       const assignment =
         p.assignments && p.assignments.length
           ? p.assignments[0]
@@ -521,6 +581,54 @@ export class AdminService {
         session_type: p.end_time ? 'Timed' : 'Open',
       };
     });
+
+    if (page && page > 0) return { total, rows: mapped } as any;
+    return mapped;
+  }
+
+  // Return daily timeseries for sessions (simple aggregation)
+  async getTimeSeries(opts: { timeRange?: string } = {}) {
+    const now = new Date();
+    let startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const tr = String(opts.timeRange ?? '').toLowerCase();
+    if (!tr || tr.includes('last 10')) startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 9);
+    else if (tr.includes('month')) startDate = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
+    else if (tr.includes('year')) startDate = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
+
+    const players = await this.prisma.player.findMany({ where: { start_time: { gte: startDate, lte: now } }, select: { start_time: true } });
+    const map: Record<string, number> = {};
+    const labels: string[] = [];
+    for (let d = new Date(startDate); d <= now; d.setDate(d.getDate() + 1)) {
+      const key = new Date(d).toISOString().slice(0, 10);
+      map[key] = 0;
+      labels.push(key.slice(5));
+    }
+    for (const p of players) {
+      const k = new Date(p.start_time).toISOString().slice(0, 10);
+      if (map[k] !== undefined) map[k] = (map[k] || 0) + 1;
+    }
+    const values = Object.keys(map).map((k) => map[k]);
+    return { labels, values };
+  }
+
+  // Return simple bay usage aggregated (top N bays by minutes)
+  async getBayUsage(opts: { timeRange?: string } = {}) {
+    const now = new Date();
+    let startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const tr = String(opts.timeRange ?? '').toLowerCase();
+    if (!tr || tr.includes('last 10')) startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 9);
+    else if (tr.includes('month')) startDate = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
+    else if (tr.includes('year')) startDate = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
+
+    const sessions = await this.getRecentSessions({ limit: 1000, timeRange: opts.timeRange });
+    const usage: Record<string, number> = {};
+    const rows = Array.isArray(sessions) ? sessions : (sessions as any).rows || [];
+    for (const s of rows) {
+      if (!s.bay_no) continue;
+      usage[String(s.bay_no)] = (usage[String(s.bay_no)] || 0) + (Number(s.duration_minutes) || 0);
+    }
+    const entries = Object.entries(usage).sort((a, b) => b[1] - a[1]).slice(0, 10);
+    return { entries };
   }
 
   // Return basic staff list (id, full_name, username, role)

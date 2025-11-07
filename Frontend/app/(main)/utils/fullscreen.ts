@@ -73,3 +73,11 @@ export const exitFullScreen = async () => {
   }
 };
 
+// expo-router treats files under `app/` as routes and warns when a module
+// doesn't export a default React component. This file provides only helpers,
+// but to silence that warning we add a harmless default export. This
+// component is never rendered at runtime.
+export default function _FullscreenHelper() {
+  return null;
+}
+

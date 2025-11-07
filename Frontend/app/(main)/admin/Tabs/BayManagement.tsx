@@ -252,25 +252,43 @@ export default function BayManagement() {
               <ActivityIndicator size="small" color="#2E7D32" />
             </View>
           ) : (displayedBays.length === 0 ? (
-            <View style={{ padding: 20, alignItems: 'center' }}>
+            // Keep the table area the same height even when empty so layout doesn't jump
+            <View style={{ minHeight: 52 * pageSize, padding: 20, alignItems: 'center', justifyContent: 'center' }}>
               <Text style={{ color: '#666' }}>No bays found</Text>
             </View>
-          ) : (paginatedBays.map((bay, index) => (
-             <View key={index} style={styles.tableRow}>
-              <Text style={[styles.tableCell, { flex: 1, color: getColor(bay.session) }]}>
-                {bay.bayNo}
-              </Text>
-              <Text style={[styles.tableCell, { flex: 2, color: getColor(bay.session) }]}>
-                {bay.player}
-              </Text>
-              <Text style={[styles.tableCell, { flex: 2, color: getColor(bay.session) }]}>
-                {bay.session}
-              </Text>
-              <Text style={[styles.tableCell, { flex: 2, color: getColor(bay.session) }]}>
-                {bay.time}
-              </Text>
-            </View>
-          ))))}
+          ) : (() => {
+            const startIdx = (page - 1) * pageSize;
+            const endIdx = startIdx + pageSize;
+            const paginated = (displayedBays || []).slice(startIdx, endIdx);
+            const rows = paginated.map((bay, index) => (
+              <View key={index} style={styles.tableRow}>
+                <Text style={[styles.tableCell, { flex: 1, color: getColor(bay.session) }]}>
+                  {bay.bayNo}
+                </Text>
+                <Text style={[styles.tableCell, { flex: 2, color: getColor(bay.session) }]}>
+                  {bay.player}
+                </Text>
+                <Text style={[styles.tableCell, { flex: 2, color: getColor(bay.session) }]}>
+                  {bay.session}
+                </Text>
+                <Text style={[styles.tableCell, { flex: 2, color: getColor(bay.session) }]}>
+                  {bay.time}
+                </Text>
+              </View>
+            ));
+            const placeholders: any[] = [];
+            for (let i = paginated.length; i < pageSize; i++) {
+              placeholders.push(
+                <View key={`empty-${i}`} style={[styles.tableRow, { opacity: 1 }]}>
+                  <Text style={{ flex: 1, color: 'transparent' }}>-</Text>
+                  <Text style={{ flex: 2, color: 'transparent' }}>-</Text>
+                  <Text style={{ flex: 2, color: 'transparent' }}>-</Text>
+                  <Text style={{ flex: 2, color: 'transparent' }}>-</Text>
+                </View>
+              );
+            }
+            return (<>{rows}{placeholders}</>);
+          })())}
         </View>
 
   {/* Pagination controls (moved below the table) */}

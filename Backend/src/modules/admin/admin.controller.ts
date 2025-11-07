@@ -311,11 +311,12 @@ export class AdminController {
     }
   }
 
-  // Reports summary endpoint
+  // Reports summary endpoint (supports optional query filters: timeRange, sessionType, bay)
   @Get('reports/summary')
-  async reportsSummary() {
+  async reportsSummary(@Query() query: any) {
     try {
-      return await this.adminService.getReportsSummary();
+      const opts = { timeRange: String(query?.timeRange ?? ''), sessionType: String(query?.sessionType ?? ''), bay: query?.bay };
+      return await this.adminService.getReportsSummary(opts);
     } catch (e: any) {
       Logger.error('Failed to get reports summary', e, 'AdminController');
       throw new InternalServerErrorException(
@@ -324,11 +325,16 @@ export class AdminController {
     }
   }
 
-  // Recent sessions list for reports table
+  // Recent sessions list for reports table (supports filters via query)
   @Get('reports/sessions')
-  async reportsSessions() {
+  async reportsSessions(@Query() query: any) {
     try {
-      return await this.adminService.getRecentSessions({ limit: 200 });
+      const limit = Number(query?.limit ?? 200);
+      const opts: any = { limit };
+      if (query?.timeRange) opts.timeRange = String(query.timeRange);
+      if (query?.sessionType) opts.sessionType = String(query.sessionType);
+      if (query?.bay) opts.bay = query.bay;
+      return await this.adminService.getRecentSessions(opts);
     } catch (e: any) {
       Logger.error('Failed to get recent sessions', e, 'AdminController');
       throw new InternalServerErrorException(
@@ -354,9 +360,61 @@ export class AdminController {
 
   // Export report (returns CSV text in body)
   @Post('reports/export')
-  async exportReport(@Body() body: any) {
+  async exportReport(@Body() body: any, @Res() res: any, @Query('file') file?: string, @Query('format') format?: string) {
     try {
       const csv = await this.adminService.exportReport(body || {});
+      const reportName = `report-${String(body?.reportType ?? 'report')}`;
+
+      // If PDF requested and file-mode, generate a PDF server-side and stream it
+      if ((String(file) === '1' || String(file) === 'true') && String(format).toLowerCase() === 'pdf') {
+        try {
+          // lazy import PDFKit to avoid requiring it unless needed
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          const PDFDocument = require('pdfkit');
+          const doc = new PDFDocument({ autoFirstPage: false });
+          const chunks: Buffer[] = [];
+          // capture data
+          // @ts-ignore
+          doc.on('data', (chunk) => chunks.push(chunk));
+          // when finished, send the buffer
+          doc.on('end', () => {
+            try {
+              const pdfBuf = Buffer.concat(chunks);
+              res.setHeader('Content-Type', 'application/pdf');
+              res.setHeader('Content-Disposition', `attachment; filename="${reportName}.pdf"`);
+              res.send(pdfBuf);
+            } catch (e) {
+              Logger.error('Failed to send PDF buffer', e, 'AdminController');
+              try { res.status(500).send('failed generating pdf'); } catch {}
+            }
+          });
+
+          // Build a simple PDF: title and CSV as preformatted text
+          doc.addPage({ size: 'A4', margin: 40 });
+          doc.fontSize(18).text(String(body?.reportName ?? reportName), { underline: true });
+          doc.moveDown();
+          doc.fontSize(10).font('Courier').text(String(csv || ''), { lineBreak: true });
+          doc.end();
+          return;
+        } catch (e) {
+          Logger.error('Failed generating PDF', e, 'AdminController');
+          // fall through to CSV/JSON fallback
+        }
+      }
+
+      // CSV path (existing behavior)
+      if (String(file) === '1' || String(file) === 'true') {
+        try {
+          res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+          res.setHeader('Content-Disposition', `attachment; filename="${reportName}.csv"`);
+          res.send(csv);
+          return;
+        } catch (e) {
+          Logger.error('Failed sending CSV file', e, 'AdminController');
+          // fallback to JSON
+        }
+      }
+
       // return CSV string in JSON wrapper for simplicity (frontend will download)
       return { ok: true, csv };
     } catch (e: any) {
@@ -364,6 +422,30 @@ export class AdminController {
       throw new InternalServerErrorException(
         e && e.message ? e.message : 'Failed exporting report',
       );
+    }
+  }
+
+  // Timeseries endpoint for charting: returns daily counts for the requested range
+  @Get('reports/timeseries')
+  async reportsTimeSeries(@Query() query: any) {
+    try {
+      const opts = { timeRange: String(query?.timeRange ?? '') };
+      return await this.adminService.getTimeSeries(opts);
+    } catch (e: any) {
+      Logger.error('Failed to get timeseries', e, 'AdminController');
+      throw new InternalServerErrorException(e && e.message ? e.message : 'Failed getting timeseries');
+    }
+  }
+
+  // Bay usage aggregated endpoint for charting
+  @Get('reports/bay-usage')
+  async reportsBayUsage(@Query() query: any) {
+    try {
+      const opts = { timeRange: String(query?.timeRange ?? '') };
+      return await this.adminService.getBayUsage(opts);
+    } catch (e: any) {
+      Logger.error('Failed to get bay usage', e, 'AdminController');
+      throw new InternalServerErrorException(e && e.message ? e.message : 'Failed getting bay usage');
     }
   }
 }

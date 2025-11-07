@@ -53,8 +53,10 @@ export function saveAccessToken(token?: string) {
 
 // Intentional: only named exports. Remove default export to avoid import/no-named-as-default-member warnings.
 
-// Provide a harmless default export so Expo Router doesn't treat this module as a broken route
-// (some bundlers will warn if a file under `app/` is not a route component). This export
-// is never used at runtime — we keep only named exports for programmatic usage.
-// Export a simple null value to avoid importing React or declaring duplicate identifiers.
-export default null as any;
+// expo-router will treat files under `app/` as routes and warn if they don't
+// export a default React component. This module is purely utility code, so
+// add a harmless default export component to silence that warning. It is
+// never meant to be rendered.
+export default function _AuthUtilsPlaceholder() {
+  return null;
+}

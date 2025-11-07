@@ -1,0 +1,6 @@
+metric,value
+totalSessions,2
+totalBuckets,0
+avgSessionDurationMs,5400000
+totalPlayDurationHours,3
+bayUtilizationRate,0
