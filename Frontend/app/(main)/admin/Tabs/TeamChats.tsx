@@ -219,6 +219,83 @@ export default function TeamChats() {
     })();
   }, [adminEmployeeId]);
 
+  // Subscribe to chat SSE stream so incoming messages push to the UI in real-time.
+  useEffect(() => {
+    if (adminEmployeeId === null) return;
+    let es: any = null;
+    (async () => {
+      try {
+        const baseUrl = await getBaseUrl();
+        // dynamic import to avoid bundler-time dependency
+        // @ts-ignore
+        const AsyncStorageModule = await import('@react-native-async-storage/async-storage').catch(() => null);
+        const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
+        const token = AsyncStorage ? await AsyncStorage.getItem('authToken') : null;
+
+        if (typeof EventSource === 'undefined') return;
+
+        let streamUrl = `${baseUrl.replace(/\/$/, '')}/api/admin/chats/stream`;
+        if (token) streamUrl += `?token=${encodeURIComponent(token)}`;
+
+        try {
+          es = new EventSource(streamUrl);
+
+          es.addEventListener('message:new', (ev: any) => {
+            try {
+              const payload = JSON.parse(ev.data);
+              const m = payload?.message;
+              if (!m) return;
+
+              // Normalize incoming message to ChatMessage shape
+              const incoming: ChatMessage = {
+                message_id: m.message_id,
+                chat_id: m.chat_id ?? 0,
+                sender_id: m.sender_id ?? undefined,
+                sender_name: m.sender_name ?? 'Unknown',
+                content: m.content ?? '',
+                sent_at: m.sent_at ?? new Date().toISOString(),
+              };
+
+              // If the incoming message belongs to the currently-selected chat, append it.
+              if (selectedChat) {
+                if (selectedChat.chat_id && incoming.chat_id === selectedChat.chat_id) {
+                  setMessages((prev) => [...prev, incoming]);
+                  try { setLastPreview((p) => ({ ...p, [`chat-${incoming.chat_id}`]: String(incoming.content).slice(0, 80) })); } catch {}
+                  return;
+                }
+                // For direct chats (selectedChat.employee_id), match by sender_id
+                if (selectedChat.employee_id && incoming.sender_id === selectedChat.employee_id) {
+                  setMessages((prev) => [...prev, incoming]);
+                  try { setLastPreview((p) => ({ ...p, [`emp-${selectedChat.employee_id}`]: String(incoming.content).slice(0, 80) })); } catch {}
+                  return;
+                }
+              }
+
+              // If not matching active chat, update preview and unseen count for that room/employee
+              try {
+                const key = incoming.chat_id ? `chat-${incoming.chat_id}` : `emp-${incoming.sender_id}`;
+                setLastPreview((prev) => ({ ...prev, [key]: String(incoming.content).slice(0, 80) }));
+                setUnseenCounts((prev) => ({ ...(prev || {}), [key]: (prev?.[key] ?? 0) + 1 }));
+              } catch {}
+            } catch (e) { /* ignore parse errors */ }
+          });
+
+          es.onerror = () => {
+            try { es.close(); } catch {}
+          };
+        } catch (e) {
+          // ignore EventSource creation errors
+        }
+      } catch (e) {
+        // ignore
+      }
+    })();
+
+    return () => {
+      try { if (es) es.close(); } catch {}
+    };
+  }, [adminEmployeeId, selectedChat]);
+
   const fetchMessages = async (chatId: number) => {
     setLoadingMessages(true);
     try {

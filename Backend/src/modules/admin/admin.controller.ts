@@ -12,15 +12,18 @@ import {
   Delete,
   UseGuards,
   Req,
+  Res,
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { AdminService } from './admin.service';
+import { ChatService } from '../chat/chat.service';
+import { JwtService } from '@nestjs/jwt';
 import { AuthGuard } from '../auth/auth.guard';
 import { CreateStaffDto } from './dto/create-staff.dto';
 
 @Controller('admin')
 export class AdminController {
-  constructor(private adminService: AdminService) {}
+  constructor(private adminService: AdminService, private jwtService: JwtService, private chatService: ChatService) {}
 
   @Get('overview')
   async overview() {
@@ -140,6 +143,38 @@ export class AdminController {
     }
   }
 
+  // SSE stream for chat events (connect with EventSource). Accepts ?token= for environments where
+  // Authorization header can't be set (EventSource). Falls back to req.user when present.
+  @Get('chats/stream')
+  async chatStream(@Req() req: Request & { user?: any }, @Res() res: any, @Query('token') token?: string) {
+    try {
+      Logger.log(`chatStream: incoming stream ip=${(req as any)?.socket?.remoteAddress} tokenPresent=${!!token} userPresent=${!!req?.user}`, 'AdminController');
+      let userId = req?.user?.sub;
+      if (!userId) {
+        if (!token) {
+          res.status(401).send('token required');
+          return;
+        }
+        try {
+          const payload = this.jwtService.verify<{ sub: number }>(String(token));
+          userId = payload?.sub;
+        } catch (e) {
+          res.status(401).send('invalid token');
+          return;
+        }
+      }
+  // register SSE connection
+  this.chatService.subscribe(res as any, Number(userId));
+  // keep the handler open by returning a never-resolving promise so Nest
+  // doesn't automatically finish the response and trigger `finish`.
+  // This keeps the request handler active while the SSE connection is live.
+  return new Promise(() => {});
+    } catch (e: any) {
+      Logger.error('Failed to open chat SSE stream', e, 'AdminController');
+      try { res.status(500).send('failed'); } catch {}
+    }
+  }
+
   @Post('staff')
   async createStaff(@Body() dto: CreateStaffDto) {
     try {
@@ -249,6 +284,17 @@ export class AdminController {
       throw new InternalServerErrorException(
         e && e.message ? e.message : 'Failed getting settings',
       );
+    }
+  }
+
+  // Debug: return current SSE clients snapshot (employeeId -> connections)
+  @Get('debug/sse-snapshot')
+  async sseSnapshot() {
+    try {
+      return { ok: true, clients: this.chatService.getClientSnapshot() };
+    } catch (e: any) {
+      Logger.error('Failed to get SSE snapshot', e, 'AdminController');
+      throw new InternalServerErrorException(e?.message ?? 'Failed retrieving SSE snapshot');
     }
   }
 

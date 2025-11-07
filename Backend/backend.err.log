@@ -1,0 +1,27 @@
+C:\Users\Christian\OneDrive\Documents\GitHub\EaglePoint\Backend\node_modules\@prisma\client\src\runtime\core\engines\library\LibraryEngine.ts:440
+          throw new PrismaClientInitializationError(error.message, this.config.clientVersion!, error.error_code)
+                ^
+
+
+PrismaClientInitializationError: error: Environment variable not found: DATABASE_URL.
+  -->  schema.prisma:3
+   | 
+ 2 |   provider = "postgresql"
+ 3 |   url      = env("DATABASE_URL")
+   | 
+
+Validation Error Count: 1
+    at r (C:\Users\Christian\OneDrive\Documents\GitHub\EaglePoint\Backend\node_modules\@prisma\client\src\runtime\core\engines\library\LibraryEngine.ts:440:17)
+    at async Proxy.onModuleInit (C:\Users\Christian\OneDrive\Documents\GitHub\EaglePoint\Backend\src\common\prisma\prisma.service.ts:7:5)
+    at async Promise.all (index 0)
+    at async callModuleInitHook (C:\Users\Christian\OneDrive\Documents\GitHub\EaglePoint\Backend\node_modules\@nestjs\core\hooks\on-module-init.hook.js:43:5)
+    at async NestApplication.callInitHook (C:\Users\Christian\OneDrive\Documents\GitHub\EaglePoint\Backend\node_modules\@nestjs\core\nest-application-context.js:242:13)
+    at async NestApplication.init (C:\Users\Christian\OneDrive\Documents\GitHub\EaglePoint\Backend\node_modules\@nestjs\core\nest-application.js:103:9)
+    at async NestApplication.listen (C:\Users\Christian\OneDrive\Documents\GitHub\EaglePoint\Backend\node_modules\@nestjs\core\nest-application.js:175:13)
+    at async bootstrap (C:\Users\Christian\OneDrive\Documents\GitHub\EaglePoint\Backend\src\main.ts:22:3) {
+  clientVersion: '6.16.2',
+  errorCode: 'P1012',
+  retryable: undefined
+}
+
+Node.js v20.17.0

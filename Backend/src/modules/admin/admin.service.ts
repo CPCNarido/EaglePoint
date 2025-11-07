@@ -1,6 +1,7 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { LoggingService } from '../../common/logging/logging.service';
+import { ChatService } from '../chat/chat.service';
 import { CreateStaffDto } from './dto/create-staff.dto';
 import * as bcrypt from 'bcryptjs';
 import { Role } from '@prisma/client';
@@ -8,7 +9,7 @@ import * as fs from 'fs';
 
 @Injectable()
 export class AdminService {
-  constructor(private prisma: PrismaService, private loggingService: LoggingService) {}
+  constructor(private prisma: PrismaService, private loggingService: LoggingService, private chatService: ChatService) {}
 
   // Return the public profile for a given employee id
   async getProfile(userId: number) {
@@ -64,6 +65,8 @@ export class AdminService {
     try {
       await this.loggingService.writeLog(senderId ?? undefined, Role.Admin, `ChatMessage: chat:${roomId}`, `msg:${created.message_id}`);
     } catch (e) { void e; }
+    // Broadcast to connected clients (best-effort)
+    try { await this.chatService.notifyNewMessage(created); } catch (e) { void e; }
   return { message_id: created.message_id, chat_id: created.chat_id, sender_id: created.sender_id, content: created.content, sent_at: created.sent_at };
   }
 
@@ -77,6 +80,7 @@ export class AdminService {
     }
   const created = await this.prisma.chatMessage.create({ data: { chat_id: room.chat_id, sender_id: senderId, content } });
   try { await this.loggingService.writeLog(senderId ?? undefined, Role.Admin, `Broadcast: ${content?.slice(0, 80)}`, `broadcast:${created.message_id}`); } catch (e) { void e; }
+  try { await this.chatService.notifyNewMessage(created); } catch (e) { void e; }
   return { ok: true, message_id: created.message_id, chat_id: room.chat_id, sender_id: created.sender_id };
   }
 
@@ -114,6 +118,7 @@ export class AdminService {
 
   const created = await this.prisma.chatMessage.create({ data: { chat_id: room.chat_id, sender_id: senderId, content } });
   try { await this.loggingService.writeLog(senderId ?? undefined, Role.Admin, `DirectMessage: ${content?.slice(0, 80)}`, `dm:${created.message_id}`); } catch (e) { void e; }
+  try { await this.chatService.notifyNewMessage(created); } catch (e) { void e; }
   return { message_id: created.message_id, chat_id: room.chat_id, sender_id: created.sender_id, content: created.content, sent_at: created.sent_at };
   }
 
