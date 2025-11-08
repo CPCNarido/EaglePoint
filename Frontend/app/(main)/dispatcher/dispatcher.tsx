@@ -30,6 +30,12 @@ export default function DispatcherDashboard() {
   // show logged-in user info (fetch from API similar to admin sidebar)
   const [userName, setUserName] = useState<string>("DISPATCHER");
   const [userEmployeeId, setUserEmployeeId] = useState<string>("");
+  // Global dispatcher header counts
+  const [globalAvailableBays, setGlobalAvailableBays] = useState<number | null>(null);
+  const [globalTotalBays, setGlobalTotalBays] = useState<number | null>(null);
+  const [globalServicemenAvailable, setGlobalServicemenAvailable] = useState<number | null>(null);
+  const [globalServicemenTotal, setGlobalServicemenTotal] = useState<number | null>(null);
+  const [globalWaitingQueue, setGlobalWaitingQueue] = useState<number | null>(null);
 
   const handleLogout = () => {
     if (Platform.OS === "web") {
@@ -99,20 +105,80 @@ export default function DispatcherDashboard() {
     })();
   }, []);
 
+  // Fetch global counts (overview, staff, queue) and poll periodically
+  useEffect(() => {
+    let mounted = true;
+    const fetchCounts = async () => {
+      try {
+        const baseUrl = await (async () => {
+          let b = Platform.OS === 'android' ? 'http://10.127.147.53:3000' : 'http://localhost:3000';
+          try {
+            // @ts-ignore
+            const AsyncStorageModule = await import('@react-native-async-storage/async-storage').catch(() => null);
+            const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
+            const override = AsyncStorage ? await AsyncStorage.getItem('backendBaseUrlOverride') : null;
+            if (override) b = override;
+          } catch {}
+          return b;
+        })();
+
+        // overview
+        try {
+          const r = await fetch(`${baseUrl}/api/dispatcher/overview`, { method: 'GET', credentials: 'include' });
+          if (r && r.ok) {
+            const ov = await r.json();
+            if (!mounted) return;
+            const total = ov?.totalBays ?? (Array.isArray(ov?.bays) ? ov.bays.length : null);
+            const avail = ov?.availableBays ?? null;
+            setGlobalTotalBays(total != null ? Number(total) : null);
+            setGlobalAvailableBays(avail != null ? Number(avail) : null);
+          }
+        } catch {}
+
+        // staff
+        try {
+          const r2 = await fetch(`${baseUrl}/api/admin/staff`, { method: 'GET', credentials: 'include' });
+          if (r2 && r2.ok) {
+            const staff = await r2.json();
+            if (!mounted) return;
+            const svc = Array.isArray(staff) ? staff.filter((s: any) => String(s.role).toLowerCase() === 'serviceman') : [];
+            setGlobalServicemenTotal(svc.length);
+            const busy = svc.filter((s:any) => !!s.online).length;
+            setGlobalServicemenAvailable(Math.max(0, svc.length - busy));
+          }
+        } catch {}
+
+        // waiting queue
+        try {
+          const r3 = await fetch(`${baseUrl}/api/admin/reports/sessions?limit=1000`, { method: 'GET', credentials: 'include' });
+          if (r3 && r3.ok) {
+            const rows = await r3.json();
+            if (!mounted) return;
+            const waiting = Array.isArray(rows) ? rows.filter((r: any) => !r.bay_no && !r.end_time) : [];
+            setGlobalWaitingQueue(waiting.length);
+          }
+        } catch {}
+      } catch {}
+    };
+    fetchCounts();
+    const iv = setInterval(fetchCounts, 5000);
+    return () => { mounted = false; clearInterval(iv); };
+  }, []);
+
   const renderActiveTab = () => {
     switch (activeTab) {
       case "Dashboard":
         return <DashboardTab />;
       case "Bay Assignment":
-        return <BayAssignmentTab />;
+        return <BayAssignmentTab userName={userName} />;
       case "Shared Display":
-        return <SharedDisplayTab />;
+        return <SharedDisplayTab userName={userName} />;
       case "Session Control":
-        return <SessionControlTab />;
+        return <SessionControlTab userName={userName} />;
       case "Team Chats":
         return <TeamChats />;
       case "Attendance":
-        return <AttendanceTab />;
+        return <AttendanceTab userName={userName} />;
       default:
         return null;
     }
@@ -171,7 +237,28 @@ export default function DispatcherDashboard() {
       </View>
 
       {/* Main Content */}
-      <View style={styles.mainContent}>{renderActiveTab()}</View>
+      <View style={styles.mainContent}>
+        {/* Global badges shown for all dispatcher tabs except Team Chats.
+            Render absolutely positioned so badges align vertically with the
+            tab header inside each tab (same Y axis), rather than above it. */}
+        {activeTab !== 'Team Chats' ? (
+          <View style={styles.globalBadgesAbsolute} pointerEvents="none">
+            <View style={styles.globalBadges} pointerEvents="auto">
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>Available Bays: {globalAvailableBays != null ? `${globalAvailableBays}/${globalTotalBays ?? '-'}` : '-'}</Text>
+              </View>
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>Serviceman: {globalServicemenAvailable != null ? `${globalServicemenAvailable}/${globalServicemenTotal ?? '-'}` : '-'}</Text>
+              </View>
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>Waiting Queue: {globalWaitingQueue != null ? String(globalWaitingQueue) : '-'}</Text>
+              </View>
+            </View>
+          </View>
+        ) : null}
+
+        {renderActiveTab()}
+      </View>
 
       {/* Logout Modal */}
       <Modal
@@ -239,6 +326,22 @@ const styles = StyleSheet.create({
   },
   logoutText: { color: "#fff", fontWeight: "bold" },
   mainContent: { flex: 1, padding: 25 },
+  globalHeaderRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
+  globalBadges: { flexDirection: 'row' },
+  globalBadgesAbsolute: {
+    position: 'absolute',
+    right: 50,
+    top: 65,
+    zIndex: 999,
+    alignItems: 'center',
+  },
+  badge: { backgroundColor: '#e6f0e5', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: '#c8e0c3', marginLeft: 8 },
+  badgeText: { fontSize: 12, fontWeight: '600', color: '#314c31' },
+  tabHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  headerLeft: { flexDirection: 'column' },
+  headerTitle: { fontSize: 20, fontWeight: '700', color: '#1c2b1d' },
+  headerSubtitle: { color: '#6b6b6b', marginTop: 4 },
+  headerDivider: { height: 1, backgroundColor: '#e6e6e6', marginBottom: 16, marginTop: 6 },
   modalOverlay: {
     flex: 1,
     justifyContent: "center",

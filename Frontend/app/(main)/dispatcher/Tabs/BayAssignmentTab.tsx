@@ -15,7 +15,7 @@ import {
   Easing,
 } from "react-native";
 
-export default function BayAssignmentScreen() {
+export default function BayAssignmentScreen({ userName }: { userName?: string }) {
   const [players, setPlayers] = useState<any[]>([]);
 
   const [servicemen, setServicemen] = useState<Array<{id:number;name:string;online?:boolean}>>([]);
@@ -314,13 +314,12 @@ export default function BayAssignmentScreen() {
       <View style={styles.mainContent}>
         {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.headerTitle}>Bay Assignment</Text>
-          <View style={styles.badgeRow}>
-            {renderBadge("Available Bays", `${availableBays ? availableBays.length : '-'}${totalBaysCount ? `/${totalBaysCount}` : ''}`)}
-            {renderBadge("Servicemen", `${servicemen ? servicemen.filter(s => !busyServicemen.includes(Number(s.id))).length : '-'}${servicemen ? `/${servicemen.length}` : ''}`)}
-            {renderBadge("Waiting Queue", players.length.toString())}
+          <View style={styles.headerLeft}>
+            <Text style={styles.headerTitle}>Bay Assignment</Text>
+            <Text style={styles.headerSubtitle}>{userName ? `Dispatcher ${userName}` : 'Dispatcher'}</Text>
           </View>
         </View>
+        <View style={styles.headerDivider} />
 
         {/* Main Columns */}
         <View style={styles.columns}>
@@ -442,6 +441,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 20,
   },
+  headerLeft: { flexDirection: 'column' },
+  headerSubtitle: { color: '#6b6b6b', marginTop: 4 },
+  headerDivider: { height: 1, backgroundColor: '#e6e6e6', marginBottom: 16, marginTop: 6 },
   headerTitle: { fontSize: 22, fontWeight: "bold", color: "#1c2b1d" },
   badgeRow: { flexDirection: "row" },
   badge: {
