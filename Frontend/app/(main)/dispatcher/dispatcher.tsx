@@ -19,6 +19,8 @@ import DashboardTab from "./Tabs/DashboardTab";
 import BayAssignmentTab from "./Tabs/BayAssignmentTab";
 import SharedDisplayTab from "./Tabs/SharedDisplayTab";
 import SessionControlTab from "./Tabs/SessionControlTab";
+import TeamChats from "../admin/Tabs/TeamChats";
+import AttendanceTab from "./Tabs/AttendanceTab";
 
 export default function DispatcherDashboard() {
   const [activeTab, setActiveTab] = useState("Dashboard");
@@ -51,6 +53,8 @@ export default function DispatcherDashboard() {
     { name: "Bay Assignment", icon: "golf-course" },
     { name: "Shared Display", icon: "tv" },
     { name: "Session Control", icon: "settings" },
+    { name: "Team Chats", icon: "chat" },
+    { name: "Attendance", icon: "person-add" },
   ];
 
   // fetch the logged-in user (employee) info for the sidebar (tries cookie first, then bearer token)
@@ -105,6 +109,10 @@ export default function DispatcherDashboard() {
         return <SharedDisplayTab />;
       case "Session Control":
         return <SessionControlTab />;
+      case "Team Chats":
+        return <TeamChats />;
+      case "Attendance":
+        return <AttendanceTab />;
       default:
         return null;
     }

@@ -833,7 +833,7 @@ const styles = StyleSheet.create({
   chatColumn: { flex: 1, marginLeft: 18, minHeight: 420 },
   chatHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
   chatTitleLarge: { fontWeight: '800', fontSize: 18, color: '#2E3B2B' },
-  chatWindowCard: { flex: 1, minHeight: 300, backgroundColor: '#FBFEFD', borderRadius: 12, padding: 0, overflow: 'hidden', borderWidth: 1, borderColor: '#EEF6EB' },
+
   messageRow: { marginVertical: 6 },
   messageRowLeft: { alignItems: 'flex-start' },
   messageRowRight: { alignItems: 'flex-end' },
