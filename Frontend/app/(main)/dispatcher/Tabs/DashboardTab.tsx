@@ -61,7 +61,59 @@ export default function DashboardTab() {
   const [stopwatches, setStopwatches] = useState<Record<string, number>>({});
   // lightweight tick state to re-render stopwatch displays every second
   const [, setTick] = useState(0);
+  // compact/minimize bay grid for batch actions
+  const [minimizeBays, setMinimizeBays] = useState<boolean>(false);
+  // batch end in-progress
+  const [batchEnding, setBatchEnding] = useState<boolean>(false);
+  // selected bays for batch end
+  const [batchSelectedBays, setBatchSelectedBays] = useState<Array<number | string>>([]);
+  // selection mode: when true tapping a bay toggles selection instead of opening per-bay modal
+  const [isSelecting, setIsSelecting] = useState<boolean>(false);
   const { width } = useWindowDimensions();
+  
+  const getPageSizeLocal = () => minimizeBays ? 20 : pageSize;
+
+  const getVisibleBayIds = () => {
+    const total = Number(overview?.totalBays ?? 45);
+    const pageSizeLocal = getPageSizeLocal();
+    const startIdx = (page - 1) * pageSizeLocal;
+    const endIdx = Math.min(startIdx + pageSizeLocal, total);
+    const ids: Array<number | string> = [];
+    for (let idx = startIdx; idx < endIdx; idx++) {
+      const num = idx + 1;
+      const row = bays.find((b) => String(b.bay_number) === String(num) || String(b.bay_id) === String(num));
+      ids.push(row?.bay_number ?? row?.bay_id ?? num);
+    }
+    return ids;
+  };
+
+  const selectVisible = () => {
+    try {
+      const ids = getVisibleBayIds();
+      const activeIds = ids.filter((id) => {
+        const b = (bays || []).find((x) => String(x.bay_number) === String(id) || String(x.bay_id) === String(id));
+        const s = String(b?.status ?? '').toLowerCase();
+        return !!(s && (s.includes('occupied') || s.includes('assigned') || s.includes('open') || s.includes('opentime') || s.includes('timed')));
+      });
+      setBatchSelectedBays((prev) => {
+        const copy = Array.from(prev || []);
+        for (const id of activeIds) {
+          if (copy.findIndex((x) => String(x) === String(id)) < 0) copy.push(id);
+        }
+        return copy;
+      });
+    } catch {}
+  };
+
+  const selectAllActive = () => {
+    try {
+      const ids = (bays || []).filter((b) => {
+        const s = String(b?.status ?? '').toLowerCase();
+        return !!(s && (s.includes('occupied') || s.includes('assigned') || s.includes('open') || s.includes('opentime') || s.includes('timed')));
+      }).map((b) => b?.bay_number ?? b?.bay_id).filter(Boolean);
+      setBatchSelectedBays(Array.from(new Set(ids)) as any);
+    } catch {}
+  };
 
   // determine baseUrl similarly to Admin UI (supports override)
   const resolveBaseUrl = async () => {
@@ -288,6 +340,95 @@ export default function DashboardTab() {
     }
   }, [resolveBaseUrl, fetchOverview]);
 
+  // End session on server and ensure DB records the session end. Returns true on success.
+  const endSessionOnServer = React.useCallback(async (bayNum: number | string) => {
+    try {
+      const baseUrl = await resolveBaseUrl();
+      // First try admin override endpoint which should record and end session
+      try {
+        const res = await fetch(`${baseUrl}/api/admin/bays/${bayNum}/override`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'End Session' }) });
+        if (res && res.ok) return true;
+      } catch (e) {
+        // continue to fallbacks
+      }
+
+      // Fallback endpoints
+      const candidates = [
+        `${baseUrl}/api/dispatcher/bays/${bayNum}/end`,
+        `${baseUrl}/api/session/end`,
+      ];
+      for (const url of candidates) {
+        try {
+          const body = url.endsWith('/end') ? undefined : JSON.stringify({ bayNo: bayNum });
+          const r2 = await fetch(url, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body });
+          if (r2 && r2.ok) return true;
+        } catch (e) { /* ignore and try next */ }
+      }
+    } catch (e) {
+      // ignore
+    }
+    return false;
+  }, [resolveBaseUrl]);
+
+  // openBatchModal removed — selection is handled inline via isSelecting
+
+  const toggleBatchSelect = (id: number | string) => {
+    try {
+      // Only allow selecting active bays
+      const bay = (bays || []).find((b) => String(b.bay_number) === String(id) || String(b.bay_id) === String(id));
+      const s = String(bay?.status ?? '').toLowerCase();
+      const active = !!(s && (s.includes('occupied') || s.includes('assigned') || s.includes('open') || s.includes('opentime') || s.includes('timed')));
+      if (!active) {
+        // ignore attempts to select inactive bays
+        return;
+      }
+      setBatchSelectedBays((prev) => {
+        const copy = Array.from(prev || []);
+        const idx = copy.findIndex((x) => String(x) === String(id));
+        if (idx >= 0) { copy.splice(idx, 1); return copy; }
+        copy.push(id);
+        return copy;
+      });
+    } catch {}
+  };
+
+  const performBatchEnd = React.useCallback(async () => {
+    try {
+      if (!batchSelectedBays || batchSelectedBays.length === 0) {
+        try { Alert.alert('Batch End', 'No bays selected.'); } catch {}
+        return;
+      }
+      setBatchEnding(true);
+      let success = 0, failed = 0;
+      for (const bayNum of batchSelectedBays) {
+        try {
+          const ok = await endSessionOnServer(bayNum);
+          if (ok) {
+            success++;
+            // ensure local stopwatch for this bay is cleared
+            try { setStopwatches((prev) => { const copy = { ...prev }; delete copy[String(bayNum)]; return copy; }); } catch {}
+            // mark notified so we don't re-notify for the same session
+            try { notifiedRef.current[String(bayNum)] = true; } catch {}
+          } else {
+            failed++;
+          }
+          // small throttle so we don't overwhelm backend
+          await new Promise((r) => setTimeout(r, 120));
+        } catch (e) { failed++; }
+      }
+      // After all attempts, fetch authoritative state from server so DB changes are reflected
+      try { await fetchOverview(); await fetchBays(); } catch {}
+      setBatchEnding(false);
+      // after batch end, exit selection mode and clear selections
+      setIsSelecting(false);
+      setBatchSelectedBays([]);
+      try { Alert.alert('Batch End Results', `Completed: ${success}\nFailed: ${failed}`); } catch {}
+    } catch (e) {
+      setBatchEnding(false);
+      try { Alert.alert('Batch End', 'An error occurred performing the batch end.'); } catch {}
+    }
+  }, [batchSelectedBays, endSessionOnServer, fetchOverview, fetchBays]);
+
   // tick effect for stopwatches (re-renders every 1s)
   useEffect(() => {
     const t = setInterval(() => setTick((v) => v + 1), 1000);
@@ -442,8 +583,24 @@ export default function DashboardTab() {
       })();
 
       const displayNumber = row?.bay_number ?? num;
+  const bayId = row?.bay_number ?? row?.bay_id ?? num;
+  const isSelected = (batchSelectedBays || []).findIndex((x) => String(x) === String(bayId)) >= 0;
+  const s = String(row?.status ?? '').toLowerCase();
+  const isActive = !!(s && (s.includes('occupied') || s.includes('assigned') || s.includes('open') || s.includes('opentime') || s.includes('timed')));
       return (
-        <TouchableOpacity key={num} style={[styles.bayBox, { borderColor: color }]} onPress={() => setSelectedBay(row ?? null)}>
+        <TouchableOpacity
+          key={num}
+          style={[styles.bayBox, minimizeBays ? styles.bayBoxCompact : {}, { borderColor: color, position: 'relative' }]}
+          onPress={() => isSelecting ? (isActive ? toggleBatchSelect(bayId) : null) : setSelectedBay(row ?? null)}
+          onLongPress={() => { if (isActive) toggleBatchSelect(bayId); }}
+        >
+          {/* Checkbox overlay shown when selection mode is active or bay is pre-selected (only for active bays) */}
+          {(isSelecting || isSelected) && isActive ? (
+            <View style={{ position: 'absolute', top: 6, right: 6, width: 26, height: 26, borderRadius: 6, backgroundColor: isSelected ? '#17321d' : 'rgba(255,255,255,0.9)', borderWidth: 1, borderColor: '#ccc', alignItems: 'center', justifyContent: 'center', zIndex: 2 }}>
+              <MaterialIcons name={isSelected ? 'check-box' : 'check-box-outline-blank'} size={18} color={isSelected ? '#fff' : '#333'} />
+            </View>
+          ) : null}
+
           <View style={[styles.statusCapsule, { backgroundColor: color }]}> 
             <Text style={styles.statusCapsuleText}>{getStatusLabel(status)}</Text>
             <Text style={styles.bayNumberText}>Bay {String(displayNumber)}</Text>
@@ -487,8 +644,24 @@ export default function DashboardTab() {
       })();
 
       const displayNumber = row?.bay_number ?? num;
+      const bayId = row?.bay_number ?? row?.bay_id ?? num;
+      const isSelected = (batchSelectedBays || []).findIndex((x) => String(x) === String(bayId)) >= 0;
+      const s = String(row?.status ?? '').toLowerCase();
+      const isActive = !!(s && (s.includes('occupied') || s.includes('assigned') || s.includes('open') || s.includes('opentime') || s.includes('timed')));
       return (
-        <TouchableOpacity key={num} style={[styles.bayBox, { borderColor: color }]} onPress={() => setSelectedBay(row ?? null)}>
+        <TouchableOpacity
+          key={num}
+          style={[styles.bayBox, minimizeBays ? styles.bayBoxCompact : {}, { borderColor: color, position: 'relative' }]}
+          onPress={() => isSelecting ? (isActive ? toggleBatchSelect(bayId) : null) : setSelectedBay(row ?? null)}
+          onLongPress={() => { if (isActive) toggleBatchSelect(bayId); }}
+        >
+          {/* Checkbox overlay shown when selection mode is active or bay is pre-selected (only for active bays) */}
+          {(isSelecting || isSelected) && isActive ? (
+            <View style={{ position: 'absolute', top: 6, right: 6, width: 26, height: 26, borderRadius: 6, backgroundColor: isSelected ? '#17321d' : 'rgba(255,255,255,0.9)', borderWidth: 1, borderColor: '#ccc', alignItems: 'center', justifyContent: 'center', zIndex: 2 }}>
+              <MaterialIcons name={isSelected ? 'check-box' : 'check-box-outline-blank'} size={18} color={isSelected ? '#fff' : '#333'} />
+            </View>
+          ) : null}
+
           <View style={[styles.statusCapsule, { backgroundColor: color }]}> 
             <Text style={styles.statusCapsuleText}>{getStatusLabel(status)}</Text>
             <Text style={styles.bayNumberText}>Bay {String(displayNumber)}</Text>
@@ -499,11 +672,12 @@ export default function DashboardTab() {
       );
     });
 
-    const startIdx = (page - 1) * pageSize;
-    const endIdx = startIdx + pageSize;
-    const paginated = grid.slice(startIdx, endIdx);
+  const pageSizeLocal = minimizeBays ? 20 : pageSize;
+  const startIdx = (page - 1) * pageSizeLocal;
+  const endIdx = startIdx + pageSizeLocal;
+  const paginated = grid.slice(startIdx, endIdx);
 
-    const totalPages = Math.max(1, Math.ceil(grid.length / pageSize));
+  const totalPages = Math.max(1, Math.ceil(grid.length / pageSizeLocal));
 
     return (
       <>
@@ -562,7 +736,58 @@ export default function DashboardTab() {
         {renderOverviewCards()}
 
         <Text style={[styles.sectionTitle, { marginTop: 14 }]}>Real-Time Bay Monitoring</Text>
+
+        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+          <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#F4F4F2', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6 }} onPress={() => setMinimizeBays((v) => !v)}>
+            <MaterialIcons name={minimizeBays ? 'unfold-less' : 'unfold-more'} size={18} color="#17321d" />
+            <Text style={{ marginLeft: 8, color: '#17321d', fontWeight: '700' }}>{minimizeBays ? 'Compact View' : 'Normal View'}</Text>
+          </TouchableOpacity>
+
+          {isSelecting ? (
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <TouchableOpacity style={{ backgroundColor: '#EEE', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6 }} onPress={() => { setIsSelecting(false); setBatchSelectedBays([]); }}>
+                <Text style={{ color: '#333', fontWeight: '700' }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={{ backgroundColor: '#EEE', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6 }} onPress={selectVisible}>
+                <Text style={{ color: '#333', fontWeight: '700' }}>Select Visible</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={{ backgroundColor: '#EEE', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6 }} onPress={selectAllActive}>
+                <Text style={{ color: '#333', fontWeight: '700' }}>Select All</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={{ backgroundColor: batchEnding ? '#CCC' : '#C62828', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6 }} onPress={() => {
+                if (batchEnding) return;
+                if (!batchSelectedBays || batchSelectedBays.length === 0) {
+                  try { Alert.alert('No selection', 'No bays selected. Tap bay blocks to select.'); } catch {}
+                  return;
+                }
+                Alert.alert(
+                  'Confirm Batch End',
+                  `End ${batchSelectedBays.length} selected bay(s)? This will attempt to end the session for each selected bay.`,
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    { text: 'End', onPress: () => { try { performBatchEnd(); } catch {} } },
+                  ],
+                  { cancelable: true },
+                );
+              }} disabled={batchEnding}>
+                {batchEnding ? <ActivityIndicator color="#fff" /> : <Text style={{ color: '#fff', fontWeight: '700' }}>{`End Selected (${batchSelectedBays.length || 0})`}</Text>}
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <TouchableOpacity style={{ backgroundColor: batchEnding ? '#CCC' : '#C62828', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6, position: 'relative' }} onPress={() => { if (batchEnding) return; setIsSelecting(true); setBatchSelectedBays([]); }} disabled={batchEnding}>
+              {batchEnding ? <ActivityIndicator color="#fff" /> : <Text style={{ color: '#fff', fontWeight: '700' }}>Batch End Sessions</Text>}
+              {batchSelectedBays && batchSelectedBays.length > 0 ? (
+                <View style={styles.badgeCircle}>
+                  <Text style={styles.badgeText}>{String(batchSelectedBays.length)}</Text>
+                </View>
+              ) : null}
+            </TouchableOpacity>
+          )}
+        </View>
+
         {renderPaginatedBays()}
+
+        {/* Inline selection mode used instead of modal — selection UI is on bay blocks and header controls */}
 
         {/* Edit Modal - contextual actions based on bay status */}
         <Modal visible={!!selectedBay} transparent animationType="fade" onRequestClose={() => setSelectedBay(null)}>
@@ -854,6 +1079,8 @@ const styles = StyleSheet.create({
   // sensible min/max so layout stays stable on narrow screens and large tablets.
   bayContainer: { flexWrap: 'wrap', flexDirection: 'row', gap: 10 },
   bayBox: { flexBasis: '23%', width: '23%', minWidth: 100, maxWidth: 200, borderWidth: 2, borderRadius: 12, padding: 10, backgroundColor: '#fff', margin: 2 },
+  // compact bay box for minimize mode
+  bayBoxCompact: { minWidth: 70, maxWidth: 140, padding: 6, borderRadius: 8 },
   statusCapsule: { paddingVertical: 6, borderRadius: 8, alignItems: 'center', marginBottom: 8 },
   statusCapsuleText: { color: '#fff', fontWeight: '600', fontSize: 12 },
   bayNumberText: { color: '#fff', fontWeight: '700', fontSize: 12, marginTop: 4 },
@@ -896,4 +1123,6 @@ const styles = StyleSheet.create({
   modalButtonText: { color: '#fff', fontWeight: '600' },
   closeButton: { marginTop: 10, backgroundColor: '#007bff', paddingVertical: 10, borderRadius: 8, alignItems: 'center' },
   closeButtonText: { color: '#fff', fontWeight: '700' },
+  badgeCircle: { position: 'absolute', top: -8, right: -8, backgroundColor: '#17321d', minWidth: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
+  badgeText: { color: '#fff', fontSize: 12, fontWeight: '700' },
 });
