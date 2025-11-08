@@ -1,4 +1,4 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, Logger } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { LoggingService } from '../../common/logging/logging.service';
 import { ChatService } from '../chat/chat.service';
@@ -218,8 +218,9 @@ export class AdminService {
     let totalMs = 0;
     for (const s of sessionsWithEnd) {
       try {
+        // s.end_time is filtered to be non-null, assert to satisfy TypeScript
         totalMs +=
-          new Date(s.end_time).getTime() - new Date(s.start_time).getTime();
+          new Date(s.end_time!).getTime() - new Date(s.start_time).getTime();
       } catch (e) {
         void e;
       }
@@ -376,7 +377,7 @@ export class AdminService {
 
     // Bay statuses: return list of bay_id, bay_number and computed status
     const baysRaw = await this.prisma.bay.findMany({
-      select: { bay_id: true, bay_number: true, status: true },
+      select: { bay_id: true, bay_number: true, status: true, note: true },
     });
 
     // Fetch active assignments so we can enrich bay rows with assignment/player/transactions
@@ -396,7 +397,10 @@ export class AdminService {
 
       const assignment = assignmentByBay.get(b.bay_id) ?? null;
       // derive some helpful fields the frontend expects (best-effort)
-      const playerName = assignment?.player?.nickname ?? assignment?.player?.full_name ?? null;
+      // If there is an open assignment, prefer that player's nickname. Otherwise
+      // surface bay.note (used for reservation names) so the frontend can
+      // display the reserved-for name even before a Player/Assignment exists.
+      const playerName = assignment?.player?.nickname ?? assignment?.player?.full_name ?? b.note ?? null;
       const endTime = assignment?.end_time ?? assignment?.player?.end_time ?? null;
       const totalBalls = assignment?.transactions ? assignment.transactions.reduce((s: number, t: any) => s + (Number(t.bucket_count) || 0), 0) : null;
 
@@ -407,7 +411,12 @@ export class AdminService {
         originalStatus,
         // assignment-derived fields (optional)
         player_name: playerName,
-        player: assignment?.player ? { nickname: assignment.player.nickname, full_name: assignment.player.full_name, player_id: assignment.player.player_id } : null,
+        // expose start_time so clients can compute elapsed stopwatch time across reloads
+        start_time: assignment?.player?.start_time ?? assignment?.assigned_time ?? null,
+        // expose typed session_type when available so clients can render session-type legends
+        session_type: assignment?.session_type ?? null,
+        // If no live assignment but bay.note is present, expose a synthetic player object
+        player: assignment?.player ? { nickname: assignment.player.nickname, full_name: assignment.player.full_name, player_id: assignment.player.player_id, start_time: assignment.player.start_time } : (b.note ? { nickname: b.note } : null),
         end_time: endTime,
         assignment_end_time: assignment?.end_time ?? null,
         total_balls: totalBalls,
@@ -629,6 +638,38 @@ export class AdminService {
     }
     const entries = Object.entries(usage).sort((a, b) => b[1] - a[1]).slice(0, 10);
     return { entries };
+  }
+
+  // Debug helper: return bay row, dispatcher overview entry for bay, and last N assignments
+  async getBayDebug(bayNo: string, last: number = 10) {
+    if (!bayNo) throw new BadRequestException('bayNo is required');
+    // find bay by bay_number or id
+    let bay = await this.prisma.bay.findFirst({ where: { bay_number: String(bayNo) } });
+    if (!bay) {
+      const maybeId = Number(bayNo);
+      if (!Number.isNaN(maybeId)) {
+        bay = await this.prisma.bay.findUnique({ where: { bay_id: maybeId } as any });
+      }
+    }
+    if (!bay) throw new BadRequestException('Bay not found');
+
+    // fetch overview and find bay entry if present
+    let overviewEntry: any = null;
+    try {
+      const full = await this.getOverview();
+      overviewEntry = (full?.bays || []).find((b: any) => Number(b.bay_id) === Number(bay.bay_id) || String(b.bay_number) === String(bay.bay_number)) ?? null;
+    } catch (e) {
+      overviewEntry = null;
+    }
+
+    const assignments = await this.prisma.bayAssignment.findMany({
+      where: { bay_id: bay.bay_id },
+      include: { player: true, dispatcher: true, serviceman: true, transactions: true },
+      orderBy: { assigned_time: 'desc' },
+      take: Number(last) || 10,
+    });
+
+    return { ok: true, bay, overviewEntry, assignments };
   }
 
   // Return basic staff list (id, full_name, username, role)
@@ -1172,7 +1213,7 @@ export class AdminService {
    *
    * adminId (optional) may be provided to record who performed the override.
    */
-  async overrideBay(bayNo: string, action: string, adminId?: number) {
+  async overrideBay(bayNo: string, action: string, adminId?: number, reserveName?: string) {
     if (!bayNo) throw new BadRequestException('bayNo is required');
     if (!action) throw new BadRequestException('action is required');
 
@@ -1204,36 +1245,44 @@ export class AdminService {
     };
 
     if (a.includes('end session')) {
-      // close any open assignment for this bay
-      const assignment = await this.prisma.bayAssignment.findFirst({
+      // close any open assignments for this bay (handle possible DB inconsistency with multiple open rows)
+      const openAssignments = await this.prisma.bayAssignment.findMany({
         where: { bay_id: bay.bay_id, open_time: true },
         orderBy: { assigned_time: 'desc' },
-        include: { player: true },
       });
-      if (assignment) {
-        // determine session type: if player.end_time exists treat as Timed, otherwise Open
-        const prevSessionType = assignment.player?.end_time ? 'Timed' : 'Open';
-        await this.prisma.bayAssignment.update({
-          where: { assignment_id: assignment.assignment_id },
-          data: { open_time: false, end_time: new Date() },
+
+      if (openAssignments && openAssignments.length > 0) {
+        const ids = openAssignments.map((r) => r.assignment_id);
+        const playerIds = openAssignments.map((r) => r.player_id).filter((p) => p !== null && p !== undefined);
+        // set open_time=false and end_time=now for all open assignments
+        await this.prisma.bayAssignment.updateMany({
+          where: { assignment_id: { in: ids } },
+          data: { open_time: false, end_time: new Date(), session_type: 'Timed' },
         });
+
+        // update Player.end_time for associated players so recorded time is persisted
+        if (playerIds && playerIds.length > 0) {
+          try {
+            await this.prisma.player.updateMany({ where: { player_id: { in: playerIds } }, data: { end_time: new Date() } });
+          } catch (e) {
+            // best-effort: log and continue
+            try { await this.loggingService.writeLog(undefined as any, Role.Admin, `FailedUpdatePlayerEndTime: players:${playerIds.join(',')}`, `bay:${bay.bay_id}`); } catch {};
+          }
+        }
+
         // mark bay available
-        await this.prisma.bay.update({
-          where: { bay_id: bay.bay_id },
-          data: { status: 'Available' },
-        });
-        result.assignment_id = assignment.assignment_id;
-        result.message = 'Session ended';
-        // log the session end with session type
+        await this.prisma.bay.update({ where: { bay_id: bay.bay_id }, data: { status: 'Available' } });
+
+        result.assignment_ids = ids;
+        result.message = `Closed ${ids.length} active session(s)`;
+
+        // log the session ends
         try {
-          await this.loggingService.writeLog(adminId ?? undefined, Role.Admin, `EndSession: assignment:${assignment.assignment_id}`, `bay:${bay.bay_id}`, undefined, prevSessionType);
+          await this.loggingService.writeLog(adminId ?? undefined, Role.Admin, `EndSession: assignments:${ids.join(',')}`, `bay:${bay.bay_id}`);
         } catch (e) { void e; }
       } else {
         // nothing to end — still mark bay available
-        await this.prisma.bay.update({
-          where: { bay_id: bay.bay_id },
-          data: { status: 'Available' },
-        });
+        await this.prisma.bay.update({ where: { bay_id: bay.bay_id }, data: { status: 'Available' } });
         result.message = 'No active session; bay marked available';
       }
     } else if (a.includes('maintenance')) {
@@ -1247,14 +1296,15 @@ export class AdminService {
       });
       result.message = 'Bay locked for maintenance';
     } else if (a.includes('reserved')) {
-      await this.prisma.bay.update({
-        where: { bay_id: bay.bay_id },
-        data: {
-          status: 'SpecialUse',
-          updated_at: new Date(),
-          updated_by: adminId ?? undefined,
-        },
-      });
+      // Persist the reservation and optional reserved name into bay.note so
+      // frontend can show the reserved-for name even before a Player record exists.
+      const data: any = {
+        status: 'SpecialUse',
+        updated_at: new Date(),
+        updated_by: adminId ?? undefined,
+      };
+      if (reserveName && String(reserveName).trim().length > 0) data.note = String(reserveName).trim();
+      await this.prisma.bay.update({ where: { bay_id: bay.bay_id }, data });
       result.message = 'Bay reserved';
     } else {
       throw new BadRequestException('Unknown action');
@@ -1291,5 +1341,124 @@ export class AdminService {
     }
 
     return { ok: true, syncSummary };
+  }
+
+  // Start a session on a bay by creating a Player and BayAssignment and marking bay Occupied.
+  async startSession(bayNo: string, payload: any) {
+    if (!bayNo) throw new BadRequestException('bayNo is required');
+    const body = payload || {};
+    Logger.log(`AdminService.startSession called for bay=${bayNo} payload=${JSON.stringify(body)}`, 'AdminService');
+
+    // find bay by bay_number or id
+    let bay = await this.prisma.bay.findFirst({ where: { bay_number: String(bayNo) } });
+    if (!bay) {
+      const maybeId = Number(bayNo);
+      if (!Number.isNaN(maybeId)) {
+        bay = await this.prisma.bay.findUnique({ where: { bay_id: maybeId } as any });
+      }
+    }
+    if (!bay) throw new BadRequestException('Bay not found');
+
+    // ensure bay is not already occupied (open assignment)
+    const existing = await this.prisma.bayAssignment.findFirst({ where: { bay_id: bay.bay_id, open_time: true } });
+    if (existing) throw new BadRequestException('Bay already has an active session');
+
+  // Build player data
+  // Backwards-compat: some callers send `full_name` but the Player model only stores `nickname`.
+  // Normalize by preferring explicit nickname, falling back to full_name when present.
+  // If caller didn't provide a name but the bay has a reservation note (bay.note),
+  // use that as the player nickname so reserved names persist into the created Player.
+  const reserveNote = (bay && typeof bay.note === 'string') ? String(bay.note).trim() : '';
+  const nickname = String(body?.nickname ?? body?.name ?? body?.full_name ?? reserveNote ?? '').trim() || null;
+  const full_name = null; // not stored on Player (kept for compatibility variable but not persisted)
+    const start_time = new Date();
+  // If no end_time supplied, leave it null to represent an open session (schema now allows nullable end_time)
+  const end_time = body?.end_time ? new Date(String(body.end_time)) : null;
+
+    // Determine creator: prefer provided dispatcherId, otherwise pick an existing Dispatcher or Admin account
+    let createdBy: number | undefined = undefined;
+    try {
+      if (body?.dispatcherId) {
+        const disp = await this.prisma.employee.findUnique({ where: { employee_id: Number(body.dispatcherId) as any } as any }).catch(() => null);
+        if (disp) createdBy = disp.employee_id;
+      }
+      if (!createdBy) {
+        const disp = await this.prisma.employee.findFirst({ where: { role: 'Dispatcher' } }).catch(() => null);
+        if (disp) createdBy = disp.employee_id;
+      }
+      if (!createdBy) {
+        const admin = await this.prisma.employee.findFirst({ where: { role: 'Admin' } }).catch(() => null);
+        if (admin) createdBy = admin.employee_id;
+      }
+    } catch (e) {
+      void e;
+    }
+
+    if (!createdBy) throw new BadRequestException('No dispatcher or admin account available to attribute created_by for new player');
+
+    // Determine price_per_hour: prefer explicit body value, otherwise fall back to pricing config
+    // For open sessions (no end_time) we store zero price to avoid pricing open play
+    let pricePerHour: string | undefined = undefined;
+    try {
+      if (body?.price_per_hour !== undefined && body?.price_per_hour !== null) {
+        pricePerHour = String(body.price_per_hour);
+      } else {
+        const pricing = await (this.prisma as any).pricingConfig.findFirst().catch(() => null);
+        const isTimed = Boolean(body?.end_time);
+        if (!isTimed) {
+          // open sessions are not priced
+          pricePerHour = '0.00';
+        } else if (pricing) {
+          // pricing fields are Decimal; stringify safely
+          pricePerHour = String(pricing.timed_session_rate ?? pricing.open_time_rate ?? '0');
+        } else {
+          pricePerHour = '0.00';
+        }
+      }
+    } catch (e) {
+      pricePerHour = '0.00';
+    }
+
+  // Create player record (player.end_time may be null for open sessions)
+  const player = await this.prisma.player.create({ data: { nickname: nickname ?? undefined, start_time, end_time: end_time ?? null, price_per_hour: pricePerHour ?? '0.00', created_by: createdBy } as any });
+
+    // Create assignment
+    // Ensure we have a dispatcher id to attach to the assignment (fallback to createdBy if not supplied)
+    const assignmentDispatcherId = body?.dispatcherId ?? createdBy;
+
+    // Determine if this is an open (stopwatch) session or a timed session.
+    // If the caller provided an explicit end_time, treat as Timed; otherwise Open.
+    const isOpenSession = !body?.end_time;
+
+    const assignmentData: any = {
+      // attach player by relation connect so Prisma uses the nested relation input
+      player: { connect: { player_id: player.player_id } },
+      assigned_time: new Date(),
+      open_time: Boolean(isOpenSession),
+      end_time: end_time ?? null,
+      // typed session designation so historical records show whether it was Open/Timed/Reserved
+      session_type: isOpenSession ? 'Open' : 'Timed',
+      // connect relations explicitly to satisfy Prisma's strict create input
+      bay: { connect: { bay_id: bay.bay_id } },
+      dispatcher: { connect: { employee_id: assignmentDispatcherId } },
+    } as any;
+    if (body?.servicemanId) assignmentData.serviceman = { connect: { employee_id: body.servicemanId } };
+
+    const assignment = await this.prisma.bayAssignment.create({ data: assignmentData });
+
+    // mark bay occupied
+    try {
+      await this.prisma.bay.update({ where: { bay_id: bay.bay_id }, data: { status: 'Occupied' } });
+    } catch (e) { void e; }
+
+    // best-effort logging
+    try {
+      await this.loggingService.writeLog(undefined as any, Role.Admin, `StartSession: assignment:${assignment.assignment_id}`, `bay:${bay.bay_id}`);
+    } catch (e) { void e; }
+
+  // Return a compact player object using the stored nickname (no full_name column exists)
+  const out = { ok: true, player: { player_id: player.player_id, nickname: player.nickname ?? null }, assignment_id: assignment.assignment_id };
+    Logger.log(`AdminService.startSession created assignment=${assignment.assignment_id} player=${player.player_id}`, 'AdminService');
+    return out;
   }
 }

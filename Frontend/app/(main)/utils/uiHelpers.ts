@@ -17,19 +17,48 @@ export const getColorFromStatus = (status: string) => {
 
 export const legendMatchesStatus = (labels: string[], status: string | null) => {
   if (!labels || labels.length === 0 || !status) return false;
+  // normalize incoming status to a canonical token for robust matching
+  const normalize = (s: string | null) => {
+    if (!s) return null;
+    const t = String(s).trim().toLowerCase();
+    if (t === 'occupied') return 'assigned';
+    if (t === 'opentime' || t === 'open time' || t === 'open_time') return 'open';
+    if (t === 'specialuse' || t === 'special_use') return 'reserved';
+    if (t === 'available' || t === 'assigned' || t === 'open' || t === 'timed' || t === 'reserved' || t === 'maintenance') return t;
+    // common fallbacks
+    if (t.includes('open')) return 'open';
+    if (t.includes('maint')) return 'maintenance';
+    if (t.includes('reserve')) return 'reserved';
+    if (t.includes('assign') || t.includes('occup')) return 'assigned';
+    if (t.includes('time') || t.includes('timed')) return 'timed';
+    return t;
+  };
+
+  const sNorm = normalize(status);
+  if (!sNorm) return false;
+
   for (const label of labels) {
-    switch (label) {
-      case 'Available':
-        if (status === 'Available') return true;
+    const l = String(label).trim().toLowerCase();
+    switch (l) {
+      case 'available':
+        if (sNorm === 'available') return true;
         break;
-      case 'Assigned':
-        if (status === 'Assigned' || status === 'Occupied') return true;
+      case 'assigned':
+        if (sNorm === 'assigned') return true;
         break;
-      case 'Open Time Session':
-        if (status === 'Open' || status === 'OpenTime') return true;
+      case 'open time session':
+      case 'open time':
+        if (sNorm === 'open') return true;
         break;
-      case 'Maintenance':
-        if (status === 'Maintenance') return true;
+      case 'timed session':
+      case 'timed':
+        if (sNorm === 'timed' || sNorm === 'assigned') return true;
+        break;
+      case 'reserved':
+        if (sNorm === 'reserved') return true;
+        break;
+      case 'maintenance':
+        if (sNorm === 'maintenance') return true;
         break;
       default:
         break;

@@ -159,7 +159,7 @@ async function addSamplePlayersAndAssignments(createdSpecials) {
     // find a free bay (1..45) and assign player1
     const bay = await prisma.bay.findFirst({ where: { status: 'Available' } });
     if (bay && dispatcher) {
-      const assignment = await prisma.bayAssignment.create({ data: { player_id: p1.player_id, bay_id: bay.bay_id, dispatcher_id: dispatcher.employee_id, assigned_time: new Date(), open_time: true } });
+      const assignment = await prisma.bayAssignment.create({ data: { player_id: p1.player_id, bay_id: bay.bay_id, dispatcher_id: dispatcher.employee_id, assigned_time: new Date(), open_time: true, session_type: 'Open' } });
       console.log('Created assignment', assignment.assignment_id, 'for player', p1.player_id, 'on bay', bay.bay_number);
 
       if (ballHandler) {

@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, ScrollView, TouchableOpacity, Modal, StyleSheet, ActivityIndicator, useWindowDimensions, Platform } from "react-native";
+import { View, Text, ScrollView, TouchableOpacity, Modal, StyleSheet, ActivityIndicator, useWindowDimensions, Platform, TextInput, Alert } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 
 type BayRow = {
   bay_id: number;
   bay_number: string | number;
   status: string | null;
+  originalStatus?: string | null;
   player_name?: string | null;
   player?: { nickname?: string; full_name?: string; player_id?: number } | null;
   end_time?: string | null;
@@ -22,17 +23,44 @@ const getColorFromStatus = (status: string | null) => {
     case 'Open':
     case 'OpenTime':
       return '#BF930E';
+    case 'SpecialUse':
+    case 'Reserved':
+      return '#6A1B9A'; // purple for reserved/special use
     case 'Available':
     default:
       return '#2E7D32';
   }
 };
 
+const getStatusLabel = (status: string | null) => {
+  const s = String(status ?? '').trim();
+  if (!s) return 'Available';
+  if (s === 'SpecialUse') return 'Reserved';
+  return s;
+};
+
 export default function DashboardTab() {
   const [overview, setOverview] = useState<any | null>(null);
   const [bays, setBays] = useState<BayRow[]>([]);
   const [loading, setLoading] = useState(true);
+  // Pagination for bay grid: show pageSize bays per page (4 per row * 3 rows)
+  const [page, setPage] = useState<number>(1);
+  const pageSize = 12;
   const [selectedBay, setSelectedBay] = useState<BayRow | null>(null);
+  // Action modals for bay operations
+  const [reserveName, setReserveName] = useState<string>('');
+  const [reserveReason, setReserveReason] = useState<string>('');
+  const [openName, setOpenName] = useState<string>('');
+  const [openReason, setOpenReason] = useState<string>('');
+  const [assignServicemanName, setAssignServicemanName] = useState<string>('');
+  const [showReserveModal, setShowReserveModal] = useState<boolean>(false);
+  const [showOpenTimeModal, setShowOpenTimeModal] = useState<boolean>(false);
+  const [showAssignModal, setShowAssignModal] = useState<boolean>(false);
+  const [actionLoading, setActionLoading] = useState<boolean>(false);
+  // stopwatch map: bayNumber/string -> start timestamp (ms)
+  const [stopwatches, setStopwatches] = useState<Record<string, number>>({});
+  // lightweight tick state to re-render stopwatch displays every second
+  const [, setTick] = useState(0);
   const { width } = useWindowDimensions();
 
   // determine baseUrl similarly to Admin UI (supports override)
@@ -48,23 +76,45 @@ export default function DashboardTab() {
     return baseUrl;
   };
 
-  const fetchOverview = async () => {
+  // Prevent overlapping overview fetches
+  const isFetchingRef = React.useRef(false);
+  const prevOverviewJsonRef = React.useRef<string | null>(null);
+
+  const fetchOverview = React.useCallback(async () => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
+    let showGlobalLoading = false;
     try {
-      setLoading(true);
+      // Only show the global loading spinner for the initial load. Subsequent
+      // polling should update data silently to avoid flicker.
+      showGlobalLoading = prevOverviewJsonRef.current == null;
+      if (showGlobalLoading) setLoading(true);
       const baseUrl = await resolveBaseUrl();
       const res = await fetch(`${baseUrl}/api/dispatcher/overview`, { method: 'GET', credentials: 'include' });
       if (!res.ok) {
+        if (showGlobalLoading) setLoading(false);
         setOverview(null);
         return;
       }
       const data = await res.json();
-      setOverview(data);
+      try {
+        const dataJson = JSON.stringify(data);
+        // If payload changed, update; otherwise skip to avoid extra renders
+        if (prevOverviewJsonRef.current !== dataJson) {
+          prevOverviewJsonRef.current = dataJson;
+          setOverview(data);
+        }
+      } catch {
+        setOverview(data);
+      }
     } catch (e) {
       setOverview(null);
     } finally {
-      setLoading(false);
+      // Turn off the spinner only if we turned it on earlier
+      if (showGlobalLoading) setLoading(false);
+      isFetchingRef.current = false;
     }
-  };
+  }, []);
 
   const fetchBays = async () => {
     try {
@@ -78,15 +128,254 @@ export default function DashboardTab() {
     }
   };
 
+  // When bays load, initialize stopwatches from server-provided start_time so
+  // stopwatches survive logout/login or full page reloads.
   useEffect(() => {
-    // initial load and polling
+    try {
+      setStopwatches((prev) => {
+        const copy = { ...prev };
+        (bays || []).forEach((b) => {
+          try {
+            const id = String(b.bay_number ?? b.bay_id ?? '');
+            if (!id) return;
+            // If we already have a stopwatch for this bay, keep it
+            if (copy[id]) return;
+            // Only initialize for open/occupied sessions without an end_time
+            const isOpen = !b.end_time;
+            if (!isOpen) return;
+            // Prefer top-level start_time, then player.start_time
+            const startStr = (b as any).start_time ?? (b.player && (b.player as any).start_time) ?? null;
+            if (!startStr) return;
+            const ts = new Date(startStr).getTime();
+            if (!isNaN(ts)) copy[id] = ts;
+          } catch (e) { /* ignore per-bay errors */ }
+        });
+        return copy;
+      });
+    } catch (e) { }
+  }, [bays]);
+
+  // small helper to POST JSON to an endpoint
+  const postJson = async (url: string, body?: any) => {
+    try {
+      const res = await fetch(url, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+      return res;
+    } catch (e) {
+      return null;
+    }
+  };
+
+  // --- Timed-session end handling & notifications ---
+  // Keep track of scheduled timers so we can clear/reschedule when bay data changes
+  const scheduledTimersRef = React.useRef<Record<string, any>>({});
+  // Ensure we only notify once per session end event for a bay until it becomes occupied again
+  const notifiedRef = React.useRef<Record<string, boolean>>({});
+
+  const playNotification = async () => {
+    try {
+      if (Platform.OS === 'web' && typeof window !== 'undefined') {
+        try {
+          const AudioCtx = (window as any).AudioContext || (window as any).webkitAudioContext;
+          if (AudioCtx) {
+            const ctx = new AudioCtx();
+            const o = ctx.createOscillator();
+            const g = ctx.createGain();
+            o.type = 'sine';
+            o.frequency.value = 880;
+            o.connect(g);
+            g.connect(ctx.destination);
+            g.gain.value = 0.001;
+            o.start();
+            // ramp up then down for a small beep
+            g.gain.exponentialRampToValueAtTime(0.2, ctx.currentTime + 0.01);
+            g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.38);
+            setTimeout(() => { try { o.stop(); ctx.close(); } catch {} }, 450);
+          }
+        } catch (e) {
+          // ignore audio failures on web
+        }
+        return;
+      }
+
+      // Native: try Expo Haptics first, fallback to Vibration
+      try {
+        // dynamic import so bundler won't break if expo-haptics isn't present in some environments
+        // @ts-ignore
+        const Haptics = await import('expo-haptics').catch(() => null);
+        if (Haptics && Haptics.notificationAsync) {
+          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          return;
+        }
+      } catch (e) {
+        // ignore
+      }
+
+      try {
+        const { Vibration } = await import('react-native');
+        Vibration.vibrate?.(300);
+      } catch {}
+    } catch {}
+  };
+
+  const notifyAndReleaseBay = React.useCallback(async (bayNum: number | string) => {
+    // guard: if we've already notified for this bay, skip
+    try { if (notifiedRef.current[String(bayNum)]) return; } catch {}
+    try {
+      // Play a short notification sound or haptic
+      playNotification();
+
+      // Optimistically mark the bay available locally so dispatcher sees immediate change
+      setBays((prev) => {
+        return (prev || []).map((b) => {
+          const match = String(b.bay_number) === String(bayNum) || String(b.bay_id) === String(bayNum);
+          if (!match) return b;
+          return { ...b, status: 'Available', player_name: null, player: null, end_time: null, total_balls: null };
+        });
+      });
+
+      // Try to notify backend to end the session. Try a couple of plausible endpoints; failures are non-fatal.
+      try {
+        const baseUrl = await resolveBaseUrl();
+        // First, try the admin override endpoint (known API): action 'End Session'
+        try {
+          const res = await fetch(`${baseUrl}/api/admin/bays/${bayNum}/override`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'End Session' }) });
+          if (!(res && res.ok)) {
+            // fallback to a couple of legacy/alternative endpoints if admin override isn't present
+            const candidates = [
+              `${baseUrl}/api/dispatcher/bays/${bayNum}/end`,
+              `${baseUrl}/api/session/end`,
+            ];
+            for (const url of candidates) {
+              try {
+                const body = url.endsWith('/end') ? undefined : JSON.stringify({ bayNo: bayNum });
+                const r2 = await fetch(url, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body });
+                if (r2 && (r2.ok || r2.status === 404 || r2.status === 405)) {
+                  if (r2.ok) break;
+                }
+              } catch (e) { }
+            }
+          }
+        } catch (e) {
+          // ignore and attempt fallbacks
+          const candidates = [
+            `${baseUrl}/api/dispatcher/bays/${bayNum}/end`,
+            `${baseUrl}/api/session/end`,
+          ];
+          for (const url of candidates) {
+            try {
+              const body = url.endsWith('/end') ? undefined : JSON.stringify({ bayNo: bayNum });
+              const r2 = await fetch(url, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body });
+              if (r2 && (r2.ok || r2.status === 404 || r2.status === 405)) {
+                if (r2.ok) break;
+              }
+            } catch (e) { }
+          }
+        }
+      } catch (e) {
+        // ignore backend errors
+      }
+
+      // mark notified so we don't repeat for same session
+      notifiedRef.current[String(bayNum)] = true;
+
+  // Stop any running stopwatch for this bay (we're releasing it)
+  try { setStopwatches((prev) => { const copy = { ...prev }; delete copy[String(bayNum)]; return copy; }); } catch {}
+
+      // refresh overview in background so server-side state is eventually reflected
+      try { fetchOverview(); } catch {}
+    } catch (e) {
+      // ignore notify errors
+    }
+  }, [resolveBaseUrl, fetchOverview]);
+
+  // tick effect for stopwatches (re-renders every 1s)
+  useEffect(() => {
+    const t = setInterval(() => setTick((v) => v + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+
+  // Whenever bays change, schedule timers for timed sessions that will end
+  useEffect(() => {
+    // clear timers for bays that no longer exist or changed
+    const newTimers: Record<string, any> = {};
+    const keep = new Set<string>();
+    (bays || []).forEach((b) => {
+      const id = String(b.bay_number ?? b.bay_id ?? '');
+      if (!id) return;
+      // if bay has no end_time, clear any scheduled timer and reset notified flag
+      if (!b.end_time) {
+        try { if (scheduledTimersRef.current[id]) { clearTimeout(scheduledTimersRef.current[id]); } } catch {}
+        try { delete scheduledTimersRef.current[id]; } catch {}
+        notifiedRef.current[id] = false;
+        return;
+      }
+      // parse end_time; ensure it's a Date string
+      let end: Date | null = null;
+      try { end = new Date(b.end_time); if (isNaN(end.getTime())) end = null; } catch { end = null; }
+      if (!end) return;
+      const ms = end.getTime() - Date.now();
+      // If already passed and we haven't notified, mark as notified and notify immediately
+      if (ms <= 0 && !notifiedRef.current[id]) {
+        try { notifiedRef.current[id] = true; } catch {}
+        notifyAndReleaseBay(id);
+        return;
+      }
+      // If time remaining is reasonable (< 24h) schedule a timer
+      if (ms > 0 && ms < 1000 * 60 * 60 * 24 && !scheduledTimersRef.current[id]) {
+        const t = setTimeout(() => {
+          notifyAndReleaseBay(id);
+          try { delete scheduledTimersRef.current[id]; } catch {}
+        }, ms + 250); // small buffer
+        scheduledTimersRef.current[id] = t;
+        newTimers[id] = t;
+        keep.add(id);
+      }
+    });
+
+    // cleanup timers that are no longer needed
+    Object.keys(scheduledTimersRef.current || {}).forEach((k) => {
+      if (!keep.has(k)) {
+        try { clearTimeout(scheduledTimersRef.current[k]); } catch {}
+        try { delete scheduledTimersRef.current[k]; } catch {}
+      }
+    });
+
+    return () => {
+      // component unmount: clear all scheduled timers
+      Object.values(scheduledTimersRef.current || {}).forEach((t) => { try { clearTimeout(t); } catch {} });
+      scheduledTimersRef.current = {};
+    };
+  }, [bays, notifyAndReleaseBay]);
+
+  useEffect(() => {
+    // initial load
     fetchOverview();
     fetchBays();
-    const iv = setInterval(() => {
-      fetchOverview();
-      fetchBays();
+
+    // Poll every 2 seconds (matches admin behavior). Use a guarded fetchOverview
+    // to avoid overlapping requests.
+    const interval = setInterval(() => {
+      try { fetchOverview(); } catch { }
+      try { fetchBays(); } catch { }
     }, 2000);
-    return () => clearInterval(iv);
+
+    // Debounced explicit update event handling (other parts of the app can
+    // dispatch `overview:updated` to request a reload). Wait 2s after the
+    // event before reloading so DB writes have propagated.
+    let overviewUpdateTimer: any = null;
+    const onOverviewUpdated = () => {
+      try { if (overviewUpdateTimer) clearTimeout(overviewUpdateTimer); } catch {}
+      overviewUpdateTimer = setTimeout(() => { try { fetchOverview(); } catch {} }, 2000);
+    };
+    try {
+      if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('overview:updated', onOverviewUpdated as EventListener);
+    } catch {}
+
+    return () => {
+      clearInterval(interval);
+      try { if (overviewUpdateTimer) clearTimeout(overviewUpdateTimer); } catch {}
+      try { if (typeof window !== 'undefined' && window.removeEventListener) window.removeEventListener('overview:updated', onOverviewUpdated as EventListener); } catch {}
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -114,7 +403,7 @@ export default function DashboardTab() {
         </View>
         <View style={[styles.overviewCard, { borderLeftColor: '#C62828' }]}>
           <Text style={styles.overviewTitle}>Next Tee Time</Text>
-          <Text style={[styles.overviewValue, { color: '#C62828' }]}>{overview?.nextTeeTime ? (overview.nextTeeTime === 'Bay Ready' ? 'Bay Ready' : new Date(overview.nextTeeTime).toLocaleTimeString()) : '—'}</Text>
+          <Text style={[styles.overviewValue, { color: '#C62828' }]}>{overview?.nextTeeTime ? (overview.nextTeeTime === 'Bay Ready' ? 'Bay Ready' : new Date(overview.nextTeeTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })) : '—'}</Text>
           <Text style={styles.overviewSubtitle}>{overview?.nextTeeTime && overview.nextTeeTime !== 'Bay Ready' ? new Date(overview.nextTeeTime).toLocaleDateString() : ''}</Text>
         </View>
       </View>
@@ -129,29 +418,136 @@ export default function DashboardTab() {
       const status = row?.status ?? 'Available';
       const color = getColorFromStatus(status);
       const player = row?.player_name ?? row?.player?.nickname ?? '—';
-      const time = (() => {
+      const { time, timeLabel } = (() => {
         try {
+          const id = String(row?.bay_number ?? row?.bay_id ?? num);
+          // If we have an explicit stopwatch running for this bay, show elapsed mm:ss
+          const swStart = stopwatches?.[id];
+          if (swStart) {
+            const elapsed = Date.now() - swStart;
+            if (elapsed <= 0) return { time: '0:00', timeLabel: 'Time:' };
+            const totalSecs = Math.floor(elapsed / 1000);
+            const mins = Math.floor(totalSecs / 60);
+            const secs = totalSecs % 60;
+            return { time: `${mins}:${secs.toString().padStart(2, '0')}`, timeLabel: 'Time:' };
+          }
           const end = row?.end_time ? new Date(row.end_time) : null;
-          if (!end) return '—';
+          if (!end) return { time: '—', timeLabel: '' };
           const ms = end.getTime() - Date.now();
-          if (ms <= 0) return '0m 0s';
+          if (ms <= 0) return { time: '0m', timeLabel: 'Remaining:' };
           const mins = Math.floor(ms / (1000 * 60));
-          const secs = Math.floor((ms % (1000 * 60)) / 1000);
-          return `${mins}m ${secs}s`;
-        } catch { return '—'; }
+          // Only show minutes (no seconds) to avoid frequent UI changes
+          return { time: `${mins}m`, timeLabel: 'Remaining:' };
+        } catch { return { time: '—', timeLabel: '' }; }
       })();
 
+      const displayNumber = row?.bay_number ?? num;
       return (
         <TouchableOpacity key={num} style={[styles.bayBox, { borderColor: color }]} onPress={() => setSelectedBay(row ?? null)}>
-          <View style={[styles.statusCapsule, { backgroundColor: color }]}>
-            <Text style={styles.statusCapsuleText}>{status} #{num}</Text>
+          <View style={[styles.statusCapsule, { backgroundColor: color }]}> 
+            <Text style={styles.statusCapsuleText}>{getStatusLabel(status)}</Text>
+            <Text style={styles.bayNumberText}>Bay {String(displayNumber)}</Text>
           </View>
           <Text style={styles.bayInfo}>{player}</Text>
-          <Text style={styles.timeText}>{time}</Text>
+          <Text style={styles.timeText}>{timeLabel ? `${timeLabel} ${time}` : time}</Text>
         </TouchableOpacity>
       );
     });
     return <View style={styles.bayContainer}>{grid}</View>;
+  };
+  
+  // Paginated render wrapper: return the paginated grid and pagination controls
+  const renderPaginatedBays = () => {
+    const total = Number(overview?.totalBays ?? 45);
+    const grid = Array.from({ length: total }).map((_, idx) => {
+      const num = idx + 1;
+      const row = bays.find((b) => String(b.bay_number) === String(num) || String(b.bay_id) === String(num));
+      const status = row?.status ?? 'Available';
+      const color = getColorFromStatus(status);
+      const player = row?.player_name ?? row?.player?.nickname ?? '—';
+      const { time, timeLabel } = (() => {
+        try {
+          const id = String(row?.bay_number ?? row?.bay_id ?? num);
+          const swStart = stopwatches?.[id];
+          if (swStart) {
+            const elapsed = Date.now() - swStart;
+            if (elapsed <= 0) return { time: '0:00', timeLabel: 'Time:' };
+            const totalSecs = Math.floor(elapsed / 1000);
+            const mins = Math.floor(totalSecs / 60);
+            const secs = totalSecs % 60;
+            return { time: `${mins}:${secs.toString().padStart(2, '0')}`, timeLabel: 'Time:' };
+          }
+          const end = row?.end_time ? new Date(row.end_time) : null;
+          if (!end) return { time: '—', timeLabel: '' };
+          const ms = end.getTime() - Date.now();
+          if (ms <= 0) return { time: '0m', timeLabel: 'Remaining:' };
+          const mins = Math.floor(ms / (1000 * 60));
+          return { time: `${mins}m`, timeLabel: 'Remaining:' };
+        } catch { return { time: '—', timeLabel: '' }; }
+      })();
+
+      const displayNumber = row?.bay_number ?? num;
+      return (
+        <TouchableOpacity key={num} style={[styles.bayBox, { borderColor: color }]} onPress={() => setSelectedBay(row ?? null)}>
+          <View style={[styles.statusCapsule, { backgroundColor: color }]}> 
+            <Text style={styles.statusCapsuleText}>{getStatusLabel(status)}</Text>
+            <Text style={styles.bayNumberText}>Bay {String(displayNumber)}</Text>
+          </View>
+          <Text style={styles.bayInfo}>{player}</Text>
+          <Text style={styles.timeText}>{timeLabel ? `${timeLabel} ${time}` : time}</Text>
+        </TouchableOpacity>
+      );
+    });
+
+    const startIdx = (page - 1) * pageSize;
+    const endIdx = startIdx + pageSize;
+    const paginated = grid.slice(startIdx, endIdx);
+
+    const totalPages = Math.max(1, Math.ceil(grid.length / pageSize));
+
+    return (
+      <>
+        <View style={styles.bayContainer}>{paginated}</View>
+        <View style={styles.paginationRow}>
+          <TouchableOpacity
+            style={[styles.pagePrevButton, page === 1 ? styles.pageNavDisabled : {}]}
+            onPress={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={page === 1}
+          >
+            <Text style={styles.pagePrevText}>Previous</Text>
+          </TouchableOpacity>
+
+          <View style={styles.pageList}>
+            {(() => {
+              const computePages = (cur: number, total: number) => {
+                if (total <= 4) return Array.from({ length: total }, (_, i) => i + 1);
+                if (cur <= 4) return [1, 2, 3, 4, 'ellipsis', total];
+                if (cur >= total - 2) return [1, 'ellipsis', total - 3, total - 2, total - 1, total];
+                return [cur - 2, cur - 1, cur, 'ellipsis', total];
+              };
+              const pages = computePages(page, totalPages);
+              return pages.map((p: any, idx: number) => {
+                if (p === 'ellipsis') return (<Text key={`ell-${idx}`} style={{ paddingHorizontal: 8 }}>…</Text>);
+                const num = Number(p);
+                return (
+                  <TouchableOpacity key={`page-${num}`} style={[styles.pageButton, page === num ? styles.pageButtonActive : {}]} onPress={() => setPage(num)}>
+                    <Text style={page === num ? styles.pageButtonTextActive : styles.pageButtonText}>{num}</Text>
+                  </TouchableOpacity>
+                );
+              });
+            })()}
+          </View>
+
+          <TouchableOpacity
+            style={[styles.pageNextButton, page === totalPages ? styles.pageNavDisabled : {}]}
+            onPress={() => setPage((p) => Math.min(totalPages, p + 1))}
+            disabled={page === totalPages}
+          >
+            <Text style={styles.pageNextText}>Next</Text>
+          </TouchableOpacity>
+        </View>
+      </>
+    );
   };
 
   if (loading) return <View style={{ padding: 20 }}><ActivityIndicator /></View>;
@@ -159,16 +555,17 @@ export default function DashboardTab() {
   return (
     <ScrollView style={styles.scrollArea}>
       <View style={styles.contentBox}>
-        <Text style={styles.welcomeText}>Welcome back, Dispatcher!</Text>
-        <Text style={styles.dateText}>{new Date().toLocaleString()}</Text>
+  <Text style={styles.welcomeText}>Welcome back, Dispatcher!</Text>
+  {/* Show only hour and minute to avoid frequent second updates */}
+  <Text style={styles.dateText}>{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Text>
         <Text style={styles.sectionTitle}>Quick Overview</Text>
         {renderOverviewCards()}
 
         <Text style={[styles.sectionTitle, { marginTop: 14 }]}>Real-Time Bay Monitoring</Text>
-        {renderBays()}
+        {renderPaginatedBays()}
 
-        {/* Edit Modal */}
-        <Modal visible={!!selectedBay} transparent animationType="slide" onRequestClose={() => setSelectedBay(null)}>
+        {/* Edit Modal - contextual actions based on bay status */}
+        <Modal visible={!!selectedBay} transparent animationType="fade" onRequestClose={() => setSelectedBay(null)}>
           <View style={styles.modalOverlay}>
             <View style={styles.modalBox}>
               {selectedBay ? (
@@ -177,11 +574,261 @@ export default function DashboardTab() {
                   <Text style={styles.modalText}>Status: {selectedBay.status}</Text>
                   <Text style={styles.modalText}>Player: {selectedBay.player_name ?? (selectedBay.player?.nickname ?? '—')}</Text>
                   <Text style={styles.modalText}>Balls used: {String(selectedBay.total_balls ?? '—')}</Text>
-                  <TouchableOpacity style={styles.closeButton} onPress={() => setSelectedBay(null)}>
-                    <Text style={styles.closeButtonText}>Close</Text>
-                  </TouchableOpacity>
+
+                  {/* Contextual actions */}
+                  <View style={{ marginTop: 12 }}>
+                    {(() => {
+                      const s = String(selectedBay.status || 'Available').toLowerCase();
+                      // Occupied / Assigned / Open / Timed -> End Session
+                      if (s.includes('occupied') || s.includes('assigned') || s.includes('timed') || s === 'open' || s === 'opentime') {
+                        return (
+                          <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
+                              <TouchableOpacity style={[styles.modalButton, styles.modalButtonConfirm]} onPress={async () => {
+                                setActionLoading(true);
+                                try {
+                                  const bayNum = selectedBay.bay_number ?? selectedBay.bay_id;
+                                  // Timed session: use timer-based notify flow for automatic release; for manual end prefer server-confirmed end
+                                  const baseUrl = await resolveBaseUrl();
+                                  const res = await postJson(`${baseUrl}/api/admin/bays/${bayNum}/override`, { action: 'End Session' });
+                                  if (res && res.ok) {
+                                    // Only update UI after server confirms
+                                    setBays((prev) => prev.map(b => (String(b.bay_number) === String(bayNum) || String(b.bay_id) === String(bayNum)) ? { ...b, status: 'Available', player_name: null, player: null, end_time: null, total_balls: null } : b));
+                                    try { await fetchOverview(); await fetchBays(); } catch {}
+                                  } else {
+                                    // server didn't accept: refresh overview to reflect true state
+                                    try { await fetchOverview(); await fetchBays(); } catch {}
+                                    try { Alert.alert('Error', 'Failed to end session. Server did not accept the request.'); } catch {}
+                                  }
+                                } catch (e) {
+                                  try { fetchOverview(); } catch {}
+                                } finally {
+                                  setActionLoading(false);
+                                  // clear modal selection and stop any stopwatch for this bay
+                                  try {
+                                    const idToClear = selectedBay?.bay_number ?? selectedBay?.bay_id;
+                                    setSelectedBay(null);
+                                    setStopwatches((prev) => { const copy = { ...prev }; delete copy[String(idToClear)]; return copy; });
+                                  } catch {}
+                                }
+                              }}>
+                              {actionLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.modalButtonText}>End Session</Text>}
+                            </TouchableOpacity>
+                            <TouchableOpacity style={[styles.modalButton, styles.modalButtonCancel]} onPress={() => setSelectedBay(null)}>
+                              <Text style={styles.modalButtonCancelText}>Close</Text>
+                            </TouchableOpacity>
+                          </View>
+                        );
+                      }
+
+                      // Reserved -> Start Session (opens assign modal)
+                      // If bay was reserved (SpecialUse / Reserved), allow a direct Start Session
+                      const originalStatus = String(selectedBay.originalStatus ?? selectedBay.status ?? 'Available').toLowerCase();
+                      if (originalStatus.includes('reserved') || originalStatus === 'specialuse') {
+                        return (
+                          <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
+                            <TouchableOpacity style={[styles.modalButton, styles.modalButtonConfirm]} onPress={() => {
+                              // Confirm before starting session for a reserved bay
+                              try {
+                                Alert.alert(
+                                  'Start Session',
+                                  'Are you sure you want to start the session for this reserved bay?',
+                                  [
+                                    { text: 'Cancel', style: 'cancel' },
+                                    { text: 'Start', onPress: async () => {
+                                      setActionLoading(true);
+                                      try {
+                                        const bayNum = selectedBay.bay_number ?? selectedBay.bay_id;
+                                        const baseUrl = await resolveBaseUrl();
+                                        const res = await postJson(`${baseUrl}/api/admin/bays/${bayNum}/start`, { nickname: selectedBay.player_name ?? null });
+                                        if (res && res.ok) {
+                                          setBays((prev) => prev.map(b => (String(b.bay_number) === String(bayNum) || String(b.bay_id) === String(bayNum)) ? { ...b, status: 'Occupied', player_name: selectedBay.player_name ?? null, start_time: new Date().toISOString() } : b));
+                                          try { setStopwatches((prev) => ({ ...prev, [String(bayNum)]: Date.now() })); } catch {}
+                                          try { await fetchOverview(); await fetchBays(); } catch {}
+                                        } else {
+                                          try { await fetchOverview(); await fetchBays(); } catch {}
+                                          try { Alert.alert('Error', 'Failed to start session. Server did not accept the request.'); } catch {}
+                                        }
+                                      } catch (e) {
+                                        try { await fetchOverview(); } catch {}
+                                      } finally {
+                                        setActionLoading(false);
+                                        setSelectedBay(null);
+                                      }
+                                    } },
+                                  ],
+                                  { cancelable: true },
+                                );
+                              } catch (e) {
+                                // fallback: attempt to start without confirmation
+                                (async () => {
+                                  setActionLoading(true);
+                                  try {
+                                    const bayNum = selectedBay.bay_number ?? selectedBay.bay_id;
+                                    const baseUrl = await resolveBaseUrl();
+                                    const res = await postJson(`${baseUrl}/api/admin/bays/${bayNum}/start`, { nickname: selectedBay.player_name ?? null });
+                                    if (res && res.ok) {
+                                      setBays((prev) => prev.map(b => (String(b.bay_number) === String(bayNum) || String(b.bay_id) === String(bayNum)) ? { ...b, status: 'Occupied', player_name: selectedBay.player_name ?? null, start_time: new Date().toISOString() } : b));
+                                        try { setStopwatches((prev) => ({ ...prev, [String(bayNum)]: Date.now() })); } catch {}
+                                      try { await fetchOverview(); await fetchBays(); } catch {}
+                                    } else {
+                                      try { await fetchOverview(); await fetchBays(); } catch {}
+                                      try { Alert.alert('Error', 'Failed to start session. Server did not accept the request.'); } catch {}
+                                    }
+                                  } catch (err) {
+                                    try { await fetchOverview(); } catch {}
+                                  } finally {
+                                    setActionLoading(false);
+                                    setSelectedBay(null);
+                                  }
+                                })();
+                              }
+                            }}>
+                              {actionLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.modalButtonText}>Start Session</Text>}
+                            </TouchableOpacity>
+                            <TouchableOpacity style={[styles.modalButton, styles.modalButtonCancel]} onPress={() => setSelectedBay(null)}>
+                              <Text style={styles.modalButtonCancelText}>Close</Text>
+                            </TouchableOpacity>
+                          </View>
+                        );
+                      }
+
+                      // Available -> Reserve or Open Time
+                      return (
+                        <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
+                          <TouchableOpacity style={[styles.modalButton, styles.modalButtonConfirm]} onPress={() => { setShowOpenTimeModal(true); }}>
+                                    <Text style={styles.modalButtonText}>Open Time</Text>
+                                  </TouchableOpacity>
+                          <TouchableOpacity style={[styles.modalButton, styles.modalButtonCancel]} onPress={() => { setShowReserveModal(true); }}>
+                            <Text style={styles.modalButtonCancelText}>Reserve</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity style={[styles.modalButton, styles.modalButtonCancel]} onPress={() => setSelectedBay(null)}>
+                            <Text style={styles.modalButtonCancelText}>Close</Text>
+                          </TouchableOpacity>
+                        </View>
+                      );
+                    })()}
+                  </View>
                 </>
               ) : null}
+            </View>
+          </View>
+        </Modal>
+
+        {/* Reserve modal */}
+        <Modal visible={showReserveModal} transparent animationType="fade" onRequestClose={() => setShowReserveModal(false)}>
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalBox}>
+              <Text style={styles.modalTitle}>Reserve Bay {selectedBay?.bay_number}</Text>
+              <TextInput placeholder="Name" value={reserveName} onChangeText={setReserveName} style={{ borderWidth: 1, borderColor: '#ddd', padding: 8, borderRadius: 6, marginBottom: 8 }} />
+              <TextInput placeholder="Reason" value={reserveReason} onChangeText={setReserveReason} style={{ borderWidth: 1, borderColor: '#ddd', padding: 8, borderRadius: 6, marginBottom: 8 }} />
+              <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
+                <TouchableOpacity style={[styles.modalButton, styles.modalButtonCancel]} onPress={() => setShowReserveModal(false)}>
+                  <Text style={styles.modalButtonCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.modalButton, styles.modalButtonConfirm]} onPress={async () => {
+                  setActionLoading(true);
+                  try {
+                    const bayNum = selectedBay?.bay_number ?? selectedBay?.bay_id;
+                    const baseUrl = await resolveBaseUrl();
+                    const res = await postJson(`${baseUrl}/api/admin/bays/${bayNum}/override`, { action: 'Reserved', name: reserveName || null });
+                    if (res && res.ok) {
+                      setBays((prev) => prev.map(b => (String(b.bay_number) === String(bayNum) || String(b.bay_id) === String(bayNum)) ? { ...b, status: 'Reserved', player_name: reserveName } : b));
+                      try { await fetchOverview(); await fetchBays(); } catch {}
+                    } else {
+                      try { await fetchOverview(); await fetchBays(); } catch {}
+                      try { Alert.alert('Error', 'Failed to reserve bay. Server did not accept the request.'); } catch {}
+                    }
+                  } catch (e) {
+                    try { fetchOverview(); } catch {}
+                  } finally {
+                    setActionLoading(false);
+                    setShowReserveModal(false);
+                    setSelectedBay(null);
+                  }
+                }}>
+                  {actionLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.modalButtonText}>Reserve</Text>}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        {/* Open Time modal */}
+        <Modal visible={showOpenTimeModal} transparent animationType="fade" onRequestClose={() => setShowOpenTimeModal(false)}>
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalBox}>
+              <Text style={styles.modalTitle}>Open Time - Bay {selectedBay?.bay_number}</Text>
+              <TextInput placeholder="Name" value={openName} onChangeText={setOpenName} style={{ borderWidth: 1, borderColor: '#ddd', padding: 8, borderRadius: 6, marginBottom: 8 }} />
+              <TextInput placeholder="Reason" value={openReason} onChangeText={setOpenReason} style={{ borderWidth: 1, borderColor: '#ddd', padding: 8, borderRadius: 6, marginBottom: 8 }} />
+              <TextInput placeholder="Optional Serviceman" value={assignServicemanName} onChangeText={setAssignServicemanName} style={{ borderWidth: 1, borderColor: '#ddd', padding: 8, borderRadius: 6, marginBottom: 8 }} />
+              <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
+                <TouchableOpacity style={[styles.modalButton, styles.modalButtonCancel]} onPress={() => setShowOpenTimeModal(false)}>
+                  <Text style={styles.modalButtonCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.modalButton, styles.modalButtonConfirm]} onPress={async () => {
+                  setActionLoading(true);
+                  try {
+                    const bayNum = selectedBay?.bay_number ?? selectedBay?.bay_id;
+                    const baseUrl = await resolveBaseUrl();
+                    const res = await postJson(`${baseUrl}/api/admin/bays/${bayNum}/start`, { nickname: openName || null, servicemanName: assignServicemanName || null });
+                    if (res && res.ok) {
+                      setBays((prev) => prev.map(b => (String(b.bay_number) === String(bayNum) || String(b.bay_id) === String(bayNum)) ? { ...b, status: 'Open', player_name: openName, start_time: new Date().toISOString() } : b));
+                      try { setStopwatches((prev) => ({ ...prev, [String(bayNum)]: Date.now() })); } catch {}
+                      try { await fetchOverview(); await fetchBays(); } catch {}
+                    } else {
+                      try { await fetchOverview(); await fetchBays(); } catch {}
+                      try { Alert.alert('Error', 'Failed to start open time. Server did not accept the request.'); } catch {}
+                    }
+                  } catch (e) {
+                    try { fetchOverview(); } catch {}
+                  } finally {
+                    setActionLoading(false);
+                    setShowOpenTimeModal(false);
+                    setSelectedBay(null);
+                  }
+                }}>
+                  {actionLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.modalButtonText}>Start Open Time</Text>}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        {/* Assign serviceman / Start Session modal for Reserved */}
+        <Modal visible={showAssignModal} transparent animationType="fade" onRequestClose={() => setShowAssignModal(false)}>
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalBox}>
+              <Text style={styles.modalTitle}>Start Session - Bay {selectedBay?.bay_number}</Text>
+              <TextInput placeholder="Assign Serviceman (optional)" value={assignServicemanName} onChangeText={setAssignServicemanName} style={{ borderWidth: 1, borderColor: '#ddd', padding: 8, borderRadius: 6, marginBottom: 8 }} />
+              <View style={{ flexDirection: 'row', justifyContent: 'flex-end' }}>
+                <TouchableOpacity style={[styles.modalButton, styles.modalButtonCancel]} onPress={() => setShowAssignModal(false)}>
+                  <Text style={styles.modalButtonCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.modalButton, styles.modalButtonConfirm]} onPress={async () => {
+                  setActionLoading(true);
+                  try {
+                    const bayNum = selectedBay?.bay_number ?? selectedBay?.bay_id;
+                    const baseUrl = await resolveBaseUrl();
+                    const res = await postJson(`${baseUrl}/api/admin/bays/${bayNum}/start`, { nickname: selectedBay?.player_name ?? null, servicemanName: assignServicemanName || null });
+                    if (res && res.ok) {
+                      setBays((prev) => prev.map(b => (String(b.bay_number) === String(bayNum) || String(b.bay_id) === String(bayNum)) ? { ...b, status: 'Occupied', player_name: b.player_name ?? null, start_time: new Date().toISOString() } : b));
+                      try { setStopwatches((prev) => ({ ...prev, [String(bayNum)]: Date.now() })); } catch {}
+                      try { await fetchOverview(); await fetchBays(); } catch {}
+                    } else {
+                      try { await fetchOverview(); await fetchBays(); } catch {}
+                      try { Alert.alert('Error', 'Failed to start session. Server did not accept the request.'); } catch {}
+                    }
+                  } catch (e) {
+                    try { fetchOverview(); } catch {}
+                  } finally {
+                    setActionLoading(false);
+                    setShowAssignModal(false);
+                    setSelectedBay(null);
+                  }
+                }}>
+                  {actionLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.modalButtonText}>Start</Text>}
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
         </Modal>
@@ -203,16 +850,50 @@ const styles = StyleSheet.create({
   overviewTitle: { fontSize: 14, fontWeight: '600' },
   overviewValue: { fontSize: 20, fontWeight: 'bold', marginVertical: 5 },
   overviewSubtitle: { color: '#555', fontSize: 12 },
+  // Show four bay boxes per row where possible. Use percentage width with
+  // sensible min/max so layout stays stable on narrow screens and large tablets.
   bayContainer: { flexWrap: 'wrap', flexDirection: 'row', gap: 10 },
-  bayBox: { width: 180, borderWidth: 2, borderRadius: 12, padding: 10, backgroundColor: '#fff', margin: 6 },
+  bayBox: { flexBasis: '23%', width: '23%', minWidth: 100, maxWidth: 200, borderWidth: 2, borderRadius: 12, padding: 10, backgroundColor: '#fff', margin: 2 },
   statusCapsule: { paddingVertical: 6, borderRadius: 8, alignItems: 'center', marginBottom: 8 },
   statusCapsuleText: { color: '#fff', fontWeight: '600', fontSize: 12 },
+  bayNumberText: { color: '#fff', fontWeight: '700', fontSize: 12, marginTop: 4 },
   bayInfo: { fontSize: 13, color: '#222' },
   timeText: { fontSize: 12, color: '#666', marginTop: 4 },
-  modalOverlay: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.4)' },
-  modalBox: { backgroundColor: '#fff', borderRadius: 10, padding: 20, width: '80%' },
+  // Pagination controls for bay grid
+  paginationRow: { flexDirection: 'row', alignItems: 'center', justifyContent:'center', marginTop: 12, flexWrap: 'wrap' },
+  pagePrevButton: { paddingVertical: 6, paddingHorizontal: 10, backgroundColor: '#f0f0f0', borderRadius: 6 },
+  pageNextButton: { paddingVertical: 6, paddingHorizontal: 10, backgroundColor: '#f0f0f0', borderRadius: 6 },
+  pageNavDisabled: { opacity: 0.5 },
+  pagePrevText: { color: '#333', fontWeight: '600' },
+  pageNextText: { color: '#333', fontWeight: '600' },
+  pageList: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8 },
+  pageButton: { paddingHorizontal: 8, paddingVertical: 6, marginHorizontal: 4, borderRadius: 6, backgroundColor: '#fff', borderWidth: 1, borderColor: '#e0e0e0' },
+  pageButtonActive: { backgroundColor: '#17321d' },
+  pageButtonText: { color: '#333', fontWeight: '600' },
+  pageButtonTextActive: { color: '#fff', fontWeight: '700' },
+  // Make overlay cover the entire screen (absolute) so it works correctly on web
+  // and in nested layouts where flex:1 may not fill the viewport.
+  modalOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    zIndex: 1000,
+  },
+  modalBox: { backgroundColor: '#fff', borderRadius: 10, padding: 20, width: '80%', maxWidth: 720 },
   modalTitle: { fontSize: 18, fontWeight: '700', marginBottom: 8 },
   modalText: { fontSize: 14, color: '#333', marginBottom: 6 },
+  // Standard modal button group (matches app-wide modal style)
+  modalButtons: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 10 },
+  modalButton: { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 6 },
+  modalButtonCancel: { backgroundColor: '#EEE', marginRight: 8 },
+  modalButtonCancelText: { color: '#333', fontWeight: '600' },
+  modalButtonConfirm: { backgroundColor: '#C62828' },
+  modalButtonText: { color: '#fff', fontWeight: '600' },
   closeButton: { marginTop: 10, backgroundColor: '#007bff', paddingVertical: 10, borderRadius: 8, alignItems: 'center' },
   closeButtonText: { color: '#fff', fontWeight: '700' },
 });

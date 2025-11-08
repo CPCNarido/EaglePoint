@@ -239,10 +239,14 @@ export class AdminController {
   @Post('bays/:bayNo/override')
   async overrideBay(@Param('bayNo') bayNo: string, @Body() body: any) {
     try {
+      Logger.log(`admin.overrideBay called for bay=${bayNo} body=${JSON.stringify(body)}`, 'AdminController');
       const { action, adminId } = body || {};
+      // accept optional name fields for reservations: name, nickname, playerName
+      const reserveName = body?.name ?? body?.nickname ?? body?.playerName ?? null;
       if (!action || typeof action !== 'string')
         throw new BadRequestException('Action is required');
-      const res = await this.adminService.overrideBay(bayNo, action, adminId);
+      const res = await this.adminService.overrideBay(bayNo, action, adminId, reserveName);
+      Logger.log(`admin.overrideBay result for bay=${bayNo} action=${action} result=${JSON.stringify(res)}`, 'AdminController');
       return res;
     } catch (e: any) {
       if (e instanceof BadRequestException) throw e;
@@ -446,6 +450,38 @@ export class AdminController {
     } catch (e: any) {
       Logger.error('Failed to get bay usage', e, 'AdminController');
       throw new InternalServerErrorException(e && e.message ? e.message : 'Failed getting bay usage');
+    }
+  }
+
+  // Start a new session on a bay (timed if end_time provided, otherwise Open)
+  @Post('bays/:bayNo/start')
+  async startBaySession(@Param('bayNo') bayNo: string, @Body() body: any) {
+    try {
+      Logger.log(`admin.startBaySession called for bay=${bayNo} body=${JSON.stringify(body)}`, 'AdminController');
+      // body may contain: nickname, full_name, end_time (ISO), price_per_hour, servicemanId, dispatcherId
+      const res = await this.adminService.startSession(String(bayNo), body || {});
+      Logger.log(`admin.startBaySession result for bay=${bayNo} result=${JSON.stringify(res)}`, 'AdminController');
+      return res;
+    } catch (e: any) {
+      if (e instanceof BadRequestException) throw e;
+      Logger.error('Failed to start session', e, 'AdminController');
+      throw new InternalServerErrorException(e?.message ?? 'Failed to start session');
+    }
+  }
+
+  // Debug: return bay overview entry and last N assignments for a bay
+  @Get('debug/bay/:bayNo')
+  async debugBay(@Param('bayNo') bayNo: string, @Query('last') last?: string) {
+    try {
+      Logger.log(`admin.debugBay called for bay=${bayNo} last=${String(last ?? '')}`, 'AdminController');
+      const n = last ? Number(last) : 10;
+      const res = await this.adminService.getBayDebug(String(bayNo), Number(n || 10));
+      Logger.log(`admin.debugBay result for bay=${bayNo} result=${JSON.stringify(res?.overviewEntry ?? { ok: false })}`, 'AdminController');
+      return res;
+    } catch (e: any) {
+      if (e instanceof BadRequestException) throw e;
+      Logger.error('Failed to get bay debug', e, 'AdminController');
+      throw new InternalServerErrorException(e?.message ?? 'Failed to get bay debug');
     }
   }
 }

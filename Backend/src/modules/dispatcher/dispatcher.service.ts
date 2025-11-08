@@ -25,14 +25,22 @@ export class DispatcherService {
       const playerName = assignment?.player?.nickname ?? assignment?.player?.full_name ?? null;
       const endTime = assignment?.end_time ?? assignment?.player?.end_time ?? null;
       const totalBalls = assignment?.transactions ? assignment.transactions.reduce((s: number, t: any) => s + (Number(t.bucket_count) || 0), 0) : 0;
-      const computedStatus = assignment ? 'Occupied' : String(b.status ?? 'Available');
+
+  // Compute status: only open assignments mark a bay as Occupied for dispatcher view.
+  // Leave SpecialUse/Reserved as their original status so the UI can display them
+  // distinctly (and the frontend may still offer Start Session for reserved bays).
+  const originalStatus = String(b.status ?? 'Available');
+  const computedStatus = assignment ? 'Occupied' : originalStatus;
+
       return {
         bay_id: b.bay_id,
         bay_number: b.bay_number,
         status: computedStatus,
         originalStatus: b.status,
         player_name: playerName,
-        player: assignment?.player ? { nickname: assignment.player.nickname, full_name: assignment.player.full_name, player_id: assignment.player.player_id } : null,
+        // expose player start time so clients can compute elapsed stopwatch time across reloads
+        start_time: assignment?.player?.start_time ?? assignment?.assigned_time ?? null,
+        player: assignment?.player ? { nickname: assignment.player.nickname, full_name: assignment.player.full_name, player_id: assignment.player.player_id, start_time: assignment.player.start_time } : null,
         end_time: endTime,
         total_balls: totalBalls,
         transactions_count: assignment?.transactions ? assignment.transactions.length : 0,

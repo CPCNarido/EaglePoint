@@ -84,6 +84,7 @@ async function main() {
       serviceman_id: created['Serviceman1'].employee_id,
       assigned_time: new Date(),
       open_time: true,
+      session_type: 'Open',
     },
   });
   console.log('Created assignment', assignment.assignment_id);

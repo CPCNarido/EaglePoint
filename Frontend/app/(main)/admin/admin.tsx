@@ -188,11 +188,60 @@ export default function AdminDashboard() {
 
   // Legend filter state: support multi-select so users can highlight multiple statuses
   const [legendFilter, setLegendFilter] = useState<string[]>([]);
+  // toggle between default legend and session-type legend
+  const [showSessionLegend, setShowSessionLegend] = useState<boolean>(false);
+
+  // Persist showSessionLegend across reloads using AsyncStorage
+  useEffect(() => {
+    (async () => {
+      try {
+        // dynamic import to avoid bundler-time dependency
+        // @ts-ignore
+        const AsyncStorageModule = await import('@react-native-async-storage/async-storage').catch(() => null);
+        const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
+        if (!AsyncStorage || !AsyncStorage.getItem) return;
+        const v = await AsyncStorage.getItem('admin:showSessionLegend');
+        if (v !== null) {
+          setShowSessionLegend(v === '1' || v === 'true');
+        }
+      } catch (e) {
+        // ignore
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        // @ts-ignore
+        const AsyncStorageModule = await import('@react-native-async-storage/async-storage').catch(() => null);
+        const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
+        if (!AsyncStorage || !AsyncStorage.setItem) return;
+        await AsyncStorage.setItem('admin:showSessionLegend', showSessionLegend ? '1' : '0');
+      } catch (e) {
+        // ignore
+      }
+    })();
+  }, [showSessionLegend]);
   // Fullscreen state (toggle system UI + lock orientation)
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
 
     // Animated values map for bay fill overlays. Keyed by `bay-{num}`.
     const bayAnimMap = React.useRef<Record<string, Animated.Value>>({});
+
+    // Helper to infer session_type when the backend doesn't provide it.
+    const inferSessionType = (b: any) => {
+      try {
+        const original = String(b?.originalStatus ?? b?.status ?? '');
+        if (original === 'SpecialUse') return 'Reserved';
+        const start = b?.start_time ?? (b?.player && (b.player as any).start_time) ?? null;
+        const end = b?.end_time ?? b?.assignment_end_time ?? null;
+        const hasPlayer = !!(b?.player && (b.player.nickname || b.player.player_id));
+        if (hasPlayer && start && !end) return 'Open';
+        if (end) return 'Timed';
+        return null;
+      } catch (e) { return null; }
+    };
 
     // Animate bay overlay opacity when legendFilter or overview changes
     React.useEffect(() => {
@@ -202,8 +251,9 @@ export default function AdminDashboard() {
         const key = `bay-${i}`;
         // decide status for bay i from overview when present
         const bayData = overview?.bays?.find((x: any) => String(x.bay_number) === String(i) || String(x.bay_id) === String(i));
-        const status = bayData?.status ?? null;
-        const isActive = legendMatchesStatus(legendFilter, status);
+        // When session legend is active, prefer the typed session_type otherwise fall back to status
+        const statusToMatch = showSessionLegend ? (bayData?.session_type ?? inferSessionType(bayData)) : (bayData?.status ?? null);
+        const isActive = legendMatchesStatus(legendFilter, statusToMatch ?? null);
         if (!bayAnimMap.current[key]) bayAnimMap.current[key] = new Animated.Value(isActive ? 1 : 0);
         animations.push(Animated.timing(bayAnimMap.current[key], { toValue: isActive ? 1 : 0, duration: 220, useNativeDriver: true }));
       }
@@ -560,6 +610,26 @@ export default function AdminDashboard() {
   // Legend, OverviewCard and the small InfoPanel were extracted to separate files in
   // order to make them reusable by other screens (user side, Team Chats, etc.).
 
+  // Compute bay color for admin grid. When showSessionLegend is active we color
+  // by session type (stopwatch/open, timed, reserved). Otherwise fall back to
+  // the classic status-based coloring.
+  const getAdminBayColor = (b: any) => {
+    try {
+      if (showSessionLegend) {
+        const original = String(b?.originalStatus ?? b?.status ?? '');
+        // If there's a start_time (player.start_time or top-level start_time), treat as Open/Stopwatch
+        const startStr = b?.start_time ?? (b?.player && (b.player as any).start_time) ?? null;
+        if (startStr) return '#BF930E'; // Open/Stopwatch (orange)
+        // Timed sessions have an end_time
+        const endStr = b?.end_time ?? b?.assignment_end_time ?? null;
+        if (endStr) return '#D18B3A'; // Timed (distinct brown/orange)
+        if (original === 'SpecialUse') return '#6A1B9A'; // Reserved (purple)
+        return '#2E7D32'; // Available green
+      }
+      return getColorFromStatus(String(b?.status ?? 'Available'));
+    } catch (e) { return '#2E7D32'; }
+  };
+
   const renderContent = () => {
     switch (activeTab) {
       case "Dashboard":
@@ -596,6 +666,8 @@ export default function AdminDashboard() {
                   <Text style={styles.clearButtonText}>Clear</Text>
                 </TouchableOpacity>
               </View>
+                          {/* Unified legend: show the five primary legends up top. Maintenance is intentionally moved below the bay grid. */}
+                          {/* Legends moved to bottom per user preference */}
               <View style={styles.bayContainer}>
                 {overview && overview.bays && overview.bays.length > 0 ? (
                   // Render bay grid 1..N in numerical order, using overview data when available
@@ -603,12 +675,13 @@ export default function AdminDashboard() {
                     const num = i + 1;
                     const numStr = String(num);
                     const b = overview.bays.find((x: any) => String(x.bay_number) === numStr || String(x.bay_id) === numStr);
-                    const status = b?.status ?? null;
                     const original = b?.originalStatus ?? null;
+                    // When session legend is active, prefer session_type for matching
+                    const status = showSessionLegend ? (b?.session_type ?? inferSessionType(b)) : (b?.status ?? null);
                     const isHighlighted = highlightedBays.includes(num);
                     // legend-driven highlight
                     const isLegendActive = legendMatchesStatus(legendFilter, status ?? null);
-                    const bayColor = getColorFromStatus(status ?? '');
+                    const bayColor = getAdminBayColor(b);
                     const bayBoxDynamic = isLegendActive ? { backgroundColor: bayColor, borderColor: bayColor } : { borderColor: bayColor };
                     const bayTextBase = { color: bayColor };
                     const animKey = `bay-${num}`;
@@ -695,25 +768,61 @@ export default function AdminDashboard() {
                 )}
               </View>
 
-              <View style={styles.legendContainer}>
-                <Legend color="#2E7D32" label="Available" legendFilter={legendFilter} setLegendFilter={setLegendFilter} overview={overview} />
-                <Legend color="#A3784E" label="Assigned" legendFilter={legendFilter} setLegendFilter={setLegendFilter} overview={overview} />
-                <Legend color="#BF930E" label="Open Time Session" legendFilter={legendFilter} setLegendFilter={setLegendFilter} overview={overview} />
-                <Legend color="#C62828" label="Maintenance" legendFilter={legendFilter} setLegendFilter={setLegendFilter} overview={overview} />
+              {/* Legends placed at the bottom of the bay grid (user requested).
+                  Add a toggle beside the legends to switch between session-type coloring and assignment/status coloring.
+                  The toggle shows a clear label that switches between "Session Type" and "Assignment". */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
+                <View style={{ marginRight: 8, alignItems: 'flex-start' }}>
+                  <TouchableOpacity
+                    onPress={() => {
+                      // Toggle mode and reset any active legend filters
+                      setShowSessionLegend((s) => {
+                        const next = !s;
+                        try { setLegendFilter([]); } catch (e) { /* ignore */ }
+                        return next;
+                      });
+                    }}
+                    style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6, paddingHorizontal: 8, borderRadius: 6, backgroundColor: '#F4F4F2' }}
+                  >
+                    {MaterialIcons ? <MaterialIcons name={showSessionLegend ? 'visibility' : 'view-list'} size={18} color="#17321d" /> : <Text style={{ color: '#17321d' }}>{showSessionLegend ? 'Session Type' : 'Assignment'}</Text>}
+                    <Text style={{ marginLeft: 8, color: '#17321d', fontWeight: '700' }}>{showSessionLegend ? 'Session Type' : 'Assignment'}</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <View style={[styles.legendContainer, { flex: 1, justifyContent: 'center' }]}>
+                  {showSessionLegend ? (
+                    // Session-type legends only
+                    <>
+                      <Legend color="#BF930E" label="Open Time" legendFilter={legendFilter} setLegendFilter={setLegendFilter} overview={overview} />
+                      <Legend color="#D18B3A" label="Timed Session" legendFilter={legendFilter} setLegendFilter={setLegendFilter} overview={overview} />
+                      <Legend color="#6A1B9A" label="Reserved" legendFilter={legendFilter} setLegendFilter={setLegendFilter} overview={overview} />
+                    </>
+                  ) : (
+                    // Assignment legends only
+                    <>
+                      <Legend color="#2E7D32" label="Available" legendFilter={legendFilter} setLegendFilter={setLegendFilter} overview={overview} />
+                      <Legend color="#A3784E" label="Assigned" legendFilter={legendFilter} setLegendFilter={setLegendFilter} overview={overview} />
+                    </>
+                  )}
+                </View>
               </View>
+
             </View>
           </ScrollView>
         );
+
       case "Staff Management":
-      return <StaffManagement />; // ✅ Calls the imported component
+        return <StaffManagement />;
 
       case "Bay Management":
-      return <BayManagement />;
+        return <BayManagement />;
 
-  case "System Settings":
-  return <SystemSettings />;
-    case "Report & Analytics":
-  return <ReportsAndAnalytics />;
+      case "System Settings":
+        return <SystemSettings />;
+
+      case "Report & Analytics":
+        return <ReportsAndAnalytics />;
+
       case "Team Chats":
         return <TeamChats />;
 
@@ -916,6 +1025,7 @@ export default function AdminDashboard() {
     </View>
   );
 }
+  
 
 // ensure linter recognizes the component display name
 (AdminDashboard as any).displayName = 'AdminDashboard';
