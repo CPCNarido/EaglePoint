@@ -36,6 +36,7 @@ export default function DispatcherDashboard() {
   const [globalServicemenAvailable, setGlobalServicemenAvailable] = useState<number | null>(null);
   const [globalServicemenTotal, setGlobalServicemenTotal] = useState<number | null>(null);
   const [globalWaitingQueue, setGlobalWaitingQueue] = useState<number | null>(null);
+  const [assignedBays, setAssignedBays] = useState<number[] | null>(null);
 
   const handleLogout = () => {
     if (Platform.OS === "web") {
@@ -132,6 +133,37 @@ export default function DispatcherDashboard() {
             const avail = ov?.availableBays ?? null;
             setGlobalTotalBays(total != null ? Number(total) : null);
             setGlobalAvailableBays(avail != null ? Number(avail) : null);
+            // derive assigned bays from overview if available
+            try {
+              let assigned: number[] = [];
+              if (Array.isArray(ov?.bays)) {
+                assigned = ov.bays
+                  .filter((b: any) => {
+                    // detect occupied/assigned bay - common shapes
+                    if (b == null) return false;
+                    if (b.player || b.session) return true;
+                    const status = (b.status || b.state || '').toString().toLowerCase();
+                    if (status && status !== 'available' && status !== 'free' && status !== 'open') return true;
+                    // sometimes overview includes end_time/session info
+                    if (b.end_time === null || b.endTime === null) return true;
+                    return false;
+                  })
+                  .map((b: any) => Number(b.bay_number ?? b.bayNo ?? b.bay_no ?? b.number ?? b.id))
+                  .filter((n: number) => !Number.isNaN(n));
+              }
+              // fallback: use reports to derive assigned bays
+              if (!assigned.length) {
+                try {
+                  const r2 = await fetch(`${baseUrl}/api/admin/reports/sessions?limit=1000`, { method: 'GET', credentials: 'include' });
+                  if (r2 && r2.ok) {
+                    const rows = await r2.json();
+                    const active = Array.isArray(rows) ? rows.filter((s: any) => s.bay_no && !s.end_time) : [];
+                    assigned = Array.from(new Set(active.map((s: any) => Number(s.bay_no)).filter((n: number) => !Number.isNaN(n))));
+                  }
+                } catch {}
+              }
+              setAssignedBays(assigned);
+            } catch {}
           }
         } catch {}
 
@@ -174,7 +206,19 @@ export default function DispatcherDashboard() {
       case "Shared Display":
         return <SharedDisplayTab userName={userName} />;
       case "Session Control":
-        return <SessionControlTab userName={userName} />;
+        return (
+          <SessionControlTab
+            userName={userName}
+            counts={{
+              availableBays: globalAvailableBays ?? undefined,
+              totalBays: globalTotalBays ?? undefined,
+              servicemenAvailable: globalServicemenAvailable ?? undefined,
+              servicemenTotal: globalServicemenTotal ?? undefined,
+              waitingQueue: globalWaitingQueue ?? undefined,
+            }}
+            assignedBays={assignedBays}
+          />
+        );
       case "Team Chats":
         return <TeamChats />;
       case "Attendance":

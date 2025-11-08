@@ -8,6 +8,7 @@ import {
   Logger,
   BadRequestException,
   Put,
+  Patch,
   Param,
   Delete,
   UseGuards,
@@ -359,6 +360,20 @@ export class AdminController {
     } catch (e: any) {
       Logger.error('Failed to get audit logs', e, 'AdminController');
       throw new InternalServerErrorException(e && e.message ? e.message : 'Failed getting audit logs');
+    }
+  }
+
+  // Update session/player details (player nickname and assigned serviceman)
+  @UseGuards(AuthGuard)
+  @Patch('reports/sessions/:id')
+  async patchSession(@Param('id') id: string, @Body() body: any, @Req() req: Request & { user?: any }) {
+    try {
+      const adminId = req?.user?.sub ? Number(req.user.sub) : undefined;
+      return await this.adminService.updateSession(String(id), body || {}, adminId);
+    } catch (e: any) {
+      if (e instanceof BadRequestException) throw e;
+      Logger.error('Failed to patch session', e, 'AdminController');
+      throw new InternalServerErrorException(e?.message ?? 'Failed patching session');
     }
   }
 

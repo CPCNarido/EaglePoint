@@ -1343,6 +1343,80 @@ export class AdminService {
     return { ok: true, syncSummary };
   }
 
+  /**
+   * Update a session/player record by an identifier.
+   * id may be a receipt_number, a literal 'P<playerId>' string, or numeric player_id.
+   * body may contain: player_name (nickname) and serviceman_id (or servicemanId)
+   */
+  async updateSession(id: string, body: any = {}, adminId?: number) {
+    if (!id) throw new BadRequestException('Invalid session id');
+
+    // Attempt to resolve player by receipt_number or P<id> or numeric id
+    let player: any = null;
+    try {
+      // If id looks like P<number>
+      const m = /^P(\d+)$/i.exec(String(id));
+      if (m) {
+        const pid = Number(m[1]);
+        player = await this.prisma.player.findUnique({ where: { player_id: pid } as any }).catch(() => null);
+      }
+      if (!player) {
+        // try numeric id
+        const n = Number(id);
+        if (!Number.isNaN(n)) {
+          player = await this.prisma.player.findUnique({ where: { player_id: n } as any }).catch(() => null);
+        }
+      }
+      if (!player) {
+        // try receipt_number match
+        player = await this.prisma.player.findFirst({ where: { receipt_number: String(id) } }).catch(() => null);
+      }
+    } catch (e) {
+      void e;
+    }
+
+    if (!player) throw new BadRequestException('Session/player not found');
+
+    const updates: any = {};
+    if (body?.player_name !== undefined) {
+      updates.nickname = body.player_name ?? null;
+    }
+    if (Object.keys(updates).length > 0) {
+      try {
+        await this.prisma.player.update({ where: { player_id: player.player_id }, data: updates });
+      } catch (e: any) {
+        Logger.error('Failed updating player', e, 'AdminService');
+        throw new BadRequestException('Failed updating player');
+      }
+    }
+
+    // Update active bay assignment serviceman if provided
+    const svcId = body?.serviceman_id ?? body?.servicemanId ?? null;
+    if (svcId !== undefined && svcId !== null) {
+      try {
+        // find active assignment for this player
+        const assignment = await this.prisma.bayAssignment.findFirst({ where: { player_id: player.player_id, open_time: true } }).catch(() => null);
+        if (!assignment) throw new BadRequestException('Active assignment not found for player');
+        // If svcId is falsy, nullify serviceman; else connect
+        const data: any = {};
+        if (!svcId) data.serviceman_id = null;
+        else data.serviceman = { connect: { employee_id: Number(svcId) } };
+        // Use update to set serviceman relation
+        await this.prisma.bayAssignment.update({ where: { assignment_id: assignment.assignment_id }, data });
+      } catch (e: any) {
+        Logger.error('Failed updating assignment serviceman', e, 'AdminService');
+        throw new BadRequestException('Failed updating serviceman assignment');
+      }
+    }
+
+    // Best-effort logging
+    try {
+      await this.loggingService.writeLog(adminId ?? undefined, Role.Admin, `UpdateSession: player:${player.player_id}`, `player:${player.player_id}`);
+    } catch (e) { void e; }
+
+    return { ok: true };
+  }
+
   // Start a session on a bay by creating a Player and BayAssignment and marking bay Occupied.
   async startSession(bayNo: string, payload: any) {
     if (!bayNo) throw new BadRequestException('bayNo is required');
