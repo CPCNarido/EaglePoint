@@ -730,10 +730,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
   return (
     <ScrollView style={styles.scrollArea}>
       <View style={styles.contentBox}>
-        <DispatcherHeader title="Dashboard" subtitle={userName ? `Dispatcher ${userName}` : 'Dispatcher'} counts={counts} assignedBays={assignedBays} showBadges={true} />
-  <Text style={styles.welcomeText}>Welcome back, Dispatcher!</Text>
-  {/* Show only hour and minute to avoid frequent second updates */}
-  <Text style={styles.dateText}>{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Text>
+  <DispatcherHeader title="Dashboard" subtitle={userName ? `Dispatcher ${userName}` : 'Dispatcher'} counts={counts} assignedBays={assignedBays} showBadges={true} showBanner={true} bannerSource={require('../../../../assets/General/DispatcherHeroImg.png')} />
         <Text style={styles.sectionTitle}>Quick Overview</Text>
         {renderOverviewCards()}
 

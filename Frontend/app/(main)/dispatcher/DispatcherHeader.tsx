@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, ImageBackground } from 'react-native';
 
 export default function DispatcherHeader({
   title,
@@ -7,13 +7,28 @@ export default function DispatcherHeader({
   counts,
   assignedBays,
   showBadges = true,
+  showBanner = false,
+  bannerSource,
 }: {
   title: string;
   subtitle?: string;
   counts?: { availableBays?: number; totalBays?: number; servicemenAvailable?: number; servicemenTotal?: number; waitingQueue?: number };
   assignedBays?: number[] | null;
   showBadges?: boolean;
+  showBanner?: boolean;
+  bannerSource?: any;
 }) {
+  // derive a short name when subtitle may contain the role (e.g. "Dispatcher Anne")
+  const shortName = (() => {
+    try {
+      if (!subtitle) return '';
+      const m = String(subtitle).match(/^Dispatcher\s+(.+)$/);
+      if (m && m[1]) return m[1];
+      return subtitle;
+    } catch {
+      return subtitle ?? '';
+    }
+  })();
   return (
     <View style={styles.wrapper}>
       <View style={styles.container}>
@@ -35,8 +50,20 @@ export default function DispatcherHeader({
           </View>
         ) : null}
       </View>
-      {/* underline divider below header to match design */}
-      <View style={styles.divider} />
+      {/* optional banner below header (Dashboard uses this) */}
+      {showBanner ? (
+        <ImageBackground source={bannerSource ?? require('../../../assets/General/DispatcherHeroImg.png')} style={styles.banner} imageStyle={{ borderRadius: 10 }}>
+          <View style={styles.bannerOverlay}>
+            <Text style={styles.bannerTitle}>{shortName ? `Welcome back, Dispatcher ${shortName}` : `Welcome back, Dispatcher`}</Text>
+            <View>
+              <Text style={styles.bannerDate}>{new Date().toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}</Text>
+              <Text style={styles.bannerTime}>{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Text>
+            </View>
+          </View>
+        </ImageBackground>
+      ) : (
+        <View style={styles.divider} />
+      )}
     </View>
   );
 }
@@ -50,5 +77,11 @@ const styles = StyleSheet.create({
   badgeRow: { flexDirection: 'row' },
   badge: { backgroundColor: '#e6f0e5', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: '#c8e0c3', marginLeft: 8 },
   badgeText: { fontSize: 12, fontWeight: '600', color: '#314c31' },
-  divider: { height: 1, backgroundColor: '#e6e6e6', marginTop: 12 },
+  // Match Admin banner sizing and spacing
+  banner: { width: '100%', height: 190, borderRadius: 12, marginBottom: 8, backgroundColor: 'transparent'},
+  bannerOverlay: { flex: 1, justifyContent: 'space-between', padding: 16, alignItems: 'flex-start' },
+  bannerTitle: { color: '#fff', marginTop: 60, fontSize: 20, fontWeight: '800', textShadowColor: 'rgba(0,0,0,0.35)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 },
+  bannerDate: { color: '#fff', marginBottom: 4, marginTop: 6, fontSize: 13, fontWeight: '600' },
+  bannerTime: { color: '#fff', fontSize: 13, fontWeight: '600' },
+  divider: { height: 1, backgroundColor: '#e6e6e6', marginTop: 12,marginBottom: 16  },
 });
