@@ -200,11 +200,11 @@ export default function DispatcherDashboard() {
   const renderActiveTab = () => {
     switch (activeTab) {
       case "Dashboard":
-        return <DashboardTab />;
+        return <DashboardTab userName={userName} counts={{ availableBays: globalAvailableBays ?? undefined, totalBays: globalTotalBays ?? undefined, servicemenAvailable: globalServicemenAvailable ?? undefined, servicemenTotal: globalServicemenTotal ?? undefined, waitingQueue: globalWaitingQueue ?? undefined }} assignedBays={assignedBays} />;
       case "Bay Assignment":
-        return <BayAssignmentTab userName={userName} />;
+        return <BayAssignmentTab userName={userName} counts={{ availableBays: globalAvailableBays ?? undefined, totalBays: globalTotalBays ?? undefined, servicemenAvailable: globalServicemenAvailable ?? undefined, servicemenTotal: globalServicemenTotal ?? undefined, waitingQueue: globalWaitingQueue ?? undefined }} assignedBays={assignedBays} />;
       case "Shared Display":
-        return <SharedDisplayTab userName={userName} />;
+        return <SharedDisplayTab userName={userName} counts={{ availableBays: globalAvailableBays ?? undefined, totalBays: globalTotalBays ?? undefined, servicemenAvailable: globalServicemenAvailable ?? undefined, servicemenTotal: globalServicemenTotal ?? undefined, waitingQueue: globalWaitingQueue ?? undefined }} assignedBays={assignedBays} />;
       case "Session Control":
         return (
           <SessionControlTab
@@ -222,7 +222,7 @@ export default function DispatcherDashboard() {
       case "Team Chats":
         return <TeamChats />;
       case "Attendance":
-        return <AttendanceTab userName={userName} />;
+        return <AttendanceTab userName={userName} counts={{ availableBays: globalAvailableBays ?? undefined, totalBays: globalTotalBays ?? undefined, servicemenAvailable: globalServicemenAvailable ?? undefined, servicemenTotal: globalServicemenTotal ?? undefined, waitingQueue: globalWaitingQueue ?? undefined }} assignedBays={assignedBays} />;
       default:
         return null;
     }
@@ -230,6 +230,7 @@ export default function DispatcherDashboard() {
 
   return (
     <View style={styles.container}>
+      {/* Badges moved into per-tab headers via DispatcherHeader component */}
       {/* Sidebar */}
       <View style={styles.sidebar}>
         <View style={styles.logoContainer}>
@@ -282,24 +283,7 @@ export default function DispatcherDashboard() {
 
       {/* Main Content */}
       <View style={styles.mainContent}>
-        {/* Global badges shown for all dispatcher tabs except Team Chats.
-            Render absolutely positioned so badges align vertically with the
-            tab header inside each tab (same Y axis), rather than above it. */}
-        {activeTab !== 'Team Chats' ? (
-          <View style={styles.globalBadgesAbsolute} pointerEvents="none">
-            <View style={styles.globalBadges} pointerEvents="auto">
-              <View style={styles.badge}>
-                <Text style={styles.badgeText}>Available Bays: {globalAvailableBays != null ? `${globalAvailableBays}/${globalTotalBays ?? '-'}` : '-'}</Text>
-              </View>
-              <View style={styles.badge}>
-                <Text style={styles.badgeText}>Serviceman: {globalServicemenAvailable != null ? `${globalServicemenAvailable}/${globalServicemenTotal ?? '-'}` : '-'}</Text>
-              </View>
-              <View style={styles.badge}>
-                <Text style={styles.badgeText}>Waiting Queue: {globalWaitingQueue != null ? String(globalWaitingQueue) : '-'}</Text>
-              </View>
-            </View>
-          </View>
-        ) : null}
+        {/* Badges are now rendered inside each tab header via DispatcherHeader */}
 
         {renderActiveTab()}
       </View>

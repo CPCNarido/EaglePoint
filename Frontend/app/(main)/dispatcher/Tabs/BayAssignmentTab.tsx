@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import DispatcherHeader from "../DispatcherHeader";
 import {
   View,
   Text,
@@ -15,7 +16,7 @@ import {
   Easing,
 } from "react-native";
 
-export default function BayAssignmentScreen({ userName }: { userName?: string }) {
+export default function BayAssignmentScreen({ userName, counts, assignedBays }: { userName?: string; counts?: { availableBays?: number; totalBays?: number; servicemenAvailable?: number; servicemenTotal?: number; waitingQueue?: number }; assignedBays?: number[] | null }) {
   const [players, setPlayers] = useState<any[]>([]);
 
   const [servicemen, setServicemen] = useState<Array<{id:number;name:string;online?:boolean}>>([]);
@@ -312,14 +313,7 @@ export default function BayAssignmentScreen({ userName }: { userName?: string })
     <View style={styles.container}>
       {/* Main Section - no sidebar, full width */}
       <View style={styles.mainContent}>
-        {/* Header */}
-        <View style={styles.header}>
-          <View style={styles.headerLeft}>
-            <Text style={styles.headerTitle}>Bay Assignment</Text>
-            <Text style={styles.headerSubtitle}>{userName ? `Dispatcher ${userName}` : 'Dispatcher'}</Text>
-          </View>
-        </View>
-        <View style={styles.headerDivider} />
+        <DispatcherHeader title="Bay Assignment" subtitle={userName ? `Dispatcher ${userName}` : 'Dispatcher'} counts={counts} assignedBays={assignedBays} showBadges={true} />
 
         {/* Main Columns */}
         <View style={styles.columns}>

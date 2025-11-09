@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import DispatcherHeader from "../DispatcherHeader";
 import { View, Text, ScrollView, TouchableOpacity, Modal, StyleSheet, ActivityIndicator, useWindowDimensions, Platform, TextInput, Alert } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
 
@@ -39,7 +40,7 @@ const getStatusLabel = (status: string | null) => {
   return s;
 };
 
-export default function DashboardTab() {
+export default function DashboardTab({ userName, counts, assignedBays }: { userName?: string; counts?: { availableBays?: number; totalBays?: number; servicemenAvailable?: number; servicemenTotal?: number; waitingQueue?: number }; assignedBays?: number[] | null }) {
   const [overview, setOverview] = useState<any | null>(null);
   const [bays, setBays] = useState<BayRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -729,6 +730,7 @@ export default function DashboardTab() {
   return (
     <ScrollView style={styles.scrollArea}>
       <View style={styles.contentBox}>
+        <DispatcherHeader title="Dashboard" subtitle={userName ? `Dispatcher ${userName}` : 'Dispatcher'} counts={counts} assignedBays={assignedBays} showBadges={true} />
   <Text style={styles.welcomeText}>Welcome back, Dispatcher!</Text>
   {/* Show only hour and minute to avoid frequent second updates */}
   <Text style={styles.dateText}>{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</Text>

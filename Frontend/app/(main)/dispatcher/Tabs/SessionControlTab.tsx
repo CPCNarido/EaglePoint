@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import DispatcherHeader from "../DispatcherHeader";
 import { View, Text, TextInput, TouchableOpacity, FlatList, ScrollView, StyleSheet, Platform, Alert, Modal } from "react-native";
 
 export default function SessionControlTab({ userName, counts, assignedBays }: { userName?: string; counts?: { availableBays?: number; totalBays?: number; servicemenAvailable?: number; servicemenTotal?: number; waitingQueue?: number }; assignedBays?: number[] | null }) {
@@ -91,6 +92,25 @@ export default function SessionControlTab({ userName, counts, assignedBays }: { 
     const q = search.toLowerCase();
     return String(s.name).toLowerCase().includes(q) || String(s.id).toLowerCase().includes(q) || String(s.raw?.receipt || s.raw?.note || '').toLowerCase().includes(q);
   });
+
+  // Pagination (6 entries per page)
+  const [page, setPage] = useState<number>(1);
+  const pageSize = 6;
+  const totalPages = Math.max(1, Math.ceil((filteredSessions || []).length / pageSize));
+
+  useEffect(() => {
+    // reset to first page when search or sessions change
+    setPage(1);
+  }, [search, sessions.length]);
+
+  const paginatedSessions = (filteredSessions || []).slice((page - 1) * pageSize, page * pageSize);
+  // Add placeholders to keep table height stable (pageSize rows)
+  const displayData = (() => {
+    const items = Array.isArray(paginatedSessions) ? [...paginatedSessions] : [];
+    const missing = pageSize - items.length;
+    for (let i = 0; i < missing; i++) items.push({ __placeholder: true, _placeholderIndex: i });
+    return items;
+  })();
 
   // action UI state
   const [actionLoading, setActionLoading] = useState(false);
@@ -322,6 +342,20 @@ export default function SessionControlTab({ userName, counts, assignedBays }: { 
   };
 
   const renderSession = ({ item }: { item: any }) => {
+    if (item && item.__placeholder) {
+      return (
+        <View style={styles.row}>
+          <Text style={[styles.cell, { color: 'transparent' }]}>-</Text>
+          <Text style={[styles.cell, { color: 'transparent' }]}>-</Text>
+          <Text style={[styles.cell, { color: 'transparent' }]}>-</Text>
+          <Text style={[styles.cell, { color: 'transparent' }]}>-</Text>
+          <Text style={[styles.cell, { color: 'transparent' }]}>-</Text>
+          <View style={[styles.cell, styles.actionCell]}>
+            <Text style={{ color: 'transparent' }}>-</Text>
+          </View>
+        </View>
+      );
+    }
     const type = (item.type || '').toString();
     const isTimed = /timed/i.test(type);
     const isOpen = /open/i.test(type);
@@ -363,13 +397,7 @@ export default function SessionControlTab({ userName, counts, assignedBays }: { 
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <View style={styles.headerLeft}>
-          <Text style={styles.title}>Session Control</Text>
-          <Text style={styles.headerSubtitle}>{userName ? `Dispatcher ${userName}` : 'Dispatcher'}</Text>
-        </View>
-      </View>
-      <View style={styles.headerDivider} />
+      <DispatcherHeader title="Session Control" subtitle="Active sessions and quick controls" counts={counts} assignedBays={assignedBays} showBadges={true} />
 
       {/* Main Content: search, session list - keep header as-is above */}
   <View style={styles.main}>
@@ -429,12 +457,52 @@ export default function SessionControlTab({ userName, counts, assignedBays }: { 
         {/* Table Rows */}
         <FlatList
           ref={(r) => { listRef.current = r; }}
-          data={filteredSessions}
+          data={displayData}
           renderItem={renderSession}
-          keyExtractor={(item) => String(item.id)}
+          keyExtractor={(item, idx) => item && item.__placeholder ? `empty-${item._placeholderIndex}-${idx}` : String(item.id)}
           initialNumToRender={20}
           getItemLayout={(data, index) => ({ length: 56, offset: 56 * index, index })}
         />
+
+        {/* Pagination controls */}
+        <View style={styles.paginationRow}>
+          <TouchableOpacity
+            style={[styles.pagePrevButton, page === 1 ? styles.pageNavDisabled : {}]}
+            onPress={() => setPage((p) => Math.max(1, p - 1))}
+            disabled={page === 1}
+          >
+            <Text style={styles.pagePrevText}>Previous</Text>
+          </TouchableOpacity>
+
+          <View style={styles.pageList}>
+            {(() => {
+              const computePages = (cur: number, total: number) => {
+                if (total <= 4) return Array.from({ length: total }, (_, i) => i + 1);
+                if (cur <= 4) return [1, 2, 3, 4, 'ellipsis', total];
+                if (cur >= total - 2) return [1, 'ellipsis', total - 3, total - 2, total - 1, total];
+                return [cur - 2, cur - 1, cur, 'ellipsis', total];
+              };
+              const pages = computePages(page, totalPages);
+              return pages.map((p: any, idx: number) => {
+                if (p === 'ellipsis') return (<Text key={`ell-${idx}`} style={{ paddingHorizontal: 8 }}>…</Text>);
+                const num = Number(p);
+                return (
+                  <TouchableOpacity key={`page-${num}`} style={[styles.pageButton, page === num ? styles.pageButtonActive : {}]} onPress={() => setPage(num)}>
+                    <Text style={page === num ? styles.pageButtonTextActive : styles.pageButtonText}>{num}</Text>
+                  </TouchableOpacity>
+                );
+              });
+            })()}
+          </View>
+
+          <TouchableOpacity
+            style={[styles.pageNextButton, page === totalPages ? styles.pageNavDisabled : {}]}
+            onPress={() => setPage((p) => Math.min(totalPages, p + 1))}
+            disabled={page === totalPages}
+          >
+            <Text style={styles.pageNextText}>Next</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
         {/* Edit modal - edit player name and serviceman */}
@@ -564,4 +632,16 @@ const styles = StyleSheet.create({
   modalButtonConfirmText: { color: '#fff', fontWeight: '700' },
   toastBox: { position: 'absolute', bottom: 28, left: 24, right: 24, backgroundColor: 'rgba(0,0,0,0.8)', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 8, alignItems: 'center' },
   toastText: { color: '#fff', fontWeight: '600' },
+  /* Pagination styles (match BayManagement) */
+  paginationRow: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginVertical: 12 },
+  pageList: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
+  pageNavDisabled: { opacity: 0.45 },
+  pageButton: { backgroundColor: '#FFF', paddingVertical: 6, paddingHorizontal: 10, borderRadius: 6, borderWidth: 1, borderColor: '#E6E6E6', marginHorizontal: 4 },
+  pageButtonActive: { backgroundColor: '#C9DABF', borderColor: '#12411A' },
+  pageButtonText: { color: '#333', fontWeight: '700' },
+  pageButtonTextActive: { color: '#12411A', fontWeight: '800' },
+  pagePrevButton: { backgroundColor: '#17321d', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8, marginRight: 8 },
+  pagePrevText: { color: '#fff', fontWeight: '700' },
+  pageNextButton: { backgroundColor: '#C9DABF', paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8, marginLeft: 8 },
+  pageNextText: { color: '#12411A', fontWeight: '700' },
 });

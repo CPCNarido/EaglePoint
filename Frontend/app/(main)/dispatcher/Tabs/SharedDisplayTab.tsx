@@ -1,17 +1,11 @@
 import React from "react";
 import { View, Text, StyleSheet } from "react-native";
+import DispatcherHeader from "../DispatcherHeader";
 
-export default function SharedDisplayTab({ userName }: { userName?: string }) {
+export default function SharedDisplayTab({ userName, counts, assignedBays }: { userName?: string; counts?: { availableBays?: number; totalBays?: number; servicemenAvailable?: number; servicemenTotal?: number; waitingQueue?: number }; assignedBays?: number[] | null }) {
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <View style={styles.headerLeft}>
-          <Text style={styles.title}>Shared Display</Text>
-          <Text style={styles.headerSubtitle}>{userName ? `Dispatcher ${userName}` : 'Dispatcher'}</Text>
-        </View>
-      </View>
-      <View style={styles.headerDivider} />
-
+      <DispatcherHeader title="Shared Display" subtitle={userName ? `Dispatcher ${userName}` : 'Dispatcher'} counts={counts} assignedBays={assignedBays} showBadges={true} />
       <Text style={styles.text}>This tab controls the shared screen output.</Text>
     </View>
   );

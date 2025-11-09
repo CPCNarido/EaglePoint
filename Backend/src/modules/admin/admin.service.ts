@@ -1244,7 +1244,8 @@ export class AdminService {
       action,
     };
 
-    if (a.includes('end session')) {
+  // accept either 'end session' or short 'end' from various clients
+  if (a.includes('end') || a.includes('end session')) {
       // close any open assignments for this bay (handle possible DB inconsistency with multiple open rows)
       const openAssignments = await this.prisma.bayAssignment.findMany({
         where: { bay_id: bay.bay_id, open_time: true },
