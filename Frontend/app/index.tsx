@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -17,6 +17,7 @@ import {
 import Constants from 'expo-constants';
 import * as Network from 'expo-network';
 import { useRouter } from "expo-router";
+import Splash from './components/Splash';
 import { tw } from "react-native-tailwindcss";
 import { saveAccessToken } from './_lib/auth';
 import { useSettings } from './_lib/SettingsProvider';
@@ -53,6 +54,8 @@ const Login: React.FC = () => {
   const [errorModalVisible, setErrorModalVisible] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [errorDetails, setErrorDetails] = useState<any>(null);
+  // Call settings hook unconditionally to preserve hook order
+  const settings = useSettings();
 
   // derive dev host IP from expo manifest when possible (helps physical devices)
   const getDevHostIp = (): string | null => {
@@ -67,7 +70,7 @@ const Login: React.FC = () => {
   };
 
   const resolveBaseUrl = () => {
-    // Use explicit android host and port per project config.
+    // Use explicit android host and port per project config.p
     if (Platform.OS === 'android') return 'http://10.127.147.53:3000';
     if (Platform.OS === 'ios') return 'http://localhost:3000';
     if (Platform.OS === 'web') return 'http://localhost:3000';
@@ -304,6 +307,12 @@ const Login: React.FC = () => {
       }
 
       console.info('Login successful', { user: profile ?? null, destination: data?.destination });
+      // show a brief splash/transition after successful login so the user sees the app branding
+      try {
+        setShowTransitionSplash(true);
+        // keep the splash visible for a short moment so it feels like a transition
+        await new Promise((r) => setTimeout(r, 700));
+      } catch {}
       router.push(data?.destination || "/admin");
     } catch (err: any) {
       const isAbort = err?.name === 'AbortError';
@@ -325,12 +334,60 @@ const Login: React.FC = () => {
     }
   };
 
+  // initial splash shown on app start before showing login form
+  const [showInitialSplash, setShowInitialSplash] = useState(true);
+  const [showTransitionSplash, setShowTransitionSplash] = useState(false);
+  const [showSplashSticky, setShowSplashSticky] = useState(false);
+  const [showSplashRaw, setShowSplashRaw] = useState(false);
+
+  useEffect(() => {
+    // hide initial splash after a short delay (feel free to adjust duration)
+    const t = setTimeout(() => { if (!showSplashSticky) setShowInitialSplash(false); }, 1200);
+    return () => clearTimeout(t);
+  }, [showSplashSticky]);
+
+  // If showing the initial splash, render it full-screen before the login UI
+  if (showInitialSplash) return (
+    <Splash
+      onClose={() => { setShowInitialSplash(false); setShowSplashSticky(false); setShowSplashRaw(false); }}
+      sealSource={{ uri: 'https://via.placeholder.com/88x88/17321d/ffffff?text=Seal' }}
+      noOverlayBackground={showSplashRaw}
+    />
+  );
+
+  // If a transition splash is requested (after pressing Login), show it full-screen while navigating
+  if (showTransitionSplash) return (
+    <Splash
+      message="Signing in..."
+      onClose={() => { setShowTransitionSplash(false); setShowSplashSticky(false); setShowSplashRaw(false); }}
+      sealSource={{ uri: 'https://via.placeholder.com/88x88/17321d/ffffff?text=Seal' }}
+      noOverlayBackground={showSplashRaw}
+    />
+  );
+
   return (
     <ImageBackground
       source={require("../assets/Login Page/LOGIN TABLET.png")}
       style={[tw.flex1, { width: "100%", height: "100%" }]}
       resizeMode="cover"
     >
+      {/* Dev-only: floating button to preview the splash screen for UI debugging */}
+      {typeof __DEV__ !== 'undefined' && __DEV__ ? (
+        <>
+        <TouchableOpacity
+          onPress={() => { setShowInitialSplash(true); setShowSplashSticky(true); setShowSplashRaw(false); }}
+          style={{ position: 'absolute', top: 32, right: 12, zIndex: 2000, backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6 }}
+        >
+          <Text style={{ color: '#fff', fontWeight: '700' }}>Show Splash</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => { setShowInitialSplash(true); setShowSplashSticky(true); setShowSplashRaw(true); }}
+          style={{ position: 'absolute', top: 72, right: 12, zIndex: 2000, backgroundColor: 'rgba(255,255,255,0.06)', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6 }}
+        >
+          <Text style={{ color: '#fff', fontWeight: '700' }}>Show Raw BG</Text>
+        </TouchableOpacity>
+        </>
+      ) : null}
       <View style={[tw.flex1, tw.justifyCenter, tw.itemsCenter]}>
           <View
             style={[
@@ -355,7 +412,7 @@ const Login: React.FC = () => {
           />
           <Text style={[tw.text2xl, tw.fontBold, tw.textCenter]}>STAFF LOGIN</Text>
           <Text style={[tw.textCenter, tw.textGray500, tw.fontMedium, tw.mB10]}>
-            Welcome to {useSettings().siteName} Management System
+            Welcome to {settings?.siteName ?? 'EaglePoint'} Management System
           </Text>
 
           <View style={tw.mB4}>

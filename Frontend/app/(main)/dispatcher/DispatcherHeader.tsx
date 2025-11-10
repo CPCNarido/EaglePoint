@@ -52,7 +52,7 @@ export default function DispatcherHeader({
       </View>
       {/* optional banner below header (Dashboard uses this) */}
       {showBanner ? (
-        <ImageBackground source={bannerSource ?? require('../../../assets/General/DispatcherHeroImg.png')} style={styles.banner} imageStyle={{ borderRadius: 10 }}>
+          <ImageBackground source={bannerSource ?? { uri: 'https://via.placeholder.com/1200x180/17321d/ffffff?text=Eagle+Point' }} style={styles.banner} imageStyle={{ borderRadius: 10 }}>
           <View style={styles.bannerOverlay}>
             <Text style={styles.bannerTitle}>{shortName ? `Welcome back, Dispatcher ${shortName}` : `Welcome back, Dispatcher`}</Text>
             <View>
