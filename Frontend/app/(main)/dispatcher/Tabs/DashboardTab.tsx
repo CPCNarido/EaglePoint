@@ -1,6 +1,9 @@
 import React, { useEffect, useState } from "react";
 import DispatcherHeader from "../DispatcherHeader";
-import { View, Text, ScrollView, TouchableOpacity, Modal, StyleSheet, ActivityIndicator, useWindowDimensions, Platform, TextInput, Alert } from "react-native";
+import { View, Text, ScrollView, TouchableOpacity, Modal, StyleSheet, ActivityIndicator, useWindowDimensions, Platform, TextInput } from "react-native";
+import ErrorModal from '../../../components/ErrorModal';
+import ConfirmModal from '../../../components/ConfirmModal';
+import { friendlyMessageFromThrowable } from '../../../lib/errorUtils';
 import { MaterialIcons } from "@expo/vector-icons";
 import { fetchWithAuth } from '../../../_lib/fetchWithAuth';
 
@@ -72,6 +75,29 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
   // selection mode: when true tapping a bay toggles selection instead of opening per-bay modal
   const [isSelecting, setIsSelecting] = useState<boolean>(false);
   const { width } = useWindowDimensions();
+
+  // centralized error modal state
+  const [errorModalVisible, setErrorModalVisible] = useState(false);
+  const [errorModalMessage, setErrorModalMessage] = useState<string>('');
+  const [errorModalType, setErrorModalType] = useState<any | null>(null);
+  const [errorModalDetails, setErrorModalDetails] = useState<any>(null);
+  const [errorModalTitle, setErrorModalTitle] = useState<string | undefined>(undefined);
+
+  const showError = (err: any, fallback?: string) => {
+    const friendly = friendlyMessageFromThrowable(err, fallback ?? 'An error occurred');
+    setErrorModalType(friendly?.type ?? 'other');
+    setErrorModalMessage(friendly?.message ?? (fallback ?? 'An error occurred'));
+    setErrorModalDetails(friendly?.details ?? (typeof err === 'string' ? err : null));
+    setErrorModalTitle(fallback ?? undefined);
+    setErrorModalVisible(true);
+  };
+  // Confirm modal state
+  const [confirmVisible, setConfirmVisible] = useState(false);
+  const [confirmConfig, setConfirmConfig] = useState<{ title?: string; message?: string; confirmText?: string; cancelText?: string; onConfirm?: () => void }>({});
+  const showConfirm = (cfg: { title?: string; message?: string; confirmText?: string; cancelText?: string; onConfirm?: () => void }) => {
+    setConfirmConfig(cfg || {});
+    setConfirmVisible(true);
+  };
   
   const getPageSizeLocal = () => minimizeBays ? 20 : pageSize;
 
@@ -437,7 +463,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
   const performBatchEnd = React.useCallback(async () => {
     try {
       if (!batchSelectedBays || batchSelectedBays.length === 0) {
-        try { Alert.alert('Batch End', 'No bays selected.'); } catch {}
+        try { showError('No bays selected'); } catch {}
         return;
       }
       setBatchEnding(true);
@@ -463,11 +489,11 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
       setBatchEnding(false);
       // after batch end, exit selection mode and clear selections
       setIsSelecting(false);
-      setBatchSelectedBays([]);
-      try { Alert.alert('Batch End Results', `Completed: ${success}\nFailed: ${failed}`); } catch {}
+  setBatchSelectedBays([]);
+  try { showError(`Completed: ${success}\nFailed: ${failed}`, 'Batch End Results'); } catch {}
     } catch (e) {
       setBatchEnding(false);
-      try { Alert.alert('Batch End', 'An error occurred performing the batch end.'); } catch {}
+      try { showError('An error occurred performing the batch end.'); } catch {}
     }
   }, [batchSelectedBays, endSessionOnServer, fetchOverview, fetchBays]);
 
@@ -790,18 +816,16 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
               <TouchableOpacity style={{ backgroundColor: batchEnding ? '#CCC' : '#C62828', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6 }} onPress={() => {
                 if (batchEnding) return;
                 if (!batchSelectedBays || batchSelectedBays.length === 0) {
-                  try { Alert.alert('No selection', 'No bays selected. Tap bay blocks to select.'); } catch {}
+                  try { showError('No bays selected. Tap bay blocks to select.'); } catch {}
                   return;
                 }
-                Alert.alert(
-                  'Confirm Batch End',
-                  `End ${batchSelectedBays.length} selected bay(s)? This will attempt to end the session for each selected bay.`,
-                  [
-                    { text: 'Cancel', style: 'cancel' },
-                    { text: 'End', onPress: () => { try { performBatchEnd(); } catch {} } },
-                  ],
-                  { cancelable: true },
-                );
+                showConfirm({
+                  title: 'Confirm Batch End',
+                  message: `End ${batchSelectedBays.length} selected bay(s)? This will attempt to end the session for each selected bay.`,
+                  confirmText: 'End',
+                  cancelText: 'Cancel',
+                  onConfirm: () => { try { performBatchEnd(); } catch {} },
+                });
               }} disabled={batchEnding}>
                 {batchEnding ? <ActivityIndicator color="#fff" /> : <Text style={{ color: '#fff', fontWeight: '700' }}>{`End Selected (${batchSelectedBays.length || 0})`}</Text>}
               </TouchableOpacity>
@@ -855,7 +879,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
                                   } else {
                                     // server didn't accept: refresh overview to reflect true state
                                     try { await fetchOverview(); await fetchBays(); } catch {}
-                                    try { Alert.alert('Error', 'Failed to end session. Server did not accept the request.'); } catch {}
+                                    try { showError('Failed to end session. Server did not accept the request.'); } catch {}
                                   }
                                 } catch (e) {
                                   try { fetchOverview(); } catch {}
@@ -887,35 +911,33 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
                             <TouchableOpacity style={[styles.modalButton, styles.modalButtonConfirm]} onPress={() => {
                               // Confirm before starting session for a reserved bay
                               try {
-                                Alert.alert(
-                                  'Start Session',
-                                  'Are you sure you want to start the session for this reserved bay?',
-                                  [
-                                    { text: 'Cancel', style: 'cancel' },
-                                    { text: 'Start', onPress: async () => {
-                                      setActionLoading(true);
-                                      try {
-                                        const bayNum = selectedBay.bay_number ?? selectedBay.bay_id;
-                                        const baseUrl = await resolveBaseUrl();
-                                        const res = await postJson(`${baseUrl}/api/admin/bays/${bayNum}/start`, { nickname: selectedBay.player_name ?? null });
-                                        if (res && res.ok) {
-                                          setBays((prev) => prev.map(b => (String(b.bay_number) === String(bayNum) || String(b.bay_id) === String(bayNum)) ? { ...b, status: 'Occupied', player_name: selectedBay.player_name ?? null, start_time: new Date().toISOString() } : b));
-                                          try { setStopwatches((prev) => ({ ...prev, [String(bayNum)]: Date.now() })); } catch {}
-                                          try { await fetchOverview(); await fetchBays(); } catch {}
-                                        } else {
-                                          try { await fetchOverview(); await fetchBays(); } catch {}
-                                          try { Alert.alert('Error', 'Failed to start session. Server did not accept the request.'); } catch {}
-                                        }
-                                      } catch (e) {
-                                        try { await fetchOverview(); } catch {}
-                                      } finally {
-                                        setActionLoading(false);
-                                        setSelectedBay(null);
+                                showConfirm({
+                                  title: 'Start Session',
+                                  message: 'Are you sure you want to start the session for this reserved bay?',
+                                  confirmText: 'Start',
+                                  cancelText: 'Cancel',
+                                  onConfirm: async () => {
+                                    setActionLoading(true);
+                                    try {
+                                      const bayNum = selectedBay.bay_number ?? selectedBay.bay_id;
+                                      const baseUrl = await resolveBaseUrl();
+                                      const res = await postJson(`${baseUrl}/api/admin/bays/${bayNum}/start`, { nickname: selectedBay.player_name ?? null });
+                                      if (res && res.ok) {
+                                        setBays((prev) => prev.map(b => (String(b.bay_number) === String(bayNum) || String(b.bay_id) === String(bayNum)) ? { ...b, status: 'Occupied', player_name: selectedBay.player_name ?? null, start_time: new Date().toISOString() } : b));
+                                        try { setStopwatches((prev) => ({ ...prev, [String(bayNum)]: Date.now() })); } catch {}
+                                        try { await fetchOverview(); await fetchBays(); } catch {}
+                                      } else {
+                                        try { await fetchOverview(); await fetchBays(); } catch {}
+                                        try { showError('Failed to start session. Server did not accept the request.'); } catch {}
                                       }
-                                    } },
-                                  ],
-                                  { cancelable: true },
-                                );
+                                    } catch (e) {
+                                      try { await fetchOverview(); } catch {}
+                                    } finally {
+                                      setActionLoading(false);
+                                      setSelectedBay(null);
+                                    }
+                                  }
+                                });
                               } catch (e) {
                                 // fallback: attempt to start without confirmation
                                 (async () => {
@@ -930,7 +952,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
                                       try { await fetchOverview(); await fetchBays(); } catch {}
                                     } else {
                                       try { await fetchOverview(); await fetchBays(); } catch {}
-                                      try { Alert.alert('Error', 'Failed to start session. Server did not accept the request.'); } catch {}
+                                      try { showError('Failed to start session. Server did not accept the request.'); } catch {}
                                     }
                                   } catch (err) {
                                     try { await fetchOverview(); } catch {}
@@ -994,7 +1016,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
                       try { await fetchOverview(); await fetchBays(); } catch {}
                     } else {
                       try { await fetchOverview(); await fetchBays(); } catch {}
-                      try { Alert.alert('Error', 'Failed to reserve bay. Server did not accept the request.'); } catch {}
+                      try { showError('Failed to reserve bay. Server did not accept the request.'); } catch {}
                     }
                   } catch (e) {
                     try { fetchOverview(); } catch {}
@@ -1035,7 +1057,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
                       try { await fetchOverview(); await fetchBays(); } catch {}
                     } else {
                       try { await fetchOverview(); await fetchBays(); } catch {}
-                      try { Alert.alert('Error', 'Failed to start open time. Server did not accept the request.'); } catch {}
+                      try { showError('Failed to start open time. Server did not accept the request.'); } catch {}
                     }
                   } catch (e) {
                     try { fetchOverview(); } catch {}
@@ -1074,7 +1096,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
                       try { await fetchOverview(); await fetchBays(); } catch {}
                     } else {
                       try { await fetchOverview(); await fetchBays(); } catch {}
-                      try { Alert.alert('Error', 'Failed to start session. Server did not accept the request.'); } catch {}
+                      try { showError('Failed to start session. Server did not accept the request.'); } catch {}
                     }
                   } catch (e) {
                     try { fetchOverview(); } catch {}
@@ -1091,6 +1113,8 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
           </View>
         </Modal>
       </View>
+  <ErrorModal visible={errorModalVisible} errorType={errorModalType} errorMessage={errorModalMessage} errorDetails={errorModalDetails} onClose={() => setErrorModalVisible(false)} />
+  <ConfirmModal visible={confirmVisible} title={confirmConfig.title} message={confirmConfig.message} confirmText={confirmConfig.confirmText} cancelText={confirmConfig.cancelText} onConfirm={() => { try { confirmConfig.onConfirm && confirmConfig.onConfirm(); } catch {} setConfirmVisible(false); }} onCancel={() => setConfirmVisible(false)} />
     </ScrollView>
   );
 }
@@ -1144,17 +1168,17 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.4)',
     zIndex: 1000,
   },
-  modalBox: { backgroundColor: '#fff', borderRadius: 10, padding: 20, width: '80%', maxWidth: 720 },
+  modalBox: { backgroundColor: '#fff', borderRadius: 10, padding: 20, width: '50%', maxWidth: 720 },
   modalTitle: { fontSize: 18, fontWeight: '700', marginBottom: 8 },
   modalText: { fontSize: 14, color: '#333', marginBottom: 6 },
   // Standard modal button group (matches app-wide modal style)
-  modalButtons: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 10 },
+  modalButtons: { flexDirection: 'row', justifyContent: 'flex-end', gap: 5, marginTop: 10 },
   modalButton: { paddingVertical: 8, paddingHorizontal: 14, borderRadius: 6 },
   modalButtonCancel: { backgroundColor: '#EEE', marginRight: 8 },
   modalButtonCancelText: { color: '#333', fontWeight: '600' },
-  modalButtonConfirm: { backgroundColor: '#C62828' },
+  modalButtonConfirm: { backgroundColor: '#C62828', marginRight: 8 },
   modalButtonText: { color: '#fff', fontWeight: '600' },
-  closeButton: { marginTop: 10, backgroundColor: '#007bff', paddingVertical: 10, borderRadius: 8, alignItems: 'center' },
+  closeButton: { marginTop: 10, backgroundColor: '#007bff', paddingVertical: 10, borderRadius: 8, alignItems: 'center', marginRight: 8 },
   closeButtonText: { color: '#fff', fontWeight: '700' },
   badgeCircle: { position: 'absolute', top: -8, right: -8, backgroundColor: '#333', minWidth: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
   badgeText: { color: '#fff', fontSize: 12, fontWeight: '700' },

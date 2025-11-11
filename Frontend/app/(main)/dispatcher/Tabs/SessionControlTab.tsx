@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from "react";
 import DispatcherHeader from "../DispatcherHeader";
-import { View, Text, TextInput, TouchableOpacity, FlatList, ScrollView, StyleSheet, Platform, Alert, Modal } from "react-native";
+import { View, Text, TextInput, TouchableOpacity, FlatList, ScrollView, StyleSheet, Platform, Modal } from "react-native";
+import ErrorModal from '../../../components/ErrorModal';
+import { friendlyMessageFromThrowable } from '../../../lib/errorUtils';
 import { fetchWithAuth } from '../../../_lib/fetchWithAuth';
 
 export default function SessionControlTab({ userName, counts, assignedBays }: { userName?: string; counts?: { availableBays?: number; totalBays?: number; servicemenAvailable?: number; servicemenTotal?: number; waitingQueue?: number }; assignedBays?: number[] | null }) {
@@ -116,6 +118,20 @@ export default function SessionControlTab({ userName, counts, assignedBays }: { 
   // action UI state
   const [actionLoading, setActionLoading] = useState(false);
 
+  // central error modal state
+  const [errorModalVisible, setErrorModalVisible] = useState(false);
+  const [errorModalMessage, setErrorModalMessage] = useState('');
+  const [errorModalType, setErrorModalType] = useState<'credentials'|'network'|'server'|'timeout'|'other'|null>(null);
+  const [errorModalDetails, setErrorModalDetails] = useState<any>(null);
+
+  const showError = (err: any, fallback?: string) => {
+    const friendly = friendlyMessageFromThrowable(err, fallback ?? 'An error occurred');
+    setErrorModalType(friendly.type ?? null);
+    setErrorModalMessage(friendly.message ?? (fallback ?? 'An error occurred'));
+    setErrorModalDetails(friendly.details ?? (typeof err === 'string' ? err : null));
+    setErrorModalVisible(true);
+  };
+
   // in-component toast for non-blocking success feedback
   const [toastVisible, setToastVisible] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
@@ -179,12 +195,12 @@ export default function SessionControlTab({ userName, counts, assignedBays }: { 
         await fetchSessions();
         setEditModalVisible(false);
         showToast('Session updated');
-      } else {
+        } else {
         const txt = await r.text().catch(() => 'Failed');
-        Alert.alert('Error', `Edit failed: ${txt}`);
+        showError(`Edit failed: ${txt}`);
       }
     } catch (e) {
-      Alert.alert('Error', String(e));
+      showError(e);
     } finally { setActionLoading(false); }
   };
 
@@ -220,12 +236,12 @@ export default function SessionControlTab({ userName, counts, assignedBays }: { 
         await fetchSessions();
         setExtendModalVisible(false);
         showToast(`Extended ${Number(extendMinutes || 0)}m`);
-      } else {
+        } else {
         const txt = await r.text().catch(() => 'Failed');
-        Alert.alert('Error', `Extend failed: ${txt}`);
+        showError(`Extend failed: ${txt}`);
       }
     } catch (e) {
-      Alert.alert('Error', String(e));
+      showError(e);
     } finally { setActionLoading(false); }
   };
 
@@ -259,12 +275,12 @@ export default function SessionControlTab({ userName, counts, assignedBays }: { 
       if (r.ok) {
         await fetchSessions();
         showToast('Session ended');
-      } else {
+        } else {
         const txt = await r.text().catch(() => 'Failed');
-        Alert.alert('Error', `End failed: ${txt}`);
+        showError(`End failed: ${txt}`);
       }
     } catch (e) {
-      Alert.alert('Error', String(e));
+      showError(e);
     } finally { setActionLoading(false); }
   };
 
@@ -298,12 +314,12 @@ export default function SessionControlTab({ userName, counts, assignedBays }: { 
       if (r.ok) {
         await fetchSessions();
         showToast('Session started');
-      } else {
+        } else {
         const txt = await r.text().catch(() => 'Failed');
-        Alert.alert('Error', `Start failed: ${txt}`);
+        showError(`Start failed: ${txt}`);
       }
     } catch (e) {
-      Alert.alert('Error', String(e));
+      showError(e);
     } finally { setActionLoading(false); }
   };
 
@@ -419,7 +435,7 @@ export default function SessionControlTab({ userName, counts, assignedBays }: { 
                     try { listRef.current.scrollToIndex({ index: idx, animated: true }); }
                     catch { /* fallthrough */ }
                   } else {
-                    Alert.alert('No session', `No active session found for bay ${b}`);
+                    showError(`No active session found for bay ${b}`);
                   }
                 }}
               >
@@ -572,6 +588,13 @@ export default function SessionControlTab({ userName, counts, assignedBays }: { 
             <Text style={styles.toastText}>{toastMessage}</Text>
           </View>
         )}
+        <ErrorModal
+          visible={errorModalVisible}
+          errorType={errorModalType}
+          errorMessage={errorModalMessage}
+          errorDetails={errorModalDetails}
+          onClose={() => setErrorModalVisible(false)}
+        />
     </View>
   );
 }

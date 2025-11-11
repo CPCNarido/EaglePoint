@@ -402,12 +402,12 @@ export default function AuditLogs() {
             </View>
 
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              <TouchableOpacity
+                  <TouchableOpacity
                 style={[styles.applyButton, { backgroundColor: '#2E7D32' }]}
                 onPress={() => {
                   const okDate = (s: string) => !s || /^\d{4}-\d{2}-\d{2}$/.test(s);
                   if (!okDate(startDate) || !okDate(endDate)) {
-                    alert('Please enter dates in YYYY-MM-DD format');
+                    setFetchError('Please enter dates in YYYY-MM-DD format');
                     return;
                   }
                   fetchLogs();

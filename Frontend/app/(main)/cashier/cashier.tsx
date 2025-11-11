@@ -5,14 +5,13 @@ import {
   TouchableOpacity,
   ScrollView,
   StyleSheet,
-  Alert,
   Platform,
-  Modal,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { MaterialIcons as Icon } from "@expo/vector-icons";
 import { logoutAndClear } from '../../_lib/auth';
 import { useSettings } from '../../lib/SettingsProvider';
+import ConfirmModal from '../../components/ConfirmModal';
 
 type SidebarButtonProps = {
   icon: string;
@@ -41,15 +40,8 @@ export default function CashierLayout() {
   };
 
   const handleLogout = () => {
-    if (Platform.OS === "web") {
-      setLogoutModalVisible(true);
-      return;
-    }
-
-    Alert.alert("Logout", "Are you sure you want to log out?", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Log out", style: "destructive", onPress: performLogout },
-    ]);
+    // Use the same modal-based logout UX across platforms
+    setLogoutModalVisible(true);
   };
 
   const renderContent = () => {
@@ -108,36 +100,16 @@ export default function CashierLayout() {
       {/* Main Content */}
       <View style={styles.mainContent}>{renderContent()}</View>
 
-      {/* Logout Modal (Web) */}
-      <Modal
+      {/* Logout confirmation */}
+      <ConfirmModal
         visible={logoutModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setLogoutModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalBox}>
-            <Text style={styles.modalTitle}>Confirm Logout</Text>
-            <Text style={styles.modalText}>
-              Are you sure you want to log out?
-            </Text>
-            <View style={styles.modalButtons}>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.modalButtonCancel]}
-                onPress={() => setLogoutModalVisible(false)}
-              >
-                <Text style={styles.modalButtonCancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.modalButtonConfirm]}
-                onPress={performLogout}
-              >
-                <Text style={styles.modalButtonText}>Log out</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
+        title="Confirm Logout"
+        message="Are you sure you want to log out?"
+        confirmText="Log out"
+        cancelText="Cancel"
+        onConfirm={performLogout}
+        onCancel={() => setLogoutModalVisible(false)}
+      />
     </View>
   );
 }

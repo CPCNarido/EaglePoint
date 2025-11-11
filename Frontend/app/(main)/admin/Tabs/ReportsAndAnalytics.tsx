@@ -1,7 +1,9 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Platform, Dimensions, useWindowDimensions, Alert, TextInput } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Platform, Dimensions, useWindowDimensions, TextInput } from 'react-native';
 import { tw } from 'react-native-tailwindcss';
 import { useSettings } from '../../../lib/SettingsProvider';
+import ErrorModal from '../../../components/ErrorModal';
+import { friendlyMessageFromThrowable } from '../../../lib/errorUtils';
 
 export default function ReportsAndAnalytics() {
   useSettings();
@@ -12,6 +14,11 @@ export default function ReportsAndAnalytics() {
   const [summary, setSummary] = useState<any>(null);
   const [sessions, setSessions] = useState<any[]>([]);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  // centralized error modal state
+  const [errorModalVisible, setErrorModalVisible] = useState(false);
+  const [errorModalMessage, setErrorModalMessage] = useState<string>('');
+  const [errorModalType, setErrorModalType] = useState<any | null>(null);
+  const [errorModalDetails, setErrorModalDetails] = useState<any>(null);
   const baseDefault = Platform.OS === 'android' ? 'http://10.127.147.53:3000' : 'http://localhost:3000';
   const baseUrl = (global as any).__EAGLEPOINT_BASE_URL__ ?? baseDefault;
   const screenWidth = Dimensions.get('window').width - 60; // container padding
@@ -400,11 +407,11 @@ export default function ReportsAndAnalytics() {
       const { exportReport } = await import('../../../lib/reportExport');
   const typeToUse = reportType || selectedReport;
   const res = await exportReport({ baseUrl, reportType: typeToUse, format: 'pdf' } as any);
-      if (!res.ok) alert('Export failed' + (res.error ? ': ' + res.error : ''));
+      if (!res.ok) showError('Export failed' + (res.error ? ': ' + res.error : ''));
     } catch (e) {
       // eslint-disable-next-line no-console
       console.error('Export error', e);
-      alert('Export failed');
+      showError(e, 'Export failed');
     }
   };
 
@@ -420,7 +427,7 @@ export default function ReportsAndAnalytics() {
     } catch (e) {
       // eslint-disable-next-line no-console
       console.error('Print error', e);
-      alert('Print failed');
+      showError('Print failed');
     }
   };
 
@@ -436,7 +443,7 @@ export default function ReportsAndAnalytics() {
       const body = { reportType: typeToUse };
       const res = await fetch(fileModeUrl, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       if (!res.ok) {
-        alert('Failed to generate preview: ' + res.status);
+        showError('Failed to generate preview: ' + res.status);
         return;
       }
       const contentType = res.headers.get('Content-Type') || '';
@@ -447,7 +454,7 @@ export default function ReportsAndAnalytics() {
       }
       if (!blob) blob = await res.blob().catch(() => null);
       if (!blob) {
-        alert('Preview failed: no PDF returned');
+        showError('Preview failed: no PDF returned');
         return;
       }
       const url = URL.createObjectURL(blob);
@@ -461,8 +468,16 @@ export default function ReportsAndAnalytics() {
       setTimeout(() => { try { URL.revokeObjectURL(url); } catch {} }, 60_000);
     } catch (e) {
       console.error('Preview error', e);
-      alert('Failed to open preview');
+      showError(e, 'Failed to open preview');
     }
+  };
+
+  const showError = (err: any, fallback?: string) => {
+    const friendly = friendlyMessageFromThrowable(err, fallback ?? 'An error occurred');
+    setErrorModalType(friendly?.type ?? 'other');
+    setErrorModalMessage(friendly?.message ?? (fallback ?? 'An error occurred'));
+    setErrorModalDetails(friendly?.details ?? (typeof err === 'string' ? err : null));
+    setErrorModalVisible(true);
   };
 
   // Overview modal removed - simplified UI
@@ -968,6 +983,7 @@ export default function ReportsAndAnalytics() {
 
       </View>
       {/* Overview functionality removed */}
+      <ErrorModal visible={errorModalVisible} errorType={errorModalType} errorMessage={errorModalMessage} errorDetails={errorModalDetails} onClose={() => setErrorModalVisible(false)} />
     </ScrollView>
   );
 }

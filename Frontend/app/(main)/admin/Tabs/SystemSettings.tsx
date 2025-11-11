@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, Platform, ActivityIndicator, Alert, Modal, Pressable, Switch } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, Platform, ActivityIndicator, Modal, Pressable, Switch } from 'react-native';
+import ErrorModal from '../../../components/ErrorModal';
+import { friendlyMessageFromThrowable } from '../../../lib/errorUtils';
 import { tw } from 'react-native-tailwindcss';
 
 export default function SystemSettings() {
@@ -28,6 +30,22 @@ export default function SystemSettings() {
 
   const baseDefault = Platform.OS === 'android' ? 'http://10.127.147.53:3000' : 'http://localhost:3000';
   const baseUrl = (global as any).__EAGLEPOINT_BASE_URL__ ?? baseDefault;
+
+  // centralized error modal state
+  const [errorModalVisible, setErrorModalVisible] = useState(false);
+  const [errorModalMessage, setErrorModalMessage] = useState<string>('');
+  const [errorModalType, setErrorModalType] = useState<any | null>(null);
+  const [errorModalDetails, setErrorModalDetails] = useState<any>(null);
+  const [errorModalTitle, setErrorModalTitle] = useState<string | undefined>(undefined);
+
+  const showError = (err: any, fallback?: string) => {
+    const friendly = friendlyMessageFromThrowable(err, fallback ?? 'An error occurred');
+    setErrorModalType(friendly?.type ?? 'other');
+    setErrorModalMessage(friendly?.message ?? (fallback ?? 'An error occurred'));
+    setErrorModalDetails(friendly?.details ?? (typeof err === 'string' ? err : null));
+    setErrorModalTitle(fallback ?? undefined);
+    setErrorModalVisible(true);
+  };
 
   // fetchSettings invoked once on mount; intentionally skipping exhaustive-deps
   /* eslint-disable react-hooks/exhaustive-deps */
@@ -68,15 +86,15 @@ export default function SystemSettings() {
     const tee = Number(teeInterval);
     const bucket = Number(bucketWarning);
     if (!Number.isFinite(total) || !Number.isInteger(total) || total <= 0) {
-      Alert.alert('Validation', 'Total Available Bays must be a positive integer');
+      showError('Total Available Bays must be a positive integer', 'Validation');
       return;
     }
     if (!Number.isFinite(tee) || tee <= 0) {
-      Alert.alert('Validation', 'Tee interval must be a positive number');
+      showError('Tee interval must be a positive number', 'Validation');
       return;
     }
     if (!Number.isFinite(bucket) || bucket < 0) {
-      Alert.alert('Validation', 'Ball bucket warning threshold must be 0 or greater');
+      showError('Ball bucket warning threshold must be 0 or greater', 'Validation');
       return;
     }
 
@@ -93,7 +111,7 @@ export default function SystemSettings() {
 
   const saveGeneral = async () => {
     if (!siteName || String(siteName).trim().length === 0) {
-      Alert.alert('Validation', 'Site name cannot be empty');
+      showError('Site name cannot be empty', 'Validation');
       return;
     }
     const payload: any = {
@@ -107,10 +125,10 @@ export default function SystemSettings() {
   };
 
   const savePricing = async () => {
-    const t = Number(timedRate);
-    const o = Number(openRate);
-    if (!Number.isFinite(t) || t < 0) { Alert.alert('Validation', 'Timed session rate must be 0 or greater'); return; }
-    if (!Number.isFinite(o) || o < 0) { Alert.alert('Validation', 'Open time rate must be 0 or greater'); return; }
+  const t = Number(timedRate);
+  const o = Number(openRate);
+  if (!Number.isFinite(t) || t < 0) { showError('Timed session rate must be 0 or greater', 'Validation'); return; }
+  if (!Number.isFinite(o) || o < 0) { showError('Open time rate must be 0 or greater', 'Validation'); return; }
     const payload: any = {
       timedSessionRate: t,
       openTimeRate: o,
@@ -128,7 +146,7 @@ export default function SystemSettings() {
       const res = await fetch(`${baseUrl}/api/admin/settings`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(confirmPayload) });
       if (!res.ok) {
         const t = await res.text();
-        Alert.alert('Failed', t || 'Failed saving settings');
+        showError(t || 'Failed saving settings', 'Failed');
         return;
       }
       // show a small saved notification (matches design) with an X to dismiss
@@ -147,7 +165,7 @@ export default function SystemSettings() {
         notifTimer.current = null;
       }, 2000) as unknown as number;
     } catch {
-      Alert.alert('Error', 'Error saving settings');
+      showError('Error saving settings');
     } finally {
       setConfirmSaving(false);
       setSaving(false);
@@ -281,6 +299,7 @@ export default function SystemSettings() {
           </View>
         </Pressable>
       )}
+      <ErrorModal visible={errorModalVisible} errorType={errorModalType} errorMessage={errorModalMessage} errorDetails={errorModalDetails} onClose={() => setErrorModalVisible(false)} />
     </View>
   );
 }

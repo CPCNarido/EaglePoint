@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { View, Text, TouchableOpacity, ScrollView, Alert, Platform, Modal, StyleSheet, useWindowDimensions, Animated, Image, ImageBackground, AppState, Pressable, TextInput } from "react-native";
+import { View, Text, TouchableOpacity, ScrollView, Platform, StyleSheet, useWindowDimensions, Animated, Image, ImageBackground, AppState, Pressable, TextInput } from "react-native";
 import { tw } from 'react-native-tailwindcss';
 import { useRouter } from "expo-router";
 import { useNavigation } from '@react-navigation/native';
@@ -17,6 +17,7 @@ import OverviewCard from '../../components/OverviewCard';
 import QuickOverview from '../../components/QuickOverview';
 import Legend from './components/Legend';
 import InfoPanel from './components/InfoPanel';
+import ConfirmModal from '../../components/ConfirmModal';
 import { clamp, getColorFromStatus, legendMatchesStatus } from '../utils/uiHelpers';
 import { enterFullScreen, exitFullScreen, reloadApp } from '../utils/fullscreen';
 
@@ -30,15 +31,8 @@ export default function AdminDashboard() {
   const navigation: any = useNavigation();
 
   const handleLogout = () => {
-    if (Platform.OS === 'web') {
-      setLogoutModalVisible(true);
-      return;
-    }
-
-    Alert.alert("Logout", "Are you sure you want to log out?", [
-      { text: "Cancel", style: "cancel" },
-      { text: "Log out", style: "destructive", onPress: () => performLogout() },
-    ]);
+    // Always show the centralized logout modal for consistent behavior
+    setLogoutModalVisible(true);
   };
 
   const [logoutModalVisible, setLogoutModalVisible] = useState<boolean>(false);
@@ -1042,27 +1036,15 @@ export default function AdminDashboard() {
           </Animated.View>
         </Pressable>
       )}
-      <Modal
+      <ConfirmModal
         visible={logoutModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setLogoutModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalBox}>
-            <Text style={styles.modalTitle}>Confirm Logout</Text>
-            <Text style={styles.modalText}>Are you sure you want to log out?</Text>
-            <View style={styles.modalButtons}>
-              <TouchableOpacity style={[styles.modalButton, styles.modalButtonCancel]} onPress={() => setLogoutModalVisible(false)}>
-                <Text style={styles.modalButtonText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.modalButton, styles.modalButtonConfirm]} onPress={() => performLogout()}>
-                <Text style={styles.modalButtonText}>Log out</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
+        title="Confirm Logout"
+        message="Are you sure you want to log out?"
+        confirmText="Log out"
+        cancelText="Cancel"
+        onConfirm={performLogout}
+        onCancel={() => setLogoutModalVisible(false)}
+      />
       {/* (Preview modal removed) */}
     </View>
   );

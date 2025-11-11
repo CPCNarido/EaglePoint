@@ -7,7 +7,6 @@ import {
   Image,
   ImageBackground,
   ActivityIndicator,
-  Alert,
   Platform,
   ScrollView,
   StyleSheet,
@@ -154,7 +153,7 @@ export default function Login() {
   const [errorModalVisible, setErrorModalVisible] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [errorDetails, setErrorDetails] = useState<any>(null);
-  const [errorType, setErrorType] = useState<'credentials'|'network'|'server'|'timeout'|'other'|null>(null);
+  const [errorType, setErrorType] = useState<'credentials'|'network'|'server'|'timeout'|'other'|'validation'|null>(null);
 
   const [showTransitionSplash, setShowTransitionSplash] = useState(false);
   const [showInitialSplash, setShowInitialSplash] = useState(true);
@@ -165,8 +164,12 @@ export default function Login() {
   }, []);
 
   const handleSubmit = async () => {
-    if (!email || !password)
-      return Alert.alert("Validation", "Email and password required");
+    if (!email || !password) {
+      setErrorType('validation');
+      setErrorMessage('Employee ID / Username and password are required.');
+      setErrorModalVisible(true);
+      return;
+    }
     setLoading(true);
     setErrorMessage("");
     setErrorModalVisible(false);
@@ -353,7 +356,7 @@ const styles = StyleSheet.create({
   card: {
     width: 520,
     maxWidth: "94%",
-    backgroundColor: "#F8FBF5",
+    backgroundColor: "#ffffffff",
     borderRadius: 10,
     padding: 28,
     alignItems: "center",

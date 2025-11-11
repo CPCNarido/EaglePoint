@@ -17,6 +17,8 @@ import { MaterialIcons } from "@expo/vector-icons";
 import { tw } from "react-native-tailwindcss";
 import { useSettings } from '../../../lib/SettingsProvider';
 import { fetchWithAuth } from '../../../_lib/fetchWithAuth';
+import ErrorModal from '../../../components/ErrorModal';
+import { friendlyMessageFromThrowable } from '../../../lib/errorUtils';
 
 export default function BayManagement() {
   const [search, setSearch] = useState("");
@@ -144,6 +146,20 @@ export default function BayManagement() {
   const [, setOverrideBusy] = useState<boolean>(false);
   const [showOverrideSuccess, setShowOverrideSuccess] = useState<boolean>(false);
   const overrideTimerRef = React.useRef<any>(null);
+
+  // central error modal state
+  const [errorModalVisible, setErrorModalVisible] = useState(false);
+  const [errorModalMessage, setErrorModalMessage] = useState('');
+  const [errorModalType, setErrorModalType] = useState<any | null>(null);
+  const [errorModalDetails, setErrorModalDetails] = useState<any>(null);
+
+  const showError = (err: any, fallback?: string) => {
+    const friendly = friendlyMessageFromThrowable(err, fallback ?? 'An error occurred');
+    setErrorModalType(friendly?.type ?? 'other');
+    setErrorModalMessage(friendly?.message ?? (fallback ?? 'An error occurred'));
+    setErrorModalDetails(friendly?.details ?? (typeof err === 'string' ? err : null));
+    setErrorModalVisible(true);
+  };
 
   // Derived list after search + filter
   const displayedBays = useMemo(() => {
@@ -379,7 +395,7 @@ export default function BayManagement() {
 
           <TouchableOpacity style={styles.overrideButton} onPress={() => {
             // Open confirm modal
-            if (!selectedBayInput || !selectedAction) return alert('Please select a bay number and an action');
+            if (!selectedBayInput || !selectedAction) { showError('Please select a bay number and an action', 'Validation'); return; }
             // try to find player name for the bay
             const found = (bays || []).find((b) => String(b.bayNo) === String(selectedBayInput));
             setOverrideTarget({ bayNo: selectedBayInput, player: found?.player });
@@ -430,7 +446,7 @@ export default function BayManagement() {
                     }
                     if (!res.ok) {
                       const t = await res.text();
-                      alert('Override failed: ' + t);
+                      showError(t, 'Override failed');
                     } else {
                       setShowOverrideConfirm(false);
                       setShowOverrideSuccess(true);
@@ -448,8 +464,8 @@ export default function BayManagement() {
                           }
                         } catch {}
                     }
-                  } catch {
-                    alert('Error performing override');
+                  } catch (e) {
+                    showError(e, 'Error performing override');
                   } finally {
                     setOverrideBusy(false);
                   }
@@ -472,6 +488,7 @@ export default function BayManagement() {
           </View>
         </Modal>
       </View>
+      <ErrorModal visible={errorModalVisible} errorType={errorModalType} errorMessage={errorModalMessage} errorDetails={errorModalDetails} onClose={() => setErrorModalVisible(false)} />
     </ScrollView>
   );
 }

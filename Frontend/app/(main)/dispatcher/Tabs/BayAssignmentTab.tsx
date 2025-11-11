@@ -6,7 +6,6 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
-  Alert,
   StyleSheet,
   Platform,
   TextInput,
@@ -15,6 +14,9 @@ import {
   Animated,
   Easing,
 } from "react-native";
+import ErrorModal from '../../../components/ErrorModal';
+import Toast from '../../../components/Toast';
+import { friendlyMessageFromThrowable } from '../../../lib/errorUtils';
 import { fetchWithAuth } from '../../../_lib/fetchWithAuth';
 
 export default function BayAssignmentScreen({ userName, counts, assignedBays }: { userName?: string; counts?: { availableBays?: number; totalBays?: number; servicemenAvailable?: number; servicemenTotal?: number; waitingQueue?: number }; assignedBays?: number[] | null }) {
@@ -41,6 +43,31 @@ export default function BayAssignmentScreen({ userName, counts, assignedBays }: 
   const [servDropdownPos, setServDropdownPos] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
   const servAnim = useRef(new Animated.Value(0)).current;
 
+  // centralized error modal state
+  const [errorModalVisible, setErrorModalVisible] = useState(false);
+  const [errorModalMessage, setErrorModalMessage] = useState<string>('');
+  const [errorModalType, setErrorModalType] = useState<any | null>(null);
+  const [errorModalDetails, setErrorModalDetails] = useState<any>(null);
+  const [errorModalTitle, setErrorModalTitle] = useState<string | undefined>(undefined);
+
+  const showError = (err: any, fallback?: string) => {
+    const friendly = friendlyMessageFromThrowable(err, fallback ?? 'An error occurred');
+    setErrorModalType(friendly?.type ?? 'other');
+    setErrorModalMessage(friendly?.message ?? (fallback ?? 'An error occurred'));
+    setErrorModalDetails(friendly?.details ?? (typeof err === 'string' ? err : null));
+    setErrorModalTitle(fallback ?? undefined);
+    setErrorModalVisible(true);
+  };
+  // Toast state for transient success/info messages
+  const [toastVisible, setToastVisible] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string>('');
+  const [toastTitle, setToastTitle] = useState<string | undefined>(undefined);
+  const showToast = (title: string | undefined, message: string) => {
+    setToastTitle(title);
+    setToastMessage(message);
+    setToastVisible(true);
+  };
+
   const getNextServiceman = () => {
     const available = servicemen.filter(s => !busyServicemen.includes(Number(s.id)));
     if (!available || available.length === 0) {
@@ -59,12 +86,12 @@ export default function BayAssignmentScreen({ userName, counts, assignedBays }: 
 
   const confirmAssignment = () => {
     (async () => {
-      if (!selectedPlayer) return Alert.alert("Select a player first.");
-      if (!selectedBay) return Alert.alert("Please select a bay first.");
+  if (!selectedPlayer) { showError('Select a player first.'); return; }
+  if (!selectedBay) { showError('Please select a bay first.'); return; }
   // prefer explicit selected serviceman (only if still available), otherwise fallback to queue logic
   const explicit = selectedServiceman ? servicemen.find((s) => Number(s.id) === Number(selectedServiceman)) : null;
   const svc = explicit && !busyServicemen.includes(Number(explicit.id)) ? explicit : getNextServiceman();
-  if (!svc) return Alert.alert("No serviceman available.");
+  if (!svc) { showError('No serviceman available.'); return; }
 
       setAssigning(true);
       try {
@@ -83,7 +110,7 @@ export default function BayAssignmentScreen({ userName, counts, assignedBays }: 
   // POST to server to start session on the chosen bay
   const res = await fetchWithAuth(`${baseUrl}/api/admin/bays/${selectedBay}/start`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
         if (res && res.ok) {
-          Alert.alert('Assignment Complete', `${selectedPlayer.name} assigned to ${svc.name} (Bay ${selectedBay})`);
+          showToast('Assignment Complete', `${selectedPlayer.name} assigned to ${svc.name} (Bay ${selectedBay})`);
           // remove player from queue
           setPlayers((prev) => prev.filter((p) => Number(p.id) !== Number(selectedPlayer.id)));
           // advance nextServicemanIndex to the next id after the chosen serviceman
@@ -97,10 +124,10 @@ export default function BayAssignmentScreen({ userName, counts, assignedBays }: 
           // clear explicit selection after assignment
           setSelectedServiceman(null);
         } else {
-          Alert.alert('Error', 'Server refused assignment.');
+          showError('Server refused assignment.');
         }
       } catch (e) {
-        Alert.alert('Error', 'Assignment failed.');
+        showError(e, 'Assignment failed.');
       } finally {
         setAssigning(false);
       }
@@ -419,6 +446,8 @@ export default function BayAssignmentScreen({ userName, counts, assignedBays }: 
           </View>
         </View>
       </View>
+  <ErrorModal visible={errorModalVisible} errorType={errorModalType} errorMessage={errorModalMessage} errorDetails={errorModalDetails} onClose={() => setErrorModalVisible(false)} />
+  <Toast visible={toastVisible} title={toastTitle} message={toastMessage} onClose={() => setToastVisible(false)} />
     </View>
   );
 }

@@ -1,8 +1,9 @@
-import React from 'react';
-import { View, Text, Modal, Pressable, ScrollView, Alert } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, Modal, Pressable, ScrollView } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
+import Toast from './Toast';
 
-type ErrorType = 'credentials'|'network'|'server'|'timeout'|'other'|null;
+type ErrorType = 'credentials'|'network'|'server'|'timeout'|'other'|'validation'|null;
 
 export default function ErrorModal({
   visible,
@@ -20,6 +21,13 @@ export default function ErrorModal({
   onRetry?: () => void;
 }) {
 
+
+  const [toastVisible, setToastVisible] = useState(false);
+  const [toastTitle, setToastTitle] = useState<string | undefined>(undefined);
+  const [toastMessage, setToastMessage] = useState<string | undefined>(undefined);
+
+  const showLocalToast = (title?: string, msg?: string) => { setToastTitle(title); setToastMessage(msg); setToastVisible(true); };
+
   const handleOpenSaved = async () => {
     try {
       // @ts-ignore
@@ -29,18 +37,19 @@ export default function ErrorModal({
       console.debug('lastLoginError', v ? JSON.parse(v) : null);
       // remove persisted diagnostic after showing
       if (AsyncStorage) await AsyncStorage.removeItem('lastLoginError');
-      Alert.alert('Saved', 'Last error logged to console for inspection');
+      showLocalToast('Saved', 'Last error logged to console for inspection');
     } catch (e) {
       console.warn('Failed reading lastLoginError', e);
-      Alert.alert('Error', 'Failed reading saved diagnostics');
+      showLocalToast('Error', 'Failed reading saved diagnostics');
     }
   };
 
-  const title = errorType === 'credentials' ? 'Incorrect username or password' : (errorType === 'network' ? 'Internet connection problem' : 'Error');
-  const headerBg = errorType === 'credentials' ? '#FDECEA' : errorType === 'network' ? '#FFF4E5' : '#F6F6F6';
-  const iconName = errorType === 'credentials' ? 'lock' : errorType === 'network' ? 'wifi-off' : 'error-outline';
+  const title = errorType === 'credentials' ? 'Incorrect username or password' : (errorType === 'network' ? 'Internet connection problem' : (errorType === 'validation' ? 'Please check the form' : 'Error'));
+  const headerBg = errorType === 'credentials' ? '#FDECEA' : errorType === 'network' ? '#FFF4E5' : errorType === 'validation' ? '#F0F7FF' : '#F6F6F6';
+  const iconName = errorType === 'credentials' ? 'lock' : errorType === 'network' ? 'wifi-off' : errorType === 'validation' ? 'info-outline' : 'error-outline';
 
   return (
+    <>
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' }}>
         <View style={{ width: '40%', backgroundColor: '#fff', borderRadius: 8, overflow: 'hidden' }}>
@@ -76,5 +85,7 @@ export default function ErrorModal({
         </View>
       </View>
     </Modal>
+    <Toast visible={toastVisible} title={toastTitle} message={toastMessage} onClose={() => setToastVisible(false)} />
+    </>
   );
 }

@@ -6,10 +6,11 @@ import {
   TouchableOpacity,
   StyleSheet,
   Platform,
-  Alert,
   Modal,
   Pressable,
 } from "react-native";
+import ErrorModal from '../../../components/ErrorModal';
+import { friendlyMessageFromThrowable } from '../../../lib/errorUtils';
 // Defer loading of icon library to runtime to avoid possible environment-time errors
 let MaterialIcons: any = null;
 
@@ -57,6 +58,22 @@ export default function StaffManagement({ refreshKey }: { refreshKey?: number })
 
   const baseDefault = Platform.OS === 'android' ? 'http://10.127.147.53:3000' : 'http://localhost:3000';
   const baseUrl = (global as any).__EAGLEPOINT_BASE_URL__ ?? baseDefault;
+
+  // centralized error modal state
+  const [errorModalVisible, setErrorModalVisible] = useState(false);
+  const [errorModalMessage, setErrorModalMessage] = useState<string>('');
+  const [errorModalType, setErrorModalType] = useState<any | null>(null);
+  const [errorModalDetails, setErrorModalDetails] = useState<any>(null);
+  const [errorModalTitle, setErrorModalTitle] = useState<string | undefined>(undefined);
+
+  const showError = (err: any, fallback?: string) => {
+    const friendly = friendlyMessageFromThrowable(err, fallback ?? 'An error occurred');
+    setErrorModalType(friendly?.type ?? 'other');
+    setErrorModalMessage(friendly?.message ?? (fallback ?? 'An error occurred'));
+    setErrorModalDetails(friendly?.details ?? (typeof err === 'string' ? err : null));
+    setErrorModalTitle(fallback ?? undefined);
+    setErrorModalVisible(true);
+  };
 
   // fetchStaff/fetchAdminInfo are intentionally invoked once on mount.
   /* eslint-disable react-hooks/exhaustive-deps */
@@ -140,10 +157,10 @@ export default function StaffManagement({ refreshKey }: { refreshKey?: number })
   const paginatedStaff = filteredStaff.slice((page - 1) * pageSize, page * pageSize);
 
   const submitAdd = async () => {
-    if (!fullName || !password) return alert('Name and password required');
+    if (!fullName || !password) return showError('Name and password required');
     const nameTrim = fullName.trim();
     const passTrim = password.trim();
-    if (!nameTrim || !passTrim) return alert('Name and password required');
+    if (!nameTrim || !passTrim) return showError('Name and password required');
     try {
       const res = await fetch(`${baseUrl}/api/admin/staff`, {
         method: 'POST',
@@ -153,7 +170,7 @@ export default function StaffManagement({ refreshKey }: { refreshKey?: number })
       });
       if (!res.ok) {
         const t = await res.text();
-        alert('Failed: ' + t);
+        showError('Failed: ' + t);
         return;
       }
   // refresh and show acknowledgement popup
@@ -175,8 +192,8 @@ export default function StaffManagement({ refreshKey }: { refreshKey?: number })
   setShowAdd(false);
   setFullName(''); setUsername(''); setPassword(''); setRole('Dispatcher');
   openApprovalPopup('Staff have been successfully added!.');
-    } catch {
-      alert('Error creating staff');
+    } catch (e) {
+      showError(e, 'Error creating staff');
     }
   };
 
@@ -194,7 +211,7 @@ export default function StaffManagement({ refreshKey }: { refreshKey?: number })
   const submitEdit = async () => {
     if (!editingId) return;
     const nameTrim = editFullName.trim();
-    if (!nameTrim) return alert('Name required');
+    if (!nameTrim) return showError('Name required');
     try {
       const res = await fetch(`${baseUrl}/api/admin/staff/${editingId}`, {
         method: 'PUT',
@@ -204,7 +221,7 @@ export default function StaffManagement({ refreshKey }: { refreshKey?: number })
       });
       if (!res.ok) {
         const t = await res.text();
-        alert('Failed updating staff: ' + t);
+        showError('Failed updating staff: ' + t);
         return;
       }
   // show approval popup with manual close (X) and 2s auto-close
@@ -223,8 +240,8 @@ export default function StaffManagement({ refreshKey }: { refreshKey?: number })
       (global as any).triggerAdminRefresh();
     }
   } catch {}
-    } catch {
-      alert('Error updating staff');
+    } catch (e) {
+      showError(e, 'Error updating staff');
     }
   };
 
@@ -294,7 +311,7 @@ export default function StaffManagement({ refreshKey }: { refreshKey?: number })
       const res = await fetch(`${baseUrl}/api/admin/staff/${id}`, { method: 'DELETE', credentials: 'include' });
       if (!res.ok) {
         const t = await res.text();
-        Alert.alert('Error', 'Failed deleting staff: ' + t);
+        showError('Failed deleting staff: ' + t);
         return;
       }
       // close remove modal then show acknowledgement popup
@@ -315,8 +332,8 @@ export default function StaffManagement({ refreshKey }: { refreshKey?: number })
       (global as any).triggerAdminRefresh();
     }
   } catch {}
-    } catch {
-      Alert.alert('Error', 'Error deleting staff');
+    } catch (e) {
+      showError(e, 'Error deleting staff');
     }
   };
 
@@ -683,6 +700,7 @@ export default function StaffManagement({ refreshKey }: { refreshKey?: number })
         <Text style={styles.addButtonText}>Add Staff to Roster</Text>
         <MaterialIcons name="add" size={20} color="#374728" />
       </TouchableOpacity>
+      <ErrorModal visible={errorModalVisible} errorType={errorModalType} errorMessage={errorModalMessage} errorDetails={errorModalDetails} onClose={() => setErrorModalVisible(false)} />
     </View>
   );
 }
