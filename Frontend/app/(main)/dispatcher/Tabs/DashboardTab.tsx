@@ -75,6 +75,28 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
   
   const getPageSizeLocal = () => minimizeBays ? 20 : pageSize;
 
+  const formatMsForDisplay = (ms: number) => {
+    try {
+      if (ms <= 0) return '0:00';
+      const totalSecs = Math.floor(ms / 1000);
+      if (totalSecs >= 3600) {
+        const hrs = Math.floor(totalSecs / 3600);
+        const rem = totalSecs % 3600;
+        const mins = Math.floor(rem / 60);
+        const secs = rem % 60;
+        const hh = String(hrs).padStart(2, '0');
+        const mm = String(mins).padStart(2, '0');
+        const ss = String(secs).padStart(2, '0');
+        return `${hh}:${mm}:${ss} hrs`;
+      }
+      const mins = Math.floor(totalSecs / 60);
+      const secs = totalSecs % 60;
+      const mm = String(mins).padStart(2, '0');
+      const ss = String(secs).padStart(2, '0');
+      return `${mm}:${ss} mins`;
+    } catch (e) { return '—'; }
+  };
+
   const getVisibleBayIds = () => {
     const total = Number(overview?.totalBays ?? 45);
     const pageSizeLocal = getPageSizeLocal();
@@ -579,6 +601,8 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
       const status = row?.status ?? 'Available';
       const color = getColorFromStatus(status);
       const player = row?.player_name ?? row?.player?.nickname ?? '—';
+      
+
       const { time, timeLabel } = (() => {
         try {
           const id = String(row?.bay_number ?? row?.bay_id ?? num);
@@ -587,18 +611,13 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
           if (swStart) {
             const elapsed = Date.now() - swStart;
             if (elapsed <= 0) return { time: '0:00', timeLabel: 'Time:' };
-            const totalSecs = Math.floor(elapsed / 1000);
-            const mins = Math.floor(totalSecs / 60);
-            const secs = totalSecs % 60;
-            return { time: `${mins}:${secs.toString().padStart(2, '0')}`, timeLabel: 'Time:' };
+            return { time: formatMsForDisplay(elapsed), timeLabel: 'Time:' };
           }
           const end = row?.end_time ? new Date(row.end_time) : null;
           if (!end) return { time: '—', timeLabel: '' };
           const ms = end.getTime() - Date.now();
-          if (ms <= 0) return { time: '0m', timeLabel: 'Remaining:' };
-          const mins = Math.floor(ms / (1000 * 60));
-          // Only show minutes (no seconds) to avoid frequent UI changes
-          return { time: `${mins}m`, timeLabel: 'Remaining:' };
+          if (ms <= 0) return { time: 'Expired', timeLabel: 'Remaining:' };
+          return { time: formatMsForDisplay(ms), timeLabel: 'Remaining:' };
         } catch { return { time: '—', timeLabel: '' }; }
       })();
 
@@ -649,17 +668,13 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
           if (swStart) {
             const elapsed = Date.now() - swStart;
             if (elapsed <= 0) return { time: '0:00', timeLabel: 'Time:' };
-            const totalSecs = Math.floor(elapsed / 1000);
-            const mins = Math.floor(totalSecs / 60);
-            const secs = totalSecs % 60;
-            return { time: `${mins}:${secs.toString().padStart(2, '0')}`, timeLabel: 'Time:' };
+            return { time: formatMsForDisplay(elapsed), timeLabel: 'Time:' };
           }
           const end = row?.end_time ? new Date(row.end_time) : null;
           if (!end) return { time: '—', timeLabel: '' };
           const ms = end.getTime() - Date.now();
-          if (ms <= 0) return { time: '0m', timeLabel: 'Remaining:' };
-          const mins = Math.floor(ms / (1000 * 60));
-          return { time: `${mins}m`, timeLabel: 'Remaining:' };
+          if (ms <= 0) return { time: 'Expired', timeLabel: 'Remaining:' };
+          return { time: formatMsForDisplay(ms), timeLabel: 'Remaining:' };
         } catch { return { time: '—', timeLabel: '' }; }
       })();
 

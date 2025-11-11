@@ -71,6 +71,9 @@ export default function AdminDashboard() {
   // Selected bay for info popup
   const [selectedBay, setSelectedBay] = useState<number | null>(null);
   const [selectedBayDetails, setSelectedBayDetails] = useState<any>(null);
+  // width of the bay container to compute column-based offsets for InfoPanel
+  const [bayContainerWidth, setBayContainerWidth] = useState<number>(0);
+  const BAY_BOX_TOTAL = 45; // approximate bay width + horizontal margins (45 + 6)
   // Notifications for countdown alerts (10-minute warnings) and remaining-time map
   const [notifications, setNotifications] = useState<Array<{ id: string; bay: number; message: string; when: number; threshold?: 't10' | 't5' | 't0' }>>([]);
   const [remainingMap, setRemainingMap] = useState<Record<number, number>>({});
@@ -687,7 +690,7 @@ export default function AdminDashboard() {
               </View>
                           {/* Unified legend: show the five primary legends up top. Maintenance is intentionally moved below the bay grid. */}
                           {/* Legends moved to bottom per user preference */}
-              <View style={styles.bayContainer}>
+              <View style={styles.bayContainer} onLayout={(e) => setBayContainerWidth(e.nativeEvent.layout.width)}>
                 {overview && overview.bays && overview.bays.length > 0 ? (
                   // Render bay grid 1..N in numerical order, using overview data when available
                     Array.from({ length: settings.totalAvailableBays ?? 45 }).map((_, i) => {
@@ -724,12 +727,21 @@ export default function AdminDashboard() {
                       }
                     };
 
+                    // compute simple column-based offset so InfoPanel doesn't clip at edges
+                    // Cap columns to at most 14 per row to match requested layout constraints
+                    const cols = bayContainerWidth ? Math.max(1, Math.min(14, Math.floor(bayContainerWidth / BAY_BOX_TOTAL))) : 4;
+                    const colIndex = (num - 1) % cols;
+                    let offsetX = 0;
+                    if (colIndex === 0) offsetX = 40; // leftmost column -> nudge right
+                    else if (colIndex === cols - 1) offsetX = -40; // rightmost column -> nudge left
+
                     return (
                       <TouchableOpacity key={b?.bay_id ?? `bay-${num}`} onPress={handlePress} activeOpacity={0.9} style={[
                         styles.bayBox,
                         bayBoxDynamic,
                         { position: 'relative' },
                         ...(isHighlighted ? [{ borderWidth: 3, shadowColor: '#00BFA5', shadowOpacity: 0.3 }] : []),
+                        ...(selectedBay === num ? [styles.selectedBayBox] : []),
                       ]}>
                         {/* animated fill overlay for legend highlights */}
                         <Animated.View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: bayColor, borderRadius: 8, opacity: anim }} />
@@ -752,7 +764,11 @@ export default function AdminDashboard() {
 
                         {/* Info panel shown when this bay is selected (extracted to component) */}
                         {selectedBay === num && selectedBayDetails && (
-                          <InfoPanel num={num} details={selectedBayDetails} now={now} />
+                          <>
+                            {/* small caret indicator on the bay itself so user can see which bay opened the InfoPanel */}
+                            <View style={styles.selectedBayCaret} pointerEvents="none" />
+                            <InfoPanel num={num} details={selectedBayDetails} now={now} offsetX={offsetX} />
+                          </>
                         )}
                       </TouchableOpacity>
                     );
@@ -1216,6 +1232,10 @@ const styles = StyleSheet.create({
   infoCard: { minWidth: 160, backgroundColor: '#fff', borderRadius: 8, padding: 8, shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 6, elevation: 8, borderWidth: 1, borderColor: '#E6E6E6' },
   infoTitle: { fontWeight: '800', color: '#17321d', marginBottom: 6 },
   infoRow: { fontSize: 13, color: '#333', marginBottom: 4 },
+  // highlight styling for the bay that has its InfoPanel open
+  selectedBayBox: { borderWidth: 3, borderColor: '#FFD54F', shadowColor: '#FFD54F', shadowOpacity: 0.35, shadowRadius: 6, elevation: 6 },
+  // small caret placed above the bay box to indicate it is the active selection
+  selectedBayCaret: { position: 'absolute', top: -10, left: '50%', marginLeft: -8, width: 0, height: 0, borderLeftWidth: 8, borderRightWidth: 8, borderBottomWidth: 8, borderLeftColor: 'transparent', borderRightColor: 'transparent', borderBottomColor: '#000', zIndex: 9999 },
   notificationsPanel: { position: 'absolute', right: 20, top: 90, width: 260, backgroundColor: '#fff', borderRadius: 8, padding: 8, shadowColor: '#000', shadowOpacity: 0.08, shadowRadius: 8, elevation: 10, borderWidth: 1, borderColor: '#E6E6E6', zIndex: 2000, maxHeight: 420 },
   notifItem: { flexDirection: 'row', alignItems: 'center', padding: 8, borderBottomWidth: 1, borderBottomColor: '#F0F0F0', marginBottom: 6, borderRadius: 6, backgroundColor: '#FFF' },
   // Alternate styles that match System Settings "Saved" notification
