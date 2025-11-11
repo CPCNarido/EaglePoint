@@ -3,6 +3,7 @@ import DispatcherHeader from "../DispatcherHeader";
 import { View, Text, ScrollView, TouchableOpacity, Modal, StyleSheet, ActivityIndicator, useWindowDimensions, Platform, TextInput } from "react-native";
 import ErrorModal from '../../../components/ErrorModal';
 import ConfirmModal from '../../../components/ConfirmModal';
+import Toast from '../../../components/Toast';
 import { friendlyMessageFromThrowable } from '../../../lib/errorUtils';
 import { MaterialIcons } from "@expo/vector-icons";
 import { fetchWithAuth } from '../../../_lib/fetchWithAuth';
@@ -62,6 +63,44 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
   const [showOpenTimeModal, setShowOpenTimeModal] = useState<boolean>(false);
   const [showAssignModal, setShowAssignModal] = useState<boolean>(false);
   const [actionLoading, setActionLoading] = useState<boolean>(false);
+  // Edit modal state for dispatcher to edit serviceman/player
+  const [showEditModal, setShowEditModal] = useState<boolean>(false);
+  const [editPlayerName, setEditPlayerName] = useState<string>('');
+  const [editServicemanId, setEditServicemanId] = useState<number | null>(null);
+  const [servicemen, setServicemen] = useState<any[]>([]);
+  const [editActionLoading, setEditActionLoading] = useState<boolean>(false);
+  // toast for small success messages
+  const [toastVisible, setToastVisible] = useState(false);
+  const [toastMessage, setToastMessage] = useState('');
+  const [toastTitle, setToastTitle] = useState<string | undefined>(undefined);
+  const showToast = (title: string | undefined, msg: string, ms: number = 2000) => {
+    setToastTitle(title);
+    setToastMessage(msg);
+    setToastVisible(true);
+    setTimeout(() => setToastVisible(false), ms);
+  };
+  // Success modal state (used instead of transient toast when user requested)
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [successModalTitle, setSuccessModalTitle] = useState<string | undefined>(undefined);
+  const [successModalMessage, setSuccessModalMessage] = useState<string | undefined>(undefined);
+
+  // Helper to safely extract a server-sent message from the result returned by postJson
+  const extractServerMessage = (res: any) => {
+    try {
+      if (!res) return null;
+      const pb = res.parsedBody;
+      if (pb) {
+        if (typeof pb === 'string') return pb;
+        if (typeof pb === 'object') {
+          // common shapes: { message: '...', error: '...' }
+          return (pb.message ?? pb.error ?? (pb.detail ?? null)) as any;
+        }
+      }
+      if (res?.error && typeof res.error === 'object') return res.error.message ?? String(res.error);
+      if (res?.error && typeof res.error === 'string') return res.error;
+      return null;
+    } catch (e) { return null; }
+  };
   // stopwatch map: bayNumber/string -> start timestamp (ms)
   const [stopwatches, setStopwatches] = useState<Record<string, number>>({});
   // lightweight tick state to re-render stopwatch displays every second
@@ -279,9 +318,22 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
   const postJson = async (url: string, body?: any) => {
     try {
       const res = await fetchWithAuth(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
-      return res;
+      // Attempt to parse JSON/text body for better error messages. We keep
+      // backward-compatible shape by returning an object with `ok` and
+      // `status` so existing checks like `res && res.ok` continue to work.
+      let parsedBody: any = null;
+      try {
+        // clone if Response-like so we don't consume body elsewhere
+        // @ts-ignore
+        if (res && typeof res.clone === 'function' && typeof res.clone().json === 'function') {
+          try { parsedBody = await res.clone().json(); } catch { try { parsedBody = await res.clone().text(); } catch {} }
+        }
+      } catch (e) {
+        // ignore parse errors
+      }
+      return { ok: !!(res && (res as any).ok), status: res ? (res as any).status : null, parsedBody, response: res };
     } catch (e) {
-      return null;
+      return { ok: false, status: null, parsedBody: null, response: null, error: e };
     }
   };
 
@@ -785,9 +837,92 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
     );
   };
 
+  // Handler for saving edits to an assignment. Uses existing logic but is
+  // extracted so we can show a confirmation dialog before executing.
+  const handleEditSave = async () => {
+    if (!selectedBay) return setShowEditModal(false);
+    setEditActionLoading(true);
+    try {
+      const bayNum = selectedBay.bay_number ?? selectedBay.bay_id;
+      const baseUrl = await resolveBaseUrl();
+      let didOk = false;
+      let lastRes: any = null;
+      let sessionId: any = (selectedBay as any)?.raw?.session_id ?? (selectedBay as any)?.raw?.id ?? (selectedBay as any)?.raw?.session?.id ?? (selectedBay as any)?.raw?.session?.session_id ?? (selectedBay as any)?.session_id ?? (selectedBay as any)?.id ?? null;
+
+      // If session id is not present on the bay shape, try to find an active session via reports
+      if (!sessionId) {
+        try {
+          const listRes = await fetchWithAuth(`${baseUrl}/api/admin/reports/sessions?limit=1000`, { method: 'GET' });
+          lastRes = listRes;
+          if (listRes && listRes.ok) {
+            const rows = await listRes.json();
+            if (Array.isArray(rows)) {
+              const active = rows.find((s: any) => (Number(s.bay_no) === Number(bayNum) || String(s.bay_no) === String(bayNum)) && !s.end_time);
+              if (active) {
+                sessionId = active.id ?? active.session_id ?? active._id ?? null;
+              }
+            }
+          }
+        } catch (e) {
+          // Ignore internal lookup failures; final error UI will surface server response.
+        }
+      }
+
+      if (sessionId) {
+        try {
+          const r = await fetchWithAuth(`${baseUrl}/api/admin/reports/sessions/${sessionId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ player_name: editPlayerName || undefined, serviceman_id: editServicemanId ?? undefined }) });
+          lastRes = r;
+          if (r && r.ok) {
+            didOk = true;
+          }
+        } catch (e) {
+          // fall through to other attempts
+        }
+      }
+
+      if (!didOk) {
+        try {
+          const r2 = await fetchWithAuth(`${baseUrl}/api/admin/bays/${bayNum}/assign`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ playerName: editPlayerName || null, servicemanId: editServicemanId }) });
+          lastRes = r2;
+          if (r2 && r2.ok) didOk = true;
+        } catch (e) {
+          // ignore
+        }
+      }
+
+      if (didOk) {
+        setBays((prev) => (prev || []).map(b => (String(b.bay_number) === String(bayNum) || String(b.bay_id) === String(bayNum)) ? { ...b, player_name: editPlayerName || b.player_name } as BayRow : b));
+        try { await fetchOverview(); await fetchBays(); } catch {}
+        // Close the edit modal and show a success modal so user sees an explicit acknowledgment
+        try { setShowEditModal(false); } catch {}
+        try {
+          setSuccessModalTitle('Updated');
+          setSuccessModalMessage('Assignment updated');
+          setShowSuccessModal(true);
+        } catch {}
+      } else {
+        try {
+          const serverMsg = extractServerMessage(lastRes);
+          const statusPart = lastRes && (lastRes.status || lastRes.status === 0) ? `status=${lastRes.status}` : 'status=unknown';
+          const urlPart = lastRes && (lastRes.url || (lastRes?.response && lastRes.response.url)) ? (lastRes.url ?? lastRes.response.url) : 'url=unknown';
+          const msg = serverMsg ?? `Update failed: endpoint not found or request rejected (${statusPart} ${urlPart})`;
+          showError(msg, 'Update failed');
+        } catch (err) {
+          showError(err, 'Update failed');
+        }
+      }
+    } catch (e) {
+      try { showError(e, 'Update failed'); } catch {}
+    } finally {
+      setEditActionLoading(false);
+      setShowEditModal(false);
+    }
+  };
+
   if (loading) return <View style={{ padding: 20 }}><ActivityIndicator /></View>;
 
   return (
+    <>
     <ScrollView style={styles.scrollArea}>
       <View style={styles.contentBox}>
   <DispatcherHeader title="Dashboard" subtitle={userName ? `Dispatcher ${userName}` : 'Dispatcher'} counts={counts} assignedBays={assignedBays} showBadges={true} showBanner={true} bannerSource={require('../../../../assets/General/DispatcherHeroImg.png')} />
@@ -879,7 +1014,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
                                   } else {
                                     // server didn't accept: refresh overview to reflect true state
                                     try { await fetchOverview(); await fetchBays(); } catch {}
-                                    try { showError('Failed to end session. Server did not accept the request.'); } catch {}
+                                    try { const msg = extractServerMessage(res) ?? 'Failed to end session. Server did not accept the request.'; showError(msg); } catch {}
                                   }
                                 } catch (e) {
                                   try { fetchOverview(); } catch {}
@@ -894,6 +1029,29 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
                                 }
                               }}>
                               {actionLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.modalButtonText}>End Session</Text>}
+                            </TouchableOpacity>
+                            {/* Edit button to modify player name / serviceman for occupied bays */}
+                              <TouchableOpacity style={[styles.modalButton, styles.modalButtonCancel]} onPress={async () => {
+                              // open edit modal and fetch servicemen
+                              try {
+                                const baseUrl = await resolveBaseUrl();
+                                setEditPlayerName(selectedBay?.player_name ?? (selectedBay?.player?.nickname ?? ''));
+                                // pre-select current serviceman if present on bay (support multiple possible shapes)
+                                const currentSvcId = (selectedBay as any)?.serviceman_id ?? (selectedBay as any)?.serviceman?.id ?? (selectedBay as any)?.raw?.serviceman_id ?? (selectedBay as any)?.raw?.serviceman?.id ?? null;
+                                setEditServicemanId(currentSvcId ?? null);
+                                setShowEditModal(true);
+                                // fetch staff list and filter servicemen
+                                try {
+                                  const r = await fetchWithAuth(`${baseUrl}/api/admin/staff`, { method: 'GET' });
+                                  if (r && r.ok) {
+                                    const rows = await r.json();
+                                    const svc = Array.isArray(rows) ? rows.filter((s:any) => String(s.role).toLowerCase().includes('serviceman') || String(s.role).toLowerCase().includes('ballhandler')) : [];
+                                    setServicemen(svc);
+                                  }
+                                } catch (e) { /* ignore fetch failure, still open modal */ }
+                              } catch (e) { try { showError(e); } catch {} }
+                            }}>
+                              <Text style={styles.modalButtonCancelText}>Edit</Text>
                             </TouchableOpacity>
                             <TouchableOpacity style={[styles.modalButton, styles.modalButtonCancel]} onPress={() => setSelectedBay(null)}>
                               <Text style={styles.modalButtonCancelText}>Close</Text>
@@ -928,7 +1086,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
                                         try { await fetchOverview(); await fetchBays(); } catch {}
                                       } else {
                                         try { await fetchOverview(); await fetchBays(); } catch {}
-                                        try { showError('Failed to start session. Server did not accept the request.'); } catch {}
+                                        try { const msg = extractServerMessage(res) ?? 'Failed to start session. Server did not accept the request.'; showError(msg); } catch {}
                                       }
                                     } catch (e) {
                                       try { await fetchOverview(); } catch {}
@@ -952,7 +1110,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
                                       try { await fetchOverview(); await fetchBays(); } catch {}
                                     } else {
                                       try { await fetchOverview(); await fetchBays(); } catch {}
-                                      try { showError('Failed to start session. Server did not accept the request.'); } catch {}
+                                      try { const msg = extractServerMessage(res) ?? 'Failed to start session. Server did not accept the request.'; showError(msg); } catch {}
                                     }
                                   } catch (err) {
                                     try { await fetchOverview(); } catch {}
@@ -1010,13 +1168,14 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
                   try {
                     const bayNum = selectedBay?.bay_number ?? selectedBay?.bay_id;
                     const baseUrl = await resolveBaseUrl();
+                    // debug logs removed
                     const res = await postJson(`${baseUrl}/api/admin/bays/${bayNum}/override`, { action: 'Reserved', name: reserveName || null });
                     if (res && res.ok) {
                       setBays((prev) => prev.map(b => (String(b.bay_number) === String(bayNum) || String(b.bay_id) === String(bayNum)) ? { ...b, status: 'Reserved', player_name: reserveName } : b));
                       try { await fetchOverview(); await fetchBays(); } catch {}
                     } else {
                       try { await fetchOverview(); await fetchBays(); } catch {}
-                      try { showError('Failed to reserve bay. Server did not accept the request.'); } catch {}
+                      try { const msg = extractServerMessage(res) ?? 'Failed to reserve bay. Server did not accept the request.'; showError(msg); } catch {}
                     }
                   } catch (e) {
                     try { fetchOverview(); } catch {}
@@ -1027,6 +1186,46 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
                   }
                 }}>
                   {actionLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.modalButtonText}>Reserve</Text>}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+
+        {/* Edit modal - edit player name and assigned serviceman */}
+        <Modal visible={showEditModal} transparent animationType="fade" onRequestClose={() => setShowEditModal(false)}>
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalBox}>
+              <Text style={styles.modalTitle}>Edit Assignment - Bay {selectedBay?.bay_number}</Text>
+              <Text style={{ marginBottom: 6 }}>Player Name</Text>
+              <TextInput value={editPlayerName} onChangeText={setEditPlayerName} style={styles.modalInput} />
+              <Text style={{ marginTop: 10, marginBottom: 6 }}>Assign Service Man (optional)</Text>
+              <ScrollView style={{ maxHeight: 160, marginBottom: 8 }}>
+                {servicemen.length === 0 ? (
+                  <Text style={{ color: '#666' }}>No servicemen available</Text>
+                ) : (
+                  servicemen.map((s) => (
+                    <TouchableOpacity key={String(s.id ?? s.employee_id ?? s.employeeId)} onPress={() => setEditServicemanId(s.employee_id ?? s.id ?? s.employeeId)} style={[styles.servOption, (editServicemanId === (s.employee_id ?? s.id ?? s.employeeId)) && styles.servOptionActive]}>
+                      <Text style={(editServicemanId === (s.employee_id ?? s.id ?? s.employeeId)) ? styles.servOptionTextActive : styles.servOptionText}>{s.full_name ?? s.username ?? s.name}</Text>
+                    </TouchableOpacity>
+                  ))
+                )}
+              </ScrollView>
+
+              <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 8 }}>
+                <TouchableOpacity style={[styles.modalButton, styles.modalButtonCancel]} onPress={() => setShowEditModal(false)}>
+                  <Text style={styles.modalButtonCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.modalButton, styles.modalButtonConfirm]} onPress={() => {
+                  showConfirm({
+                    title: 'Confirm Update',
+                    message: 'Save changes to this assignment?',
+                    confirmText: 'Save',
+                    cancelText: 'Cancel',
+                    onConfirm: () => { try { handleEditSave(); } catch {} }
+                  });
+                }} disabled={editActionLoading}>
+                  {editActionLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.modalButtonText}>Save</Text>}
                 </TouchableOpacity>
               </View>
             </View>
@@ -1057,7 +1256,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
                       try { await fetchOverview(); await fetchBays(); } catch {}
                     } else {
                       try { await fetchOverview(); await fetchBays(); } catch {}
-                      try { showError('Failed to start open time. Server did not accept the request.'); } catch {}
+                      try { const msg = extractServerMessage(res) ?? 'Failed to start open time. Server did not accept the request.'; showError(msg); } catch {}
                     }
                   } catch (e) {
                     try { fetchOverview(); } catch {}
@@ -1096,7 +1295,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
                       try { await fetchOverview(); await fetchBays(); } catch {}
                     } else {
                       try { await fetchOverview(); await fetchBays(); } catch {}
-                      try { showError('Failed to start session. Server did not accept the request.'); } catch {}
+                      try { const msg = extractServerMessage(res) ?? 'Failed to start session. Server did not accept the request.'; showError(msg); } catch {}
                     }
                   } catch (e) {
                     try { fetchOverview(); } catch {}
@@ -1113,9 +1312,14 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
           </View>
         </Modal>
       </View>
+    </ScrollView>
   <ErrorModal visible={errorModalVisible} errorType={errorModalType} errorMessage={errorModalMessage} errorDetails={errorModalDetails} onClose={() => setErrorModalVisible(false)} />
   <ConfirmModal visible={confirmVisible} title={confirmConfig.title} message={confirmConfig.message} confirmText={confirmConfig.confirmText} cancelText={confirmConfig.cancelText} onConfirm={() => { try { confirmConfig.onConfirm && confirmConfig.onConfirm(); } catch {} setConfirmVisible(false); }} onCancel={() => setConfirmVisible(false)} />
-    </ScrollView>
+  {/* Success modal shown after successful edit (single OK button) */}
+  <ConfirmModal visible={showSuccessModal} title={successModalTitle} message={successModalMessage} confirmText={'OK'} cancelText={undefined} onConfirm={() => { try { setShowSuccessModal(false); } catch {} }} onCancel={() => setShowSuccessModal(false)} />
+  <Toast visible={toastVisible} title={toastTitle} message={toastMessage} onClose={() => setToastVisible(false)} />
+
+    </>
   );
 }
 
@@ -1178,6 +1382,11 @@ const styles = StyleSheet.create({
   modalButtonCancelText: { color: '#333', fontWeight: '600' },
   modalButtonConfirm: { backgroundColor: '#C62828', marginRight: 8 },
   modalButtonText: { color: '#fff', fontWeight: '600' },
+  modalInput: { borderWidth: 1, borderColor: '#ddd', padding: 8, borderRadius: 6, backgroundColor: '#fff' },
+  servOption: { paddingVertical: 10, paddingHorizontal: 8, borderBottomWidth: 1, borderBottomColor: '#f4f7f4' },
+  servOptionActive: { backgroundColor: '#e6f4e6' },
+  servOptionText: { color: '#0f2f13' },
+  servOptionTextActive: { color: '#0b5a0b', fontWeight: '700' },
   closeButton: { marginTop: 10, backgroundColor: '#007bff', paddingVertical: 10, borderRadius: 8, alignItems: 'center', marginRight: 8 },
   closeButtonText: { color: '#fff', fontWeight: '700' },
   badgeCircle: { position: 'absolute', top: -8, right: -8, backgroundColor: '#333', minWidth: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
