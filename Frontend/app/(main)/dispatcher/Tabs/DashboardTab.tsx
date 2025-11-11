@@ -125,7 +125,25 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
       const AsyncStorageModule = await import('@react-native-async-storage/async-storage').catch(() => null);
       const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
       const override = AsyncStorage ? await AsyncStorage.getItem('backendBaseUrlOverride') : null;
-      if (override) baseUrl = override;
+        if (override) {
+          // Quick health probe for the override. If it's reachable, return it.
+          try {
+            const controller = new AbortController();
+            const t = setTimeout(() => { try { controller.abort(); } catch {} }, 1500);
+            const url = `${override.replace(/\/$/, '')}/api/health`;
+            const r = await fetch(url, { method: 'GET', signal: controller.signal }).catch(() => null);
+            clearTimeout(t);
+            if (r && r.ok) {
+              baseUrl = override;
+            } else {
+              // remove stale override so subsequent resolution can fall back
+              try { await AsyncStorage.removeItem('backendBaseUrlOverride'); } catch {}
+              console.warn('Removed unreachable backendBaseUrlOverride', override);
+            }
+          } catch (e) {
+            try { await AsyncStorage.removeItem('backendBaseUrlOverride'); } catch {}
+          }
+        }
     } catch {}
     return baseUrl;
   };
@@ -598,7 +616,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
         >
           {/* Checkbox overlay shown when selection mode is active or bay is pre-selected (only for active bays) */}
           {(isSelecting || isSelected) && isActive ? (
-            <View style={{ position: 'absolute', top: 6, right: 6, width: 26, height: 26, borderRadius: 6, backgroundColor: isSelected ? '#17321d' : 'rgba(255,255,255,0.9)', borderWidth: 1, borderColor: '#ccc', alignItems: 'center', justifyContent: 'center', zIndex: 2 }}>
+            <View style={{ position: 'absolute', top: 6, right: 6, width: 26, height: 26, borderRadius: 6, backgroundColor: isSelected ? '#333' : 'rgba(255,255,255,0.9)', borderWidth: 1, borderColor: '#ccc', alignItems: 'center', justifyContent: 'center', zIndex: 2 }}>
               <MaterialIcons name={isSelected ? 'check-box' : 'check-box-outline-blank'} size={18} color={isSelected ? '#fff' : '#333'} />
             </View>
           ) : null}
@@ -659,7 +677,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
         >
           {/* Checkbox overlay shown when selection mode is active or bay is pre-selected (only for active bays) */}
           {(isSelecting || isSelected) && isActive ? (
-            <View style={{ position: 'absolute', top: 6, right: 6, width: 26, height: 26, borderRadius: 6, backgroundColor: isSelected ? '#17321d' : 'rgba(255,255,255,0.9)', borderWidth: 1, borderColor: '#ccc', alignItems: 'center', justifyContent: 'center', zIndex: 2 }}>
+            <View style={{ position: 'absolute', top: 6, right: 6, width: 26, height: 26, borderRadius: 6, backgroundColor: isSelected ? '#333' : 'rgba(255,255,255,0.9)', borderWidth: 1, borderColor: '#ccc', alignItems: 'center', justifyContent: 'center', zIndex: 2 }}>
               <MaterialIcons name={isSelected ? 'check-box' : 'check-box-outline-blank'} size={18} color={isSelected ? '#fff' : '#333'} />
             </View>
           ) : null}
@@ -739,8 +757,8 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
 
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
           <TouchableOpacity style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#F4F4F2', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6 }} onPress={() => setMinimizeBays((v) => !v)}>
-            <MaterialIcons name={minimizeBays ? 'unfold-less' : 'unfold-more'} size={18} color="#17321d" />
-            <Text style={{ marginLeft: 8, color: '#17321d', fontWeight: '700' }}>{minimizeBays ? 'Compact View' : 'Normal View'}</Text>
+            <MaterialIcons name={minimizeBays ? 'unfold-less' : 'unfold-more'} size={18} color="#333" />
+            <Text style={{ marginLeft: 8, color: '#333', fontWeight: '700' }}>{minimizeBays ? 'Compact View' : 'Normal View'}</Text>
           </TouchableOpacity>
 
           {isSelecting ? (
@@ -1095,7 +1113,7 @@ const styles = StyleSheet.create({
   pageNextText: { color: '#333', fontWeight: '600' },
   pageList: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8 },
   pageButton: { paddingHorizontal: 8, paddingVertical: 6, marginHorizontal: 4, borderRadius: 6, backgroundColor: '#fff', borderWidth: 1, borderColor: '#e0e0e0' },
-  pageButtonActive: { backgroundColor: '#17321d' },
+  pageButtonActive: { backgroundColor: '#333' },
   pageButtonText: { color: '#333', fontWeight: '600' },
   pageButtonTextActive: { color: '#fff', fontWeight: '700' },
   // Make overlay cover the entire screen (absolute) so it works correctly on web
@@ -1123,6 +1141,6 @@ const styles = StyleSheet.create({
   modalButtonText: { color: '#fff', fontWeight: '600' },
   closeButton: { marginTop: 10, backgroundColor: '#007bff', paddingVertical: 10, borderRadius: 8, alignItems: 'center' },
   closeButtonText: { color: '#fff', fontWeight: '700' },
-  badgeCircle: { position: 'absolute', top: -8, right: -8, backgroundColor: '#17321d', minWidth: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
+  badgeCircle: { position: 'absolute', top: -8, right: -8, backgroundColor: '#333', minWidth: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 4 },
   badgeText: { color: '#fff', fontSize: 12, fontWeight: '700' },
 });

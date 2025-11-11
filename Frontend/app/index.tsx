@@ -86,9 +86,28 @@ const Login: React.FC = () => {
       const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
       const override = AsyncStorage ? await AsyncStorage.getItem('backendBaseUrlOverride') : null;
       if (override) {
-        console.debug('Using persisted backendBaseUrlOverride', override);
-        try { (global as any).__EAGLEPOINT_BASE_URL__ = override; } catch {}
-        return override;
+        // Probe the persisted override quickly. If it's reachable, use it. If not,
+        // remove the persisted override so the app can fall back to other candidates.
+        try {
+          const controller = new AbortController();
+          const timeoutMs = 1500;
+          const t = setTimeout(() => { try { controller.abort(); } catch {} }, timeoutMs);
+          const url = `${override.replace(/\/$/, '')}/api/health`;
+          const resp = await fetch(url, { method: 'GET', signal: controller.signal }).catch(() => null);
+          clearTimeout(t);
+          if (resp && resp.ok) {
+            console.debug('Using persisted backendBaseUrlOverride (reachable)', override);
+            try { (global as any).__EAGLEPOINT_BASE_URL__ = override; } catch {}
+            return override;
+          }
+          console.warn('Persisted backendBaseUrlOverride is unreachable, removing override', override);
+          try { await AsyncStorage.removeItem('backendBaseUrlOverride'); } catch (e) { /* ignore */ }
+        } catch (e: any) {
+          // On any probe error, clear the override to avoid repeatedly attempting
+          // to use a host that's unreachable from this device/emulator.
+          try { await AsyncStorage.removeItem('backendBaseUrlOverride'); } catch {}
+          if (!String(e?.message ?? '').includes('Cannot find module')) console.warn('probeHosts override probe failed', e);
+        }
       }
     } catch (e: any) {
       if (!String(e?.message ?? '').includes('Cannot find module')) console.warn('probeHosts read override failed', e);

@@ -655,7 +655,7 @@ export default function AdminDashboard() {
         return (
           <ScrollView style={styles.scrollContent}>
             <View style={styles.contentContainer}>
-              {/* Header banner with welcome text inside image, date/time below */}
+              {/* Header banner with welcome text inside imagoe, date/time below */}
               <ImageBackground
                 source={require('../../../assets/General/AdminHeroImage.png')}
                 style={styles.headerBannerImage}
@@ -1076,6 +1076,7 @@ const styles = StyleSheet.create({
     height: 190,
     borderRadius: 12,
     marginBottom: 8,
+    marginTop:30,
     backgroundColor: 'transparent',
   },
   headerBannerOverlay: { flex: 1, justifyContent: 'space-between', padding: 16, alignItems: 'flex-start' },
