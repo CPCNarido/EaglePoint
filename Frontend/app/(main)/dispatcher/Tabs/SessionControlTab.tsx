@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import DispatcherHeader from "../DispatcherHeader";
 import { View, Text, TextInput, TouchableOpacity, FlatList, ScrollView, StyleSheet, Platform, Alert, Modal } from "react-native";
+import { fetchWithAuth } from '../../../_lib/fetchWithAuth';
 
 export default function SessionControlTab({ userName, counts, assignedBays }: { userName?: string; counts?: { availableBays?: number; totalBays?: number; servicemenAvailable?: number; servicemenTotal?: number; waitingQueue?: number }; assignedBays?: number[] | null }) {
   const [sessions, setSessions] = useState<any[]>([]);
@@ -29,7 +30,7 @@ export default function SessionControlTab({ userName, counts, assignedBays }: { 
         if (token) headers['Authorization'] = `Bearer ${token}`;
       } catch {}
 
-      const r = await fetch(`${baseUrl}/api/admin/reports/sessions?limit=1000`, { method: 'GET', credentials: 'include', headers });
+  const r = await fetchWithAuth(`${baseUrl}/api/admin/reports/sessions?limit=1000`, { method: 'GET', headers });
       if (r && r.ok) {
         const rows = await r.json();
         const active = Array.isArray(rows) ? rows.filter((s: any) => (s.bay_no || s.bay) && !s.end_time && !s.endTime) : [];
@@ -73,7 +74,7 @@ export default function SessionControlTab({ userName, counts, assignedBays }: { 
           const token = AsyncStorage ? await AsyncStorage.getItem('authToken') : null;
           if (token) staffHeaders['Authorization'] = `Bearer ${token}`;
         } catch {}
-        const r = await fetch(`${baseUrl}/api/admin/staff`, { method: 'GET', credentials: 'include', headers: staffHeaders });
+  const r = await fetchWithAuth(`${baseUrl}/api/admin/staff`, { method: 'GET', headers: staffHeaders });
         if (r && r.ok) {
           const rows = await r.json();
           if (!mounted) return;
@@ -169,11 +170,10 @@ export default function SessionControlTab({ userName, counts, assignedBays }: { 
         if (token) headers['Authorization'] = `Bearer ${token}`;
       } catch {}
 
-      const r = await fetch(`${baseUrl}/api/admin/reports/sessions/${editTarget.id}`, {
+      const r = await fetchWithAuth(`${baseUrl}/api/admin/reports/sessions/${editTarget.id}`, {
         method: 'PATCH',
         headers,
         body: JSON.stringify(payload),
-        credentials: 'include',
       });
       if (r.ok) {
         await fetchSessions();
@@ -211,11 +211,10 @@ export default function SessionControlTab({ userName, counts, assignedBays }: { 
         if (token) headers['Authorization'] = `Bearer ${token}`;
       } catch {}
 
-      const r = await fetch(`${baseUrl}/api/admin/sessions/${extendTarget.id}/extend`, {
+      const r = await fetchWithAuth(`${baseUrl}/api/admin/sessions/${extendTarget.id}/extend`, {
         method: 'POST',
         headers,
         body: JSON.stringify({ minutes: Number(extendMinutes || 0) }),
-        credentials: 'include',
       });
       if (r.ok) {
         await fetchSessions();
@@ -252,11 +251,10 @@ export default function SessionControlTab({ userName, counts, assignedBays }: { 
         if (token) headers['Authorization'] = `Bearer ${token}`;
       } catch {}
 
-      const r = await fetch(`${baseUrl}/api/admin/bays/${item.bay}/override`, {
+      const r = await fetchWithAuth(`${baseUrl}/api/admin/bays/${item.bay}/override`, {
         method: 'POST',
         headers,
         body: JSON.stringify({ action: 'end', sessionId: item.id }),
-        credentials: 'include',
       });
       if (r.ok) {
         await fetchSessions();
@@ -292,11 +290,10 @@ export default function SessionControlTab({ userName, counts, assignedBays }: { 
         if (token) headers['Authorization'] = `Bearer ${token}`;
       } catch {}
 
-      const r = await fetch(`${baseUrl}/api/admin/bays/${item.bay}/start`, {
+      const r = await fetchWithAuth(`${baseUrl}/api/admin/bays/${item.bay}/start`, {
         method: 'POST',
         headers,
         body: JSON.stringify({ nickname: item.name }),
-        credentials: 'include',
       });
       if (r.ok) {
         await fetchSessions();

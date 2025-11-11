@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { View, Text, ScrollView, StyleSheet, Platform, TextInput, TouchableOpacity, Modal, Pressable, ActivityIndicator, Animated, Easing } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
+import { fetchWithAuth } from '../../../_lib/fetchWithAuth';
 
 export default function AuditLogs() {
   const [adminName, setAdminName] = useState<string>('Admin');
@@ -31,16 +32,13 @@ export default function AuditLogs() {
     return () => clearInterval(t);
   }, []);
 
-  // helper: fetch with timeout using AbortController
-  const fetchWithTimeout = async (input: RequestInfo, init?: RequestInit, timeout = 5000) => {
-    const controller = new AbortController();
-    const id = setTimeout(() => controller.abort(), timeout);
+  // helper: fetch with timeout wrapper around fetchWithAuth
+  const fetchAuthWithTimeout = async (input: RequestInfo, init?: RequestInit, timeout = 5000) => {
+    const timeoutPromise = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), timeout));
     try {
-      const res = await fetch(input, { ...(init || {}), signal: controller.signal });
-      clearTimeout(id);
-      return res;
+      const res = await Promise.race([fetchWithAuth(String(input), init || {}), timeoutPromise]);
+      return res as Response;
     } catch (e) {
-      clearTimeout(id);
       throw e;
     }
   };
@@ -62,7 +60,7 @@ export default function AuditLogs() {
   useEffect(() => {
     if (showUserFilterOptions) {
       anim.setValue(0);
-      Animated.timing(anim, { toValue: 1, duration: 180, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+      Animated.timing(anim, { toValue: 1, duration: 180, easing: Easing.out(Easing.cubic), useNativeDriver: Platform.OS !== 'web' }).start();
     } else {
       anim.setValue(0);
     }
@@ -71,21 +69,7 @@ export default function AuditLogs() {
   const fetchAdmin = async () => {
     try {
       const baseUrl = getBaseUrl();
-      let res = await fetchWithTimeout(`${baseUrl}/api/admin/me`, { method: 'GET', credentials: 'include' }, 4000);
-      // If cookie-based auth failed, try Bearer token fallback (native clients store authToken)
-      if (!res.ok) {
-        try {
-          // @ts-ignore - dynamic import to avoid bundler-time dependency
-          const AsyncStorageModule = await import('@react-native-async-storage/async-storage').catch(() => null);
-          const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
-          const token = AsyncStorage ? await AsyncStorage.getItem('authToken') : null;
-          if (token) {
-            res = await fetchWithTimeout(`${baseUrl}/api/admin/me`, { method: 'GET', headers: { Authorization: `Bearer ${token}` } }, 4000);
-          }
-        } catch {
-          // ignore
-        }
-      }
+      let res = await fetchAuthWithTimeout(`${baseUrl}/api/admin/me`, { method: 'GET' }, 4000);
       if (!res.ok) return;
       const d = await res.json();
       const name = d?.full_name || d?.name || d?.username || 'Admin';
@@ -108,21 +92,7 @@ export default function AuditLogs() {
       if (startDate) params.set('startDate', startDate);
       if (endDate) params.set('endDate', endDate);
       if (selectedUserId) params.set('userId', String(selectedUserId));
-      let res = await fetchWithTimeout(`${getBaseUrl()}/api/admin/audit?${params.toString()}`, { method: 'GET', credentials: 'include' }, 5000);
-      // fallback to bearer token if cookie-based auth fails
-      if (!res.ok) {
-        try {
-          // @ts-ignore - dynamic import to avoid bundler-time dependency
-          const AsyncStorageModule = await import('@react-native-async-storage/async-storage').catch(() => null);
-          const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
-          const token = AsyncStorage ? await AsyncStorage.getItem('authToken') : null;
-          if (token) {
-            res = await fetchWithTimeout(`${getBaseUrl()}/api/admin/audit?${params.toString()}`, { method: 'GET', headers: { Authorization: `Bearer ${token}` } }, 5000);
-          }
-        } catch {
-          // ignore
-        }
-      }
+      let res = await fetchAuthWithTimeout(`${getBaseUrl()}/api/admin/audit?${params.toString()}`, { method: 'GET' }, 5000);
       if (!res.ok) {
         setLogs([]);
         setFetchError(`Server returned ${res.status}`);
@@ -153,18 +123,7 @@ export default function AuditLogs() {
 
   const fetchStaff = async () => {
     try {
-      let res = await fetchWithTimeout(`${getBaseUrl()}/api/admin/staff`, { method: 'GET', credentials: 'include' }, 4000);
-      if (!res.ok) {
-        try {
-          // @ts-ignore
-          const AsyncStorageModule = await import('@react-native-async-storage/async-storage').catch(() => null);
-          const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
-          const token = AsyncStorage ? await AsyncStorage.getItem('authToken') : null;
-          if (token) res = await fetchWithTimeout(`${getBaseUrl()}/api/admin/staff`, { method: 'GET', headers: { Authorization: `Bearer ${token}` } }, 4000);
-        } catch {
-          // ignore
-        }
-      }
+      let res = await fetchAuthWithTimeout(`${getBaseUrl()}/api/admin/staff`, { method: 'GET' }, 4000);
       if (!res.ok) return setStaff([]);
       const data = await res.json();
       setStaff(Array.isArray(data) ? data : []);

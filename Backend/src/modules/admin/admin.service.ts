@@ -1101,6 +1101,8 @@ export class AdminService {
         out.currencySymbol = site.currency_symbol;
         // return a boolean for enableReservations to make it easier for callers
         out.enableReservations = String(site.enable_reservations === true);
+        // include typed seal path if present (server-relative path like /uploads/xxx)
+        if (site.seal_path) out.sealPath = site.seal_path;
       }
 
       const pricing = await (this.prisma as any).pricingConfig.findFirst();
@@ -1130,7 +1132,7 @@ export class AdminService {
   async updateSettings(payload: Record<string, any>) {
     if (!payload || typeof payload !== 'object') throw new BadRequestException('Invalid payload');
 
-    const siteKeys = ['siteName', 'currencySymbol', 'enableReservations'];
+  const siteKeys = ['siteName', 'currencySymbol', 'enableReservations', 'sealPath'];
     const pricingKeys = ['timedSessionRate', 'openTimeRate'];
     const operationalKeys = ['totalAvailableBays', 'standardTeeIntervalMinutes', 'ballBucketWarningThreshold'];
 
@@ -1143,6 +1145,7 @@ export class AdminService {
         if (payload.siteName !== undefined) siteData.site_name = String(payload.siteName ?? '');
         if (payload.currencySymbol !== undefined) siteData.currency_symbol = String(payload.currencySymbol ?? '');
         if (payload.enableReservations !== undefined) siteData.enable_reservations = payload.enableReservations === true || String(payload.enableReservations) === 'true';
+        if (payload.sealPath !== undefined) siteData.seal_path = String(payload.sealPath ?? '');
         if (site) await (this.prisma as any).siteConfig.update({ where: { site_id: site.site_id }, data: siteData });
         else await (this.prisma as any).siteConfig.create({ data: siteData });
       }

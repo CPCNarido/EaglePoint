@@ -13,6 +13,7 @@ import {
 import { useRouter } from "expo-router";
 import { MaterialIcons } from "@expo/vector-icons";
 import { logoutAndClear } from '../../_lib/auth';
+import { fetchWithAuth } from '../../_lib/fetchWithAuth';
 import { useSettings } from '../../lib/SettingsProvider';
 
 import DashboardTab from "./Tabs/DashboardTab";
@@ -78,10 +79,14 @@ export default function DispatcherDashboard() {
           if (override) baseUrl = override;
         } catch {}
 
-        let r = await fetch(`${baseUrl}/api/admin/me`, { method: 'GET', credentials: 'include' });
         let data: any = null;
-        if (r.ok) data = await r.json();
-        else {
+        try {
+          const r = await fetchWithAuth(`${baseUrl}/api/admin/me`, { method: 'GET' });
+          if (r.ok) data = await r.json();
+        } catch (e) {
+          // fallback to manual attempts below
+        }
+        if (!data) {
           // fallback to bearer token saved in AsyncStorage
           try {
             // @ts-ignore
@@ -125,7 +130,7 @@ export default function DispatcherDashboard() {
 
         // overview
         try {
-          const r = await fetch(`${baseUrl}/api/dispatcher/overview`, { method: 'GET', credentials: 'include' });
+          const r = await fetchWithAuth(`${baseUrl}/api/dispatcher/overview`, { method: 'GET' });
           if (r && r.ok) {
             const ov = await r.json();
             if (!mounted) return;
@@ -154,7 +159,7 @@ export default function DispatcherDashboard() {
               // fallback: use reports to derive assigned bays
               if (!assigned.length) {
                 try {
-                  const r2 = await fetch(`${baseUrl}/api/admin/reports/sessions?limit=1000`, { method: 'GET', credentials: 'include' });
+                  const r2 = await fetchWithAuth(`${baseUrl}/api/admin/reports/sessions?limit=1000`, { method: 'GET' });
                   if (r2 && r2.ok) {
                     const rows = await r2.json();
                     const active = Array.isArray(rows) ? rows.filter((s: any) => s.bay_no && !s.end_time) : [];
@@ -169,7 +174,7 @@ export default function DispatcherDashboard() {
 
         // staff
         try {
-          const r2 = await fetch(`${baseUrl}/api/admin/staff`, { method: 'GET', credentials: 'include' });
+          const r2 = await fetchWithAuth(`${baseUrl}/api/admin/staff`, { method: 'GET' });
           if (r2 && r2.ok) {
             const staff = await r2.json();
             if (!mounted) return;
@@ -182,7 +187,7 @@ export default function DispatcherDashboard() {
 
         // waiting queue
         try {
-          const r3 = await fetch(`${baseUrl}/api/admin/reports/sessions?limit=1000`, { method: 'GET', credentials: 'include' });
+          const r3 = await fetchWithAuth(`${baseUrl}/api/admin/reports/sessions?limit=1000`, { method: 'GET' });
           if (r3 && r3.ok) {
             const rows = await r3.json();
             if (!mounted) return;

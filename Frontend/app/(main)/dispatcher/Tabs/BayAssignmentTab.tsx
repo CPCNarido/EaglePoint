@@ -15,6 +15,7 @@ import {
   Animated,
   Easing,
 } from "react-native";
+import { fetchWithAuth } from '../../../_lib/fetchWithAuth';
 
 export default function BayAssignmentScreen({ userName, counts, assignedBays }: { userName?: string; counts?: { availableBays?: number; totalBays?: number; servicemenAvailable?: number; servicemenTotal?: number; waitingQueue?: number }; assignedBays?: number[] | null }) {
   const [players, setPlayers] = useState<any[]>([]);
@@ -79,8 +80,8 @@ export default function BayAssignmentScreen({ userName, counts, assignedBays }: 
 
         const body: any = { nickname: selectedPlayer.name ?? selectedPlayer.player_name ?? selectedPlayer.nickname ?? null };
         if (svc && svc.id) body.servicemanId = svc.id;
-        // POST to server to start session on the chosen bay
-        const res = await fetch(`${baseUrl}/api/admin/bays/${selectedBay}/start`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  // POST to server to start session on the chosen bay
+  const res = await fetchWithAuth(`${baseUrl}/api/admin/bays/${selectedBay}/start`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
         if (res && res.ok) {
           Alert.alert('Assignment Complete', `${selectedPlayer.name} assigned to ${svc.name} (Bay ${selectedBay})`);
           // remove player from queue
@@ -121,16 +122,16 @@ export default function BayAssignmentScreen({ userName, counts, assignedBays }: 
         style={styles.dropdownButton}
         onPress={() => {
           // measure and open anchored dropdown similar to BayManagement
-          if (dropdownButtonRef.current && dropdownButtonRef.current.measureInWindow) {
+              if (dropdownButtonRef.current && dropdownButtonRef.current.measureInWindow) {
             dropdownButtonRef.current.measureInWindow((x: number, y: number, width: number, height: number) => {
               setDropdownPos({ x, y, width, height });
               anim.setValue(0);
               setShowBayOptions(true);
-              Animated.timing(anim, { toValue: 1, duration: 160, useNativeDriver: true }).start();
+              Animated.timing(anim, { toValue: 1, duration: 160, useNativeDriver: Platform.OS !== 'web' }).start();
             });
           } else {
             setShowBayOptions(true);
-            Animated.timing(anim, { toValue: 1, duration: 160, useNativeDriver: true }).start();
+            Animated.timing(anim, { toValue: 1, duration: 160, useNativeDriver: Platform.OS !== 'web' }).start();
           }
         }}
       >
@@ -176,16 +177,16 @@ export default function BayAssignmentScreen({ userName, counts, assignedBays }: 
         ref={servDropdownButtonRef}
         style={styles.dropdownButton}
         onPress={() => {
-          if (servDropdownButtonRef.current && servDropdownButtonRef.current.measureInWindow) {
+            if (servDropdownButtonRef.current && servDropdownButtonRef.current.measureInWindow) {
             servDropdownButtonRef.current.measureInWindow((x: number, y: number, width: number, height: number) => {
               setServDropdownPos({ x, y, width, height });
               servAnim.setValue(0);
               setShowServOptions(true);
-              Animated.timing(servAnim, { toValue: 1, duration: 180, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+              Animated.timing(servAnim, { toValue: 1, duration: 180, easing: Easing.out(Easing.cubic), useNativeDriver: Platform.OS !== 'web' }).start();
             });
           } else {
             setShowServOptions(true);
-            Animated.timing(servAnim, { toValue: 1, duration: 180, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+            Animated.timing(servAnim, { toValue: 1, duration: 180, easing: Easing.out(Easing.cubic), useNativeDriver: Platform.OS !== 'web' }).start();
           }
         }}
       >
@@ -248,7 +249,7 @@ export default function BayAssignmentScreen({ userName, counts, assignedBays }: 
 
         // Fetch recent sessions and filter for players without bay assignment and not ended
         try {
-          const res = await fetch(`${baseUrl}/api/admin/reports/sessions?limit=1000`, { method: 'GET', credentials: 'include' });
+          const res = await fetchWithAuth(`${baseUrl}/api/admin/reports/sessions?limit=1000`, { method: 'GET' });
           if (res && res.ok) {
             const rows = await res.json();
             // rows may be array of mapped sessions; select those with no bay_no and no end_time
@@ -259,7 +260,7 @@ export default function BayAssignmentScreen({ userName, counts, assignedBays }: 
 
         // Fetch servicemen (include online flag)
         try {
-          const r2 = await fetch(`${baseUrl}/api/admin/staff`, { method: 'GET', credentials: 'include' });
+          const r2 = await fetchWithAuth(`${baseUrl}/api/admin/staff`, { method: 'GET' });
           if (r2 && r2.ok) {
             const staff = await r2.json();
             const svc = Array.isArray(staff) ? staff.filter((s: any) => String(s.role).toLowerCase() === 'serviceman').sort((a: any,b: any)=> (a.employee_id||0)-(b.employee_id||0)) : [];
@@ -269,7 +270,7 @@ export default function BayAssignmentScreen({ userName, counts, assignedBays }: 
 
         // Fetch bay overview so we can list actual available bays (matches mock dropdown behavior)
         try {
-          const r3 = await fetch(`${baseUrl}/api/admin/overview`, { method: 'GET', credentials: 'include' });
+          const r3 = await fetchWithAuth(`${baseUrl}/api/admin/overview`, { method: 'GET' });
           if (r3 && r3.ok) {
             const ov = await r3.json();
             const rows = ov?.bays || ov?.bayList || ov || [];

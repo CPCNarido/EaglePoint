@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import DispatcherHeader from "../DispatcherHeader";
 import { View, Text, ScrollView, TouchableOpacity, Modal, StyleSheet, ActivityIndicator, useWindowDimensions, Platform, TextInput, Alert } from "react-native";
 import { MaterialIcons } from "@expo/vector-icons";
+import { fetchWithAuth } from '../../../_lib/fetchWithAuth';
 
 type BayRow = {
   bay_id: number;
@@ -143,7 +144,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
       showGlobalLoading = prevOverviewJsonRef.current == null;
       if (showGlobalLoading) setLoading(true);
       const baseUrl = await resolveBaseUrl();
-      const res = await fetch(`${baseUrl}/api/dispatcher/overview`, { method: 'GET', credentials: 'include' });
+  const res = await fetchWithAuth(`${baseUrl}/api/dispatcher/overview`, { method: 'GET' });
       if (!res.ok) {
         if (showGlobalLoading) setLoading(false);
         setOverview(null);
@@ -172,9 +173,9 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
   const fetchBays = async () => {
     try {
       const baseUrl = await resolveBaseUrl();
-      const res = await fetch(`${baseUrl}/api/dispatcher/bays`, { method: 'GET', credentials: 'include' });
-      if (!res.ok) return setBays([]);
-      const data = await res.json();
+  const res = await fetchWithAuth(`${baseUrl}/api/dispatcher/bays`, { method: 'GET' });
+  if (!res.ok) return setBays([]);
+  const data = await res.json();
       setBays(Array.isArray(data) ? data : []);
     } catch (e) {
       setBays([]);
@@ -211,7 +212,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
   // small helper to POST JSON to an endpoint
   const postJson = async (url: string, body?: any) => {
     try {
-      const res = await fetch(url, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+      const res = await fetchWithAuth(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
       return res;
     } catch (e) {
       return null;
@@ -291,7 +292,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
         const baseUrl = await resolveBaseUrl();
         // First, try the admin override endpoint (known API): action 'End Session'
         try {
-          const res = await fetch(`${baseUrl}/api/admin/bays/${bayNum}/override`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'End Session' }) });
+          const res = await fetchWithAuth(`${baseUrl}/api/admin/bays/${bayNum}/override`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'End Session' }) });
           if (!(res && res.ok)) {
             // fallback to a couple of legacy/alternative endpoints if admin override isn't present
             const candidates = [
@@ -301,7 +302,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
             for (const url of candidates) {
               try {
                 const body = url.endsWith('/end') ? undefined : JSON.stringify({ bayNo: bayNum });
-                const r2 = await fetch(url, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body });
+                const r2 = await fetchWithAuth(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
                 if (r2 && (r2.ok || r2.status === 404 || r2.status === 405)) {
                   if (r2.ok) break;
                 }
@@ -317,7 +318,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
           for (const url of candidates) {
             try {
               const body = url.endsWith('/end') ? undefined : JSON.stringify({ bayNo: bayNum });
-              const r2 = await fetch(url, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body });
+              const r2 = await fetchWithAuth(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
               if (r2 && (r2.ok || r2.status === 404 || r2.status === 405)) {
                 if (r2.ok) break;
               }
@@ -347,7 +348,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
       const baseUrl = await resolveBaseUrl();
       // First try admin override endpoint which should record and end session
       try {
-        const res = await fetch(`${baseUrl}/api/admin/bays/${bayNum}/override`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'End Session' }) });
+        const res = await fetchWithAuth(`${baseUrl}/api/admin/bays/${bayNum}/override`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'End Session' }) });
         if (res && res.ok) return true;
       } catch (e) {
         // continue to fallbacks
@@ -361,7 +362,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
       for (const url of candidates) {
         try {
           const body = url.endsWith('/end') ? undefined : JSON.stringify({ bayNo: bayNum });
-          const r2 = await fetch(url, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body });
+          const r2 = await fetchWithAuth(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
           if (r2 && r2.ok) return true;
         } catch (e) { /* ignore and try next */ }
       }

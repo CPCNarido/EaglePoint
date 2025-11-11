@@ -1,7 +1,8 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, Platform, ActivityIndicator, Alert, Modal, Pressable, Switch } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ScrollView, Platform, ActivityIndicator, Alert, Modal, Pressable, Switch, Image } from 'react-native';
 import { tw } from 'react-native-tailwindcss';
 import { useSettings } from '../../../lib/SettingsProvider';
+import { fetchWithAuth } from '../../../_lib/fetchWithAuth';
 import { buildNotification } from '../../../lib/notification';
 
 export default function SystemSettingsTab() {
@@ -46,7 +47,7 @@ export default function SystemSettingsTab() {
   const fetchSettings = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${baseUrl}/api/admin/settings`, { method: 'GET', credentials: 'include' });
+  const res = await fetchWithAuth(`${baseUrl}/api/admin/settings`, { method: 'GET' });
       if (!res.ok) return;
       const data = await res.json();
       if (data.siteName || data.siteTitle) setSiteName(String(data.siteName ?? data.siteTitle ?? siteName));
@@ -69,7 +70,7 @@ export default function SystemSettingsTab() {
 
   const fetchAdminInfo = async () => {
     try {
-      const res = await fetch(`${baseUrl}/api/admin/me`, { method: 'GET', credentials: 'include' });
+      const res = await fetchWithAuth(`${baseUrl}/api/admin/me`, { method: 'GET' });
       if (!res.ok) return;
       const data = await res.json();
       const name = data?.full_name || data?.name || data?.username || data?.displayName || 'Admin';
@@ -131,6 +132,79 @@ export default function SystemSettingsTab() {
       timedSessionRate: t,
       openTimeRate: o,
     });
+  };
+
+  // Upload seal image to backend and refresh settings on success
+  const [uploading, setUploading] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
+
+  // Centralized upload handler that accepts either a web File or a RN-style { uri, name, type }
+  const uploadFromFile = async (fileObj: any) => {
+    if (!fileObj) return;
+    setUploading(true);
+    try {
+      const form = new FormData();
+      if (Platform.OS === 'web') {
+        // fileObj is a File
+        form.append('file', fileObj as any);
+      } else {
+        // react-native expects { uri, name, type }
+        const name = fileObj.name || `seal-${Date.now()}.png`;
+        const type = fileObj.type || 'image/png';
+        // @ts-ignore
+        form.append('file', { uri: fileObj.uri, name, type });
+      }
+
+  const r = await fetchWithAuth(`${baseUrl}/api/admin/settings/seal`, { method: 'POST', body: form });
+      if (!r.ok) {
+        const txt = await r.text().catch(() => 'Upload failed');
+        Alert.alert('Upload failed', txt || 'Upload failed');
+        return;
+      }
+      const body = await r.json().catch(() => null);
+      const url = body?.url ?? null;
+      try { if (typeof window !== 'undefined' && window.dispatchEvent) window.dispatchEvent(new Event('settings:updated')); } catch {}
+      try { if (typeof window !== 'undefined' && window.dispatchEvent) window.dispatchEvent(new Event('overview:updated')); } catch {}
+      Alert.alert('Uploaded', url ? 'Seal uploaded successfully.' : 'Uploaded; settings refreshed.');
+    } catch (e: any) {
+      console.warn('Seal upload failed', e);
+      Alert.alert('Error', String(e?.message ?? e) || 'Upload failed');
+    } finally {
+      setUploading(false);
+      setDragActive(false);
+    }
+  };
+  const pickAndUpload = async () => {
+    try {
+      // dynamic import so we don't require DocumentPicker in web/native builds where it's not present
+  // dynamic import - ts-ignore so build doesn't require the module at compile time
+  // (it may not be present in some environments)
+  // @ts-ignore
+  const docPicker = await import('expo-document-picker').catch(() => null);
+      if (!docPicker || !docPicker.getDocumentAsync) {
+        Alert.alert('Not supported', 'File picker is not available in this environment. Use the web admin UI to upload a seal.');
+        return;
+      }
+      const res = await docPicker.getDocumentAsync({ type: 'image/*' });
+      if (!res || res.type !== 'success') return;
+
+      // Use uploadFromFile to handle web/native differences
+      if (Platform.OS === 'web') {
+        // fetch the uri to get a Blob and wrap as File
+        const name = res.name || `seal-${Date.now()}.png`;
+        const blob = await (await fetch(res.uri)).blob();
+        // @ts-ignore File constructor available in browsers
+        const file = new File([blob], name, { type: blob.type || 'image/png' });
+        await uploadFromFile(file);
+      } else {
+        await uploadFromFile({ uri: res.uri, name: res.name || `seal-${Date.now()}.png`, type: (res.mimeType as string) || 'image/png' });
+      }
+    } catch (e: any) {
+      console.warn('Seal upload failed', e);
+      Alert.alert('Error', String(e?.message ?? e) || 'Upload failed');
+    } finally {
+      setUploading(false);
+    }
   };
 
   const performConfirmSave = async () => {
@@ -246,6 +320,61 @@ export default function SystemSettingsTab() {
             <TouchableOpacity style={styles.saveButton} onPress={savePricing} disabled={saving}>
               <Text style={styles.saveButtonText}>{saving ? 'Saving...' : 'Save Changes'}</Text>
             </TouchableOpacity>
+          </View>
+
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Branding</Text>
+            <View style={{ marginBottom: 12 }}>
+              <Text style={{ color: '#444', marginBottom: 6 }}>Splash Seal</Text>
+              {provider?.sealUrl ? (
+                <Image source={{ uri: provider.sealUrl }} style={{ width: 96, height: 96, borderRadius: 8, marginBottom: 8, backgroundColor: '#FFF' }} resizeMode="contain" />
+              ) : (
+                <View style={{ width: 96, height: 96, borderRadius: 8, backgroundColor: '#EEE', alignItems: 'center', justifyContent: 'center', marginBottom: 8 }}>
+                  <Text style={{ color: '#777' }}>No Seal</Text>
+                </View>
+              )}
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <TouchableOpacity style={[styles.saveButton, { backgroundColor: '#C9DABF' }]} onPress={pickAndUpload} disabled={uploading}>
+                  {uploading ? <ActivityIndicator size="small" color="#12411A" /> : <Text style={[styles.saveButtonText]}>Upload (web/native)</Text>}
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.saveButton, { backgroundColor: '#EEE' }]} onPress={() => { try { if (typeof window !== 'undefined' && window.dispatchEvent) window.dispatchEvent(new Event('settings:updated')); } catch {} }}>
+                  <Text style={{ color: '#12411A', fontWeight: '700' }}>Refresh</Text>
+                </TouchableOpacity>
+              </View>
+              <Text style={{ color: '#666', marginTop: 8, fontSize: 12 }}>Upload PNG to update splash seal. Max 2MB. Use the web UI or supported native pickers.</Text>
+
+              {/* Web-only drag & drop area */}
+              {Platform.OS === 'web' ? (
+                // @ts-ignore - using native DOM drag events on web
+                <div
+                  onDragOver={(e: any) => { e.preventDefault(); setDragActive(true); }}
+                  onDragLeave={(e: any) => { e.preventDefault(); setDragActive(false); }}
+                  onDrop={async (e: any) => {
+                    try {
+                      e.preventDefault();
+                      setDragActive(false);
+                      const files = e.dataTransfer?.files;
+                      if (!files || files.length === 0) return;
+                      const f = files[0];
+                      // Only accept images
+                      if (!f.type || !f.type.startsWith('image/')) {
+                        Alert.alert('Invalid file', 'Please drop an image file (PNG/JPEG)');
+                        return;
+                      }
+                      await uploadFromFile(f);
+                    } catch (err) {
+                      console.warn('Drop upload failed', err);
+                    }
+                  }}
+                  style={{ marginTop: 10, borderWidth: 2, borderStyle: 'dashed', borderColor: dragActive ? '#12411A' : '#DDD', borderRadius: 8, padding: 12, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                >
+                  <div style={{ pointerEvents: 'none' }}>
+                    <div style={{ fontSize: 13, color: dragActive ? '#12411A' : '#666' }}><strong>Drag & drop an image file here to upload</strong></div>
+                    <div style={{ fontSize: 12, color: '#777', marginTop: 6 }}>Or click Upload (web/native) to pick a file</div>
+                  </div>
+                </div>
+              ) : null}
+            </View>
           </View>
 
         </View>

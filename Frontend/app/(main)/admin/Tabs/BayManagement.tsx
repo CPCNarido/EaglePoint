@@ -16,6 +16,7 @@ import {
 import { MaterialIcons } from "@expo/vector-icons";
 import { tw } from "react-native-tailwindcss";
 import { useSettings } from '../../../lib/SettingsProvider';
+import { fetchWithAuth } from '../../../_lib/fetchWithAuth';
 
 export default function BayManagement() {
   const [search, setSearch] = useState("");
@@ -65,7 +66,7 @@ export default function BayManagement() {
   useEffect(() => {
     if (showFilterOptions) {
       anim.setValue(0);
-      Animated.timing(anim, { toValue: 1, duration: 180, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+      Animated.timing(anim, { toValue: 1, duration: 180, easing: Easing.out(Easing.cubic), useNativeDriver: Platform.OS !== 'web' }).start();
     } else {
       anim.setValue(0);
     }
@@ -77,10 +78,10 @@ export default function BayManagement() {
   const fetchOverview = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${baseUrl}/api/admin/overview`, { method: 'GET', credentials: 'include' });
+      const res = await fetchWithAuth(`${baseUrl}/api/admin/overview`, { method: 'GET' });
       if (!res.ok) {
         // try fallback endpoint
-        const tryRes = await fetch(`${baseUrl}/api/admin/bays`, { method: 'GET', credentials: 'include' });
+        const tryRes = await fetchWithAuth(`${baseUrl}/api/admin/bays`, { method: 'GET' });
         if (!tryRes.ok) { setBays([]); return; }
         const tryData = await tryRes.json();
         mapAndSetBays(tryData?.bays || tryData || []);
@@ -122,7 +123,7 @@ export default function BayManagement() {
 
   const fetchAdminInfo = async () => {
     try {
-      const res = await fetch(`${baseUrl}/api/admin/me`, { method: 'GET', credentials: 'include' });
+      const res = await fetchWithAuth(`${baseUrl}/api/admin/me`, { method: 'GET' });
       if (!res.ok) return;
       const data = await res.json();
       const name = data?.full_name || data?.name || data?.username || data?.displayName || 'Admin';
@@ -406,7 +407,7 @@ export default function BayManagement() {
                 <TouchableOpacity style={[styles.cancelButton, { backgroundColor: '#C9DABF' }]} onPress={() => setShowOverrideConfirm(false)}>
                   <Text style={[styles.cancelButtonText, { color: '#12411A' }]}>Cancel</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.confirmButton, { backgroundColor: '#7E0000' }]} onPress={async () => {
+                    <TouchableOpacity style={[styles.confirmButton, { backgroundColor: '#7E0000' }]} onPress={async () => {
                   // perform override
                   if (!overrideTarget) return;
                   setOverrideBusy(true);
@@ -414,17 +415,15 @@ export default function BayManagement() {
                     const bayNo = overrideTarget.bayNo;
                     const bayId = overrideTarget.bayId ?? null;
                     // primary endpoint: POST /api/admin/bays/:bayNo/override
-                    let res = await fetch(`${baseUrl}/api/admin/bays/${bayNo}/override`, {
+                    let res = await fetchWithAuth(`${baseUrl}/api/admin/bays/${bayNo}/override`, {
                       method: 'POST',
-                      credentials: 'include',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ action: selectedAction, bayId, adminId }),
                     });
                     if (!res.ok) {
                       // fallback to generic endpoint
-                      res = await fetch(`${baseUrl}/api/admin/override`, {
+                      res = await fetchWithAuth(`${baseUrl}/api/admin/override`, {
                         method: 'POST',
-                        credentials: 'include',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ bayNo, action: selectedAction, bayId, adminId }),
                       });

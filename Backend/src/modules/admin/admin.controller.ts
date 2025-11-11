@@ -14,6 +14,8 @@ import {
   UseGuards,
   Req,
   Res,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { AdminService } from './admin.service';
@@ -21,6 +23,9 @@ import { ChatService } from '../chat/chat.service';
 import { JwtService } from '@nestjs/jwt';
 import { AuthGuard } from '../auth/auth.guard';
 import { CreateStaffDto } from './dto/create-staff.dto';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
+import { extname } from 'path';
 
 @Controller('admin')
 export class AdminController {
@@ -313,6 +318,64 @@ export class AdminController {
       throw new InternalServerErrorException(
         e && e.message ? e.message : 'Failed updating settings',
       );
+    }
+  }
+
+  // Upload a seal PNG and persist its URL into settings (sealUrl). Accepts
+  // multipart/form-data with field name `file`.
+  @UseGuards(AuthGuard)
+  @Post('settings/seal')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: diskStorage({
+        destination: (req, file, cb) => {
+          // store uploads in ./uploads relative to project root
+          cb(null, process.cwd() + '/uploads');
+        },
+        filename: (req, file, cb) => {
+          const name = `seal-${Date.now()}${extname(file.originalname)}`;
+          cb(null, name);
+        },
+      }),
+      fileFilter: (req, file, cb) => {
+        if (!file.mimetype || !file.mimetype.startsWith('image/')) {
+          return cb(new BadRequestException('Only image files are allowed'), false);
+        }
+        return cb(null, true);
+      },
+      limits: { fileSize: 2 * 1024 * 1024 }, // 2MB default limit
+    }),
+  )
+  async uploadSeal(@UploadedFile() file: any, @Req() req: Request) {
+    try {
+      if (!file) throw new BadRequestException('File is required');
+      // Build a public URL for the uploaded file. Rely on request host/proto.
+      const proto = (req as any).protocol || 'http';
+      const host = req.get('host') || `localhost:${process.env.PORT ?? 3000}`;
+      const url = `${proto}://${host}/uploads/${file.filename}`;
+
+  // Persist the URL and also store the raw filesystem path to the uploaded file.
+  // The raw path can be useful for local dev and for workflows that want the
+  // actual file location. Note: storing absolute filesystem paths is
+  // environment-specific — production deployments should prefer an
+  // accessible HTTP URL (sealUrl).
+  const serverWebPath = `/uploads/${file.filename}`;
+  // Persist the repo-relative uploads path so the frontend can load via
+  // ../../../Backend/uploads/<filename> as requested (no absolute IP or FS path).
+  const serverRepoRelative = `../../../Backend/uploads/${file.filename}`;
+  // Log what will be persisted so operators can see the stored paths in logs
+  Logger.log(`Persisting seal paths -> web: ${serverWebPath}, repoRelative: ${serverRepoRelative}`, 'AdminController');
+  await this.adminService.updateSettings({ sealUrl: url, sealPath: serverRepoRelative });
+
+  // Return only the persisted repo-relative path so callers can immediately
+  // use the DB-stored value (e.g. frontend can read `path` and update
+  // its local settings preview). We intentionally omit the public URL to
+  // simplify the contract and avoid relying on host/protocol values.
+  return { ok: true, path: serverRepoRelative };
+    } catch (e: any) {
+      Logger.error('Failed uploading seal', e, 'AdminController');
+      if (e instanceof BadRequestException) throw e;
+      throw new InternalServerErrorException(e?.message ?? 'Failed uploading seal');
     }
   }
 

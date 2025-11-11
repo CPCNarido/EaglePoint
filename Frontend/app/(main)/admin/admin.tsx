@@ -4,6 +4,7 @@ import { tw } from 'react-native-tailwindcss';
 import { useRouter } from "expo-router";
 import { useNavigation } from '@react-navigation/native';
 import { logoutAndClear } from '../../_lib/auth';
+import { fetchWithAuth } from '../../_lib/fetchWithAuth';
 import { useSettings } from '../../lib/SettingsProvider';
 import { buildNotification } from '../../lib/notification';
 import StaffManagement from "./Tabs/StaffManagement";
@@ -95,14 +96,14 @@ export default function AdminDashboard() {
   useEffect(() => {
     try {
       if ((notifications || []).length > 0 && !adminShowSavedNotification) {
-        setAdminShowSavedNotification(true);
-        // animate in
-        try { Animated.timing(notifAnimRef.current, { toValue: 1, duration: 220, useNativeDriver: true }).start(); } catch {}
+  setAdminShowSavedNotification(true);
+  // animate in
+  try { Animated.timing(notifAnimRef.current, { toValue: 1, duration: 220, useNativeDriver: Platform.OS !== 'web' }).start(); } catch {}
         if (adminNotifTimer.current) { clearTimeout(adminNotifTimer.current as number); adminNotifTimer.current = null; }
         adminNotifTimer.current = window.setTimeout(() => {
           // animate out then remove first notification
           try {
-            Animated.timing(notifAnimRef.current, { toValue: 0, duration: 300, useNativeDriver: true }).start(() => {
+            Animated.timing(notifAnimRef.current, { toValue: 0, duration: 300, useNativeDriver: Platform.OS !== 'web' }).start(() => {
               setNotifications((prev) => (prev || []).slice(1));
               setAdminShowSavedNotification(false);
             });
@@ -255,7 +256,7 @@ export default function AdminDashboard() {
         const statusToMatch = showSessionLegend ? (bayData?.session_type ?? inferSessionType(bayData)) : (bayData?.status ?? null);
         const isActive = legendMatchesStatus(legendFilter, statusToMatch ?? null);
         if (!bayAnimMap.current[key]) bayAnimMap.current[key] = new Animated.Value(isActive ? 1 : 0);
-        animations.push(Animated.timing(bayAnimMap.current[key], { toValue: isActive ? 1 : 0, duration: 220, useNativeDriver: true }));
+  animations.push(Animated.timing(bayAnimMap.current[key], { toValue: isActive ? 1 : 0, duration: 220, useNativeDriver: Platform.OS !== 'web' }));
       }
       if (animations.length) Animated.parallel(animations).start();
     }, [legendFilter, overview, settings.totalAvailableBays]);
@@ -356,7 +357,7 @@ export default function AdminDashboard() {
       } catch {
         // ignore
       }
-      const res = await fetch(`${baseUrl}/api/admin/overview`, { method: 'GET', credentials: 'include' });
+  const res = await fetchWithAuth(`${baseUrl}/api/admin/overview`, { method: 'GET' });
       if (!res.ok) {
         setOverview(null);
         return;
@@ -415,11 +416,12 @@ export default function AdminDashboard() {
         } catch {
           // ignore
         }
-        let r = await fetch(`${baseUrl}/api/admin/me`, { method: 'GET', credentials: 'include' });
         let d: any = null;
-        if (r.ok) {
-          d = await r.json();
-        } else {
+        try {
+          const r = await fetchWithAuth(`${baseUrl}/api/admin/me`, { method: 'GET' });
+          if (r.ok) d = await r.json();
+        } catch {}
+        if (!d) {
           // Try bearer auth using saved access token (native clients)
           try {
             // @ts-ignore
@@ -484,7 +486,24 @@ export default function AdminDashboard() {
 
         // Only try SSE where EventSource exists (web or RN environment with polyfill)
         if (typeof EventSource !== 'undefined') {
-          const streamUrl = `${baseUrl.replace(/\/$/, '')}/api/admin/overview/stream`;
+          // Build a stream URL that matches the backend chat SSE endpoint. EventSource
+          // cannot set headers, so include a token query param when available.
+          let token: string | null = null;
+          try {
+            if (typeof window !== 'undefined' && window.localStorage) token = window.localStorage.getItem('authToken');
+          } catch {}
+          if (!token) {
+            try {
+              // @ts-ignore
+              const AsyncStorageModule = await import('@react-native-async-storage/async-storage').catch(() => null);
+              const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
+              if (AsyncStorage && AsyncStorage.getItem) token = await AsyncStorage.getItem('authToken');
+            } catch {}
+          }
+
+          const streamBase = baseUrl.replace(/\/$/, '');
+          // Use the chats SSE endpoint on the server which supports ?token= fallback
+          const streamUrl = token ? `${streamBase}/api/admin/chats/stream?token=${encodeURIComponent(token)}` : `${streamBase}/api/admin/chats/stream`;
           try {
             es = new EventSource(streamUrl);
             es.onmessage = (ev: any) => {
@@ -940,7 +959,7 @@ export default function AdminDashboard() {
               if (adminNotifTimer.current) { clearTimeout(adminNotifTimer.current as number); adminNotifTimer.current = null; }
               adminNotifTimer.current = window.setTimeout(() => {
                 try {
-                  Animated.timing(notifAnimRef.current, { toValue: 0, duration: 300, useNativeDriver: true }).start(() => {
+                  Animated.timing(notifAnimRef.current, { toValue: 0, duration: 300, useNativeDriver: Platform.OS !== 'web' }).start(() => {
                     setNotifications((prev) => (prev || []).slice(1));
                     setAdminShowSavedNotification(false);
                   });
@@ -960,7 +979,7 @@ export default function AdminDashboard() {
                   if (adminNotifTimer.current) { clearTimeout(adminNotifTimer.current as number); adminNotifTimer.current = null; }
                 } catch {}
                 try {
-                  Animated.timing(notifAnimRef.current, { toValue: 0, duration: 300, useNativeDriver: true }).start(() => {
+                  Animated.timing(notifAnimRef.current, { toValue: 0, duration: 300, useNativeDriver: Platform.OS !== 'web' }).start(() => {
                     setNotifications((prev) => (prev || []).slice(1));
                     setAdminShowSavedNotification(false);
                   });

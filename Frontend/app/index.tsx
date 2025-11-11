@@ -350,7 +350,6 @@ const Login: React.FC = () => {
   if (showInitialSplash) return (
     <Splash
       onClose={() => { setShowInitialSplash(false); setShowSplashSticky(false); setShowSplashRaw(false); }}
-      sealSource={{ uri: 'https://via.placeholder.com/88x88/17321d/ffffff?text=Seal' }}
       noOverlayBackground={showSplashRaw}
     />
   );
@@ -360,7 +359,6 @@ const Login: React.FC = () => {
     <Splash
       message="Signing in..."
       onClose={() => { setShowTransitionSplash(false); setShowSplashSticky(false); setShowSplashRaw(false); }}
-      sealSource={{ uri: 'https://via.placeholder.com/88x88/17321d/ffffff?text=Seal' }}
       noOverlayBackground={showSplashRaw}
     />
   );

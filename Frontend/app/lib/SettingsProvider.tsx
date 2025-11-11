@@ -5,6 +5,11 @@ type SettingsShape = {
   siteName: string;
   currencySymbol: string;
   
+  // optional admin-configured seal image URL (allows admin to upload/select a PNG)
+  sealUrl?: string | null;
+  // optional server-provided path to the seal image (e.g. /uploads/xxx). Prefer sealUrl when present.
+  sealPath?: string | null;
+
   enableReservations?: boolean;
   totalAvailableBays?: number;
   refresh: () => Promise<void>;
@@ -45,9 +50,13 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         ...s,
         siteName: data?.siteName ?? data?.site_name ?? s.siteName,
         currencySymbol: data?.currencySymbol ?? data?.currency_symbol ?? s.currencySymbol,
-
         enableReservations: typeof data?.enableReservations === 'boolean' ? data.enableReservations : s.enableReservations,
         totalAvailableBays: Number(data?.totalAvailableBays ?? data?.total_available_bays ?? s.totalAvailableBays),
+
+        // allow admin to provide a seal image URL (sealUrl or seal_url)
+  sealUrl: data?.sealUrl ?? data?.seal_url ?? s.sealUrl,
+  // consume typed sealPath from server if provided
+  sealPath: data?.sealPath ?? data?.seal_path ?? s?.sealPath ?? null,
       }));
     } catch {
       // ignore network errors and keep defaults

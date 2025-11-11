@@ -1,118 +1,111 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
-generator client {
-  provider = "prisma-client-js"
-}
-
 model Employee {
-  employee_id Int       @id @default(autoincrement())
-  full_name   String
-  username    String?   @unique
-  password    String?
-  role        Role
-  created_at  DateTime  @default(now())
-  created_by  Int?
-  creator     Employee? @relation("CreatedEmployees", fields: [created_by], references: [employee_id])
-
-  createdEmployees Employee[] @relation("CreatedEmployees")
-  players          Player[]
-  updatedBays      Bay[]      @relation("BayUpdatedBy")
-  updatedInventories BallBucketInventory[] @relation("InventoryUpdatedBy")
-  dispatcherAssignments BayAssignment[] @relation("DispatcherAssignments")
-  servicemanAssignments BayAssignment[] @relation("ServicemanAssignments")
-  ballTransactions  BallTransaction[] @relation("BallHandlerTransactions")
-  servicemanQueues  ServicemanQueue[]
-  systemLogs        SystemLog[] @relation("EmployeeLogs")
-  approvedLogs      SystemLog[] @relation("ApprovedLogs")
-
-  // 🗨️ Chat Relationships
-  sentMessages     ChatMessage[] @relation("SentMessages")
-  receivedMessages ChatMessage[] @relation("ReceivedMessages")
-  chatParticipants ChatParticipant[]
+  employee_id                 Int                           @id @default(autoincrement())
+  full_name                   String
+  username                    String?                       @unique
+  password                    String?
+  role                        Role
+  created_at                  DateTime                      @default(now())
+  created_by                  Int?
+  online                      Boolean                       @default(false)
+  updatedInventories          BallBucketInventory[]         @relation("InventoryUpdatedBy")
+  ballTransactions            BallTransaction[]             @relation("BallHandlerTransactions")
+  updatedBays                 Bay[]                         @relation("BayUpdatedBy")
+  dispatcherAssignments       BayAssignment[]               @relation("DispatcherAssignments")
+  servicemanAssignments       BayAssignment[]               @relation("ServicemanAssignments")
+  receivedMessages            ChatMessage[]                 @relation("ReceivedMessages")
+  sentMessages                ChatMessage[]                 @relation("SentMessages")
+  chatParticipants            ChatParticipant[]
+  creator                     Employee?                     @relation("CreatedEmployees", fields: [created_by], references: [employee_id])
+  createdEmployees            Employee[]                    @relation("CreatedEmployees")
+  Notification                Notification[]
+  NotificationAcknowledgement NotificationAcknowledgement[]
+  players                     Player[]
+  servicemanQueues            ServicemanQueue[]
+  approvedLogs                SystemLog[]                   @relation("ApprovedLogs")
+  systemLogs                  SystemLog[]                   @relation("EmployeeLogs")
 }
 
 model Player {
-  player_id      Int       @id @default(autoincrement())
+  player_id      Int             @id @default(autoincrement())
   nickname       String?
-  receipt_number String?   @unique
+  receipt_number String?         @unique
   start_time     DateTime
   end_time       DateTime?
-  price_per_hour Decimal   @db.Decimal(10, 2)
+  price_per_hour Decimal         @db.Decimal(10, 2)
   created_by     Int
-  created_at     DateTime  @default(now())
-
-  creator Employee @relation(fields: [created_by], references: [employee_id])
-  assignments BayAssignment[]
+  created_at     DateTime        @default(now())
+  assignments    BayAssignment[]
+  creator        Employee        @relation(fields: [created_by], references: [employee_id])
 }
 
 model Bay {
-  bay_id      Int       @id @default(autoincrement())
-  bay_number  String
-  status      BayStatus @default(Available)
-  note        String?
-  updated_by  Int?
-  updated_at  DateTime  @default(now()) @updatedAt
-
-  updatedBy Employee? @relation("BayUpdatedBy", fields: [updated_by], references: [employee_id])
-  assignments BayAssignment[]
+  bay_id           Int               @id @default(autoincrement())
+  bay_number       String
+  status           BayStatus         @default(Available)
+  note             String?
+  updated_by       Int?
+  updated_at       DateTime          @default(now()) @updatedAt
+  updatedBy        Employee?         @relation("BayUpdatedBy", fields: [updated_by], references: [employee_id])
+  assignments      BayAssignment[]
   servicemanQueues ServicemanQueue[]
 }
 
 model BallBucketInventory {
-  inventory_id           Int       @id @default(autoincrement())
-  record_date            DateTime  @default(now())
-  total_buckets_start    Int
+  inventory_id            Int       @id @default(autoincrement())
+  record_date             DateTime  @default(now())
+  total_buckets_start     Int
   total_buckets_remaining Int
-  bottom_limit           Int       @default(100)
-  updated_by             Int?
-  updated_at             DateTime  @default(now()) @updatedAt
-  note                   String?
-
-  updatedBy Employee? @relation("InventoryUpdatedBy", fields: [updated_by], references: [employee_id])
+  bottom_limit            Int       @default(100)
+  updated_by              Int?
+  updated_at              DateTime  @default(now()) @updatedAt
+  note                    String?
+  updatedBy               Employee? @relation("InventoryUpdatedBy", fields: [updated_by], references: [employee_id])
 }
 
 model BayAssignment {
-  assignment_id  Int       @id @default(autoincrement())
-  player_id      Int?
-  bay_id         Int
-  dispatcher_id  Int
-  serviceman_id  Int?
-  assigned_time  DateTime
-  open_time      Boolean   @default(false)
-  end_time       DateTime?
-  // Optional typed session type stored on assignments for historical data (e.g. Open | Timed | Reserved)
-  session_type   SessionType?
-
-  player       Player?    @relation(fields: [player_id], references: [player_id])
-  bay          Bay        @relation(fields: [bay_id], references: [bay_id])
-  dispatcher   Employee   @relation("DispatcherAssignments", fields: [dispatcher_id], references: [employee_id])
-  serviceman   Employee?  @relation("ServicemanAssignments", fields: [serviceman_id], references: [employee_id])
-  transactions BallTransaction[]
+  assignment_id Int               @id @default(autoincrement())
+  player_id     Int?
+  bay_id        Int
+  dispatcher_id Int
+  serviceman_id Int?
+  assigned_time DateTime
+  open_time     Boolean           @default(false)
+  end_time      DateTime?
+  session_type  SessionType?
+  transactions  BallTransaction[]
+  bay           Bay               @relation(fields: [bay_id], references: [bay_id])
+  dispatcher    Employee          @relation("DispatcherAssignments", fields: [dispatcher_id], references: [employee_id])
+  player        Player?           @relation(fields: [player_id], references: [player_id])
+  serviceman    Employee?         @relation("ServicemanAssignments", fields: [serviceman_id], references: [employee_id])
 }
 
 model BallTransaction {
-  transaction_id Int       @id @default(autoincrement())
+  transaction_id Int           @id @default(autoincrement())
   assignment_id  Int
   handler_id     Int
   bucket_count   Int
-  delivered_time DateTime  @default(now())
-
-  assignment BayAssignment @relation(fields: [assignment_id], references: [assignment_id])
-  handler    Employee      @relation("BallHandlerTransactions", fields: [handler_id], references: [employee_id])
+  delivered_time DateTime      @default(now())
+  assignment     BayAssignment @relation(fields: [assignment_id], references: [assignment_id])
+  handler        Employee      @relation("BallHandlerTransactions", fields: [handler_id], references: [employee_id])
 }
 
 model ServicemanQueue {
-  queue_id     Int       @id @default(autoincrement())
+  queue_id      Int              @id @default(autoincrement())
   serviceman_id Int
-  status       ServicemanStatus @default(Available)
-  assigned_bay Int?
-  updated_at   DateTime  @default(now()) @updatedAt
-
-  serviceman Employee @relation(fields: [serviceman_id], references: [employee_id])
-  assignedBay Bay?    @relation(fields: [assigned_bay], references: [bay_id])
+  status        ServicemanStatus @default(Available)
+  assigned_bay  Int?
+  updated_at    DateTime         @default(now()) @updatedAt
+  assignedBay   Bay?             @relation(fields: [assigned_bay], references: [bay_id])
+  serviceman    Employee         @relation(fields: [serviceman_id], references: [employee_id])
 }
 
 model SystemLog {
@@ -120,61 +113,55 @@ model SystemLog {
   employee_id    Int
   role           Role
   action         String
-  // Optional human-friendly session type name (e.g. "Timed", "Open")
   session_type   String?
   timestamp      DateTime  @default(now())
   related_record String?
   approved_by    Int?
-
-  employee  Employee @relation("EmployeeLogs", fields: [employee_id], references: [employee_id])
-  approvedBy Employee? @relation("ApprovedLogs", fields: [approved_by], references: [employee_id])
+  approvedBy     Employee? @relation("ApprovedLogs", fields: [approved_by], references: [employee_id])
+  employee       Employee  @relation("EmployeeLogs", fields: [employee_id], references: [employee_id])
 }
 
 model Notification {
-  notification_id Int       @id @default(autoincrement())
-  message         String
-  created_at      DateTime  @default(now())
-  is_read         Boolean   @default(false)
+  notification_id             Int                           @id @default(autoincrement())
+  message                     String
+  created_at                  DateTime                      @default(now())
+  is_read                     Boolean                       @default(false)
+  created_by                  Int?
+  Employee                    Employee?                     @relation(fields: [created_by], references: [employee_id])
+  NotificationAcknowledgement NotificationAcknowledgement[]
 }
 
-//
-// 🧠 Chat System Models
-//
-
 model ChatRoom {
-  chat_id     Int       @id @default(autoincrement())
-  name        String?
-  is_group    Boolean   @default(false)
-  created_at  DateTime  @default(now())
-  messages    ChatMessage[]
+  chat_id      Int               @id @default(autoincrement())
+  name         String?
+  is_group     Boolean           @default(false)
+  created_at   DateTime          @default(now())
+  messages     ChatMessage[]
   participants ChatParticipant[]
 }
 
 model ChatMessage {
-  message_id  Int       @id @default(autoincrement())
-  chat_id     Int
-  sender_id   Int
-  recipient_id Int?     // for 1-on-1 DMs (optional)
-  content     String
-  sent_at     DateTime  @default(now())
-  is_read     Boolean   @default(false)
-
-  chat      ChatRoom   @relation(fields: [chat_id], references: [chat_id])
-  sender    Employee   @relation("SentMessages", fields: [sender_id], references: [employee_id])
-  recipient Employee?  @relation("ReceivedMessages", fields: [recipient_id], references: [employee_id])
+  message_id   Int       @id @default(autoincrement())
+  chat_id      Int
+  sender_id    Int
+  recipient_id Int?
+  content      String
+  sent_at      DateTime  @default(now())
+  is_read      Boolean   @default(false)
+  chat         ChatRoom  @relation(fields: [chat_id], references: [chat_id])
+  recipient    Employee? @relation("ReceivedMessages", fields: [recipient_id], references: [employee_id])
+  sender       Employee  @relation("SentMessages", fields: [sender_id], references: [employee_id])
 }
 
 model ChatParticipant {
-  participant_id Int       @id @default(autoincrement())
+  participant_id Int      @id @default(autoincrement())
   chat_id        Int
   employee_id    Int
-  joined_at      DateTime  @default(now())
-
-  chat     ChatRoom @relation(fields: [chat_id], references: [chat_id])
-  employee Employee @relation(fields: [employee_id], references: [employee_id])
+  joined_at      DateTime @default(now())
+  chat           ChatRoom @relation(fields: [chat_id], references: [chat_id])
+  employee       Employee @relation(fields: [employee_id], references: [employee_id])
 }
 
-// Application-level settings persisted by admins (key/value store)
 model SystemSetting {
   setting_id Int      @id @default(autoincrement())
   key        String   @unique
@@ -182,32 +169,39 @@ model SystemSetting {
   updated_at DateTime @default(now()) @updatedAt
 }
 
-// Optional single-row site configuration for explicitly-typed site-wide settings
 model SiteConfig {
-  site_id            Int      @id @default(autoincrement())
-  site_name          String   @default("Eagle Point")
-  timezone           String   @default("Asia/Manila")
-  currency_symbol    String   @default("₱")
-  default_language   String   @default("en")
-  enable_reservations Boolean @default(true)
+  site_id             Int      @id @default(autoincrement())
+  site_name           String   @default("Eagle Point")
+  timezone            String   @default("Asia/Manila")
+  currency_symbol     String   @default("₱")
+  default_language    String   @default("en")
+  enable_reservations Boolean  @default(true)
+  updated_at          DateTime @default(now()) @updatedAt
+  seal_path           String?
+}
+
+model PricingConfig {
+  pricing_id         Int      @id @default(autoincrement())
+  timed_session_rate Decimal  @default(0.00) @db.Decimal(10, 2)
+  open_time_rate     Decimal  @default(0.00) @db.Decimal(10, 2)
   updated_at         DateTime @default(now()) @updatedAt
 }
 
-// Typed pricing configuration
-model PricingConfig {
-  pricing_id                  Int      @id @default(autoincrement())
-  timed_session_rate          Decimal  @db.Decimal(10, 2) @default("0.00")
-  open_time_rate              Decimal  @db.Decimal(10, 2) @default("0.00")
-  updated_at                  DateTime @default(now()) @updatedAt
+model OperationalConfig {
+  operational_id                Int      @id @default(autoincrement())
+  total_available_bays          Int      @default(45)
+  standard_tee_interval_minutes Int      @default(10)
+  ball_bucket_warning_threshold Int      @default(5)
+  updated_at                    DateTime @default(now()) @updatedAt
 }
 
-// Typed operational configuration
-model OperationalConfig {
-  operational_id               Int      @id @default(autoincrement())
-  total_available_bays         Int      @default(45)
-  standard_tee_interval_minutes Int     @default(10)
-  ball_bucket_warning_threshold Int     @default(5)
-  updated_at                   DateTime @default(now()) @updatedAt
+model NotificationAcknowledgement {
+  ack_id          Int          @id @default(autoincrement())
+  notification_id Int
+  employee_id     Int
+  acknowledged_at DateTime?
+  Employee        Employee     @relation(fields: [employee_id], references: [employee_id])
+  Notification    Notification @relation(fields: [notification_id], references: [notification_id])
 }
 
 enum Role {
@@ -232,7 +226,6 @@ enum ServicemanStatus {
   OnBreak
 }
 
-// Typed session kinds for bay assignments
 enum SessionType {
   Open
   Timed
