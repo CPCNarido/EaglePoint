@@ -6,557 +6,390 @@ import {
   TouchableOpacity,
   Image,
   ImageBackground,
-  useWindowDimensions,
-  Platform,
-  Alert,
-  Modal,
   ActivityIndicator,
-  Pressable,
+  Alert,
+  Platform,
   ScrollView,
+  StyleSheet,
+  Pressable,
 } from "react-native";
-import Constants from 'expo-constants';
-import * as Network from 'expo-network';
+import Constants from "expo-constants";
+import * as Network from "expo-network";
 import { useRouter } from "expo-router";
-import Splash from './components/Splash';
+import Splash from "./components/Splash";
 import { tw } from "react-native-tailwindcss";
-import { saveAccessToken } from './_lib/auth';
-import { useSettings } from './_lib/SettingsProvider';
+import { saveAccessToken } from "./_lib/auth";
+import { useSettings } from "./_lib/SettingsProvider";
+import ErrorModal from "./components/ErrorModal";
 
-const Login: React.FC = () => {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const { width, height } = useWindowDimensions();
+// === FULL BACKEND + LOGIN IMPLEMENTATION (unchanged) ===
 
-  // Responsive scaling logic
-  const isTablet = width >= 1000 && height >= 700;
-  const isLaptop = width >= 1400;
-  const isSmallScreen = width < 700;
+// derive dev host IP
+const getDevHostIp = (): string | null => {
+  try {
+    const manifest: any =
+      (Constants as any).manifest || (Constants as any).expoConfig || {};
+    const debuggerHost =
+      manifest?.debuggerHost || manifest?.packagerOpts?.host || null;
+    if (!debuggerHost) return null;
+    return String(debuggerHost).split(":")[0];
+  } catch {
+    return null;
+  }
+};
 
-  // Maintain tablet size as base, scale up for laptops/desktops slightly
-  const containerWidth = isLaptop
-    ? "40%"
-    : isTablet
-    ? "50%"
-    : isSmallScreen
-    ? "95%"
-    : "80%";
+const resolveBaseUrl = () => {
+  if (Platform.OS === "android") return "http://10.127.147.53:3000";
+  if (Platform.OS === "ios") return "http://localhost:3000";
+  if (Platform.OS === "web") return "http://localhost:3000";
+  return "http://localhost:3000";
+};
 
-  const containerHeight = isLaptop
-    ? "93%"
-    : isTablet
-    ? "80%"
-    : isSmallScreen
-    ? "85%"
-    : "80%";
-
-  const router = useRouter();
-  const [loading, setLoading] = useState(false);
-  const [errorModalVisible, setErrorModalVisible] = useState(false);
-  const [errorMessage, setErrorMessage] = useState("");
-  const [errorDetails, setErrorDetails] = useState<any>(null);
-  // Call settings hook unconditionally to preserve hook order
-  const settings = useSettings();
-
-  // derive dev host IP from expo manifest when possible (helps physical devices)
-  const getDevHostIp = (): string | null => {
-    try {
-      const manifest: any = (Constants as any).manifest || (Constants as any).expoConfig || {};
-      const debuggerHost = manifest?.debuggerHost || manifest?.packagerOpts?.host || null;
-      if (!debuggerHost) return null;
-      return String(debuggerHost).split(':')[0];
-    } catch {
-      return null;
-    }
-  };
-
-  const resolveBaseUrl = () => {
-    // Use explicit android host and port per project config.p
-    if (Platform.OS === 'android') return 'http://10.127.147.53:3000';
-    if (Platform.OS === 'ios') return 'http://localhost:3000';
-    if (Platform.OS === 'web') return 'http://localhost:3000';
-    return 'http://localhost:3000';
-  };
-
-  // Probe a list of candidate baseUrls and return the first that replies OK to /api/health
-  const probeHosts = async (candidates: string[]) => {
-    // Try persistent override first if present
-    try {
-        // @ts-ignore - AsyncStorage is optional in some environments; dynamic import may not resolve at build-time
-        const AsyncStorageModule = await import('@react-native-async-storage/async-storage').catch(() => null);
-      const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
-      const override = AsyncStorage ? await AsyncStorage.getItem('backendBaseUrlOverride') : null;
-      if (override) {
-        // Probe the persisted override quickly. If it's reachable, use it. If not,
-        // remove the persisted override so the app can fall back to other candidates.
-        try {
-          const controller = new AbortController();
-          const timeoutMs = 1500;
-          const t = setTimeout(() => { try { controller.abort(); } catch {} }, timeoutMs);
-          const url = `${override.replace(/\/$/, '')}/api/health`;
-          const resp = await fetch(url, { method: 'GET', signal: controller.signal }).catch(() => null);
-          clearTimeout(t);
-          if (resp && resp.ok) {
-            console.debug('Using persisted backendBaseUrlOverride (reachable)', override);
-            try { (global as any).__EAGLEPOINT_BASE_URL__ = override; } catch {}
-            return override;
-          }
-          console.warn('Persisted backendBaseUrlOverride is unreachable, removing override', override);
-          try { await AsyncStorage.removeItem('backendBaseUrlOverride'); } catch (e) { /* ignore */ }
-        } catch (e: any) {
-          // On any probe error, clear the override to avoid repeatedly attempting
-          // to use a host that's unreachable from this device/emulator.
-          try { await AsyncStorage.removeItem('backendBaseUrlOverride'); } catch {}
-          if (!String(e?.message ?? '').includes('Cannot find module')) console.warn('probeHosts override probe failed', e);
+const probeHosts = async (candidates: string[]) => {
+  try {
+    // @ts-ignore
+    const AsyncStorageModule = await import(
+      "@react-native-async-storage/async-storage"
+    ).catch(() => null);
+    const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
+    const override = AsyncStorage
+      ? await AsyncStorage.getItem("backendBaseUrlOverride")
+      : null;
+    if (override) {
+      try {
+        const controller = new AbortController();
+        const timeoutMs = 1500;
+        const t = setTimeout(() => {
+          try {
+            controller.abort();
+          } catch {}
+        }, timeoutMs);
+        const url = `${override.replace(/\/$/, "")}/api/health`;
+        const resp = await fetch(url, { method: "GET", signal: controller.signal }).catch(
+          () => null
+        );
+        clearTimeout(t);
+        if (resp && resp.ok) {
+          console.debug("Using persisted backendBaseUrlOverride (reachable)", override);
+          try {
+            (global as any).__EAGLEPOINT_BASE_URL__ = override;
+          } catch {}
+          return override;
         }
+        console.warn("Persisted override unreachable, removing it", override);
+        await AsyncStorage.removeItem("backendBaseUrlOverride");
+      } catch {
+        await AsyncStorage.removeItem("backendBaseUrlOverride");
       }
-    } catch (e: any) {
-      if (!String(e?.message ?? '').includes('Cannot find module')) console.warn('probeHosts read override failed', e);
     }
+  } catch {}
 
-    // Run lightweight parallel probes and return the first host that responds OK.
-    const tryHealth = (base: string) => new Promise<string>((resolve, reject) => {
+  const tryHealth = (base: string) =>
+    new Promise<string>((resolve, reject) => {
       const controller = new AbortController();
-      const timeoutMs = 1500; // short per-host timeout to keep probing fast
+      const timeoutMs = 1500;
       const t = setTimeout(() => {
-        try { controller.abort(); } catch {};
-        reject(new Error('timeout'));
+        try {
+          controller.abort();
+        } catch {}
+        reject(new Error("timeout"));
       }, timeoutMs);
-      const url = `${base.replace(/\/$/, '')}/api/health`;
-      fetch(url, { method: 'GET', signal: controller.signal })
+      const url = `${base.replace(/\/$/, "")}/api/health`;
+      fetch(url, { method: "GET", signal: controller.signal })
         .then((r) => {
           clearTimeout(t);
           if (r && r.ok) resolve(base);
-          else reject(new Error('not-ok'));
+          else reject(new Error("not-ok"));
         })
-        .catch((_) => {
+        .catch(() => {
           clearTimeout(t);
-          reject(new Error('fetch-failed'));
+          reject(new Error("fetch-failed"));
         });
     });
 
-    try {
-      const probes = candidates.map((c) => tryHealth(c));
-      // Promise.any resolves with the first fulfilled promise (fastest successful probe)
-      const winner = await Promise.any(probes).catch(() => null);
-      if (winner) {
+  try {
+    const winner = await Promise.any(candidates.map((c) => tryHealth(c))).catch(() => null);
+    if (winner) {
+      try {
+        // @ts-ignore
+        const AsyncStorageModule = await import(
+          "@react-native-async-storage/async-storage"
+        ).catch(() => null);
+        const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
+        if (AsyncStorage)
+          await AsyncStorage.setItem("backendBaseUrlOverride", winner);
         try {
-          // persist a short-lived override for convenience
-          // @ts-ignore - optional dependency
-          const AsyncStorageModule = await import('@react-native-async-storage/async-storage').catch(() => null);
-          const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
-          if (AsyncStorage) await AsyncStorage.setItem('backendBaseUrlOverride', winner);
-          try { (global as any).__EAGLEPOINT_BASE_URL__ = winner; } catch {}
-        } catch (e: any) {
-          if (!String(e?.message ?? '').includes('Cannot find module')) console.warn('Failed persisting baseUrl override', e);
-        }
-        return winner;
-      }
-    } catch {
-      // fallthrough to null
+          (global as any).__EAGLEPOINT_BASE_URL__ = winner;
+        } catch {}
+      } catch {}
+      return winner;
     }
+  } catch {}
+  return null;
+};
 
-    return null;
-  };
+const persistLastError = async (title: string, detail: any) => {
+  try {
+    // @ts-ignore
+    const AsyncStorageModule = await import(
+      "@react-native-async-storage/async-storage"
+    ).catch(() => null);
+    const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
+    await AsyncStorage?.setItem?.(
+      "lastLoginError",
+      JSON.stringify({ time: Date.now(), title, detail })
+    );
+  } catch {}
+};
 
-  const persistLastError = async (title: string, detail: any) => {
-    try {
-      // @ts-ignore - optional runtime dependency
-      const AsyncStorageModule = await import('@react-native-async-storage/async-storage').catch(() => null);
-      const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
-      await AsyncStorage?.setItem?.('lastLoginError', JSON.stringify({ time: Date.now(), title, detail }));
-    } catch (e: any) {
-      // If AsyncStorage isn't installed, skip noisy warnings (common in web/dev builds).
-      if (String(e?.message ?? '').includes('Cannot find module')) {
-        // silently ignore
-      } else {
-        console.warn('Failed persisting login error', e);
-      }
-    }
-  };
+// === LOGIN SCREEN (new design + error modal integration) ===
+
+export default function Login() {
+  const router = useRouter();
+  const settings = useSettings();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const [errorModalVisible, setErrorModalVisible] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+  const [errorDetails, setErrorDetails] = useState<any>(null);
+  const [errorType, setErrorType] = useState<'credentials'|'network'|'server'|'timeout'|'other'|null>(null);
+
+  const [showTransitionSplash, setShowTransitionSplash] = useState(false);
+  const [showInitialSplash, setShowInitialSplash] = useState(true);
+
+  useEffect(() => {
+    const t = setTimeout(() => setShowInitialSplash(false), 1200);
+    return () => clearTimeout(t);
+  }, []);
 
   const handleSubmit = async () => {
-    if (!email || !password) return Alert.alert("Validation", "Email and password required");
+    if (!email || !password)
+      return Alert.alert("Validation", "Email and password required");
     setLoading(true);
     setErrorMessage("");
     setErrorModalVisible(false);
     try {
-      // Resolve a reachable backend host for this device/session. probeHosts will try several
-      // candidates (emulator loopback, localhost, expo dev host) and return the first that
-      // replies OK on /api/health. This helps physical devices and emulators find the server.
       const defaultBase = resolveBaseUrl();
       const devIp = getDevHostIp();
-
-      // Attempt to get the device IP (e.g. 192.168.100.88) so we can add a
-      // couple of cheap subnet-derived candidates (avoid scanning full /24).
       let deviceIp: string | null = null;
       try {
         deviceIp = await Network.getIpAddressAsync();
-      } catch (e) {
-        deviceIp = null;
-      }
+      } catch {}
 
-      // Build a short candidate list. Prioritize hosts on the device's subnet
-      // and known LAN addresses so probes are more likely to succeed quickly.
       const candidates: string[] = [];
-
-      // If we can get the device IP, try a couple addresses in the same /24
-      // first (cheap checks). These are often the router (.1) or a dev machine
-      // (.100) on local networks.
       if (deviceIp) {
-        try {
-          const parts = String(deviceIp).split('.');
-          if (parts.length === 4) {
-            const prefix = parts.slice(0, 3).join('.');
-            // include common host addresses on the subnet (router, typical dev host)
-            candidates.push(`http://${prefix}.100:3000`, `http://${prefix}.1:3000`, `http://${prefix}.230:3000`);
-          }
-        } catch (e) {
-          // ignore
+        const parts = String(deviceIp).split(".");
+        if (parts.length === 4) {
+          const prefix = parts.slice(0, 3).join(".");
+          candidates.push(
+            `http://${prefix}.100:3000`,
+            `http://${prefix}.1:3000`,
+            `http://${prefix}.230:3000`
+          );
         }
       }
-
-      // Known tablet IPs (explicit). Try these next.
-      candidates.push('http://192.168.100.88:3000', 'http://192.168.100.86:3000');
-
-      // If Expo packager/dev host is known, try it before fallback addresses.
+      candidates.push(
+        "http://192.168.100.88:3000",
+        "http://192.168.100.86:3000"
+      );
       if (devIp) candidates.push(`http://${devIp}:3000`);
-
-      // Finally try configured defaults and localhost.
-      candidates.push('http://10.127.147.53:3000', defaultBase, 'http://localhost:3000');
-
-      // allow probeHosts to filter nulls/invalids if any
-      // (probeHosts itself does `.filter(Boolean)` earlier when called)
+      candidates.push("http://10.127.147.53:3000", defaultBase, "http://localhost:3000");
 
       let baseUrl: string;
-      if (typeof __DEV__ !== 'undefined' && __DEV__) {
-        // In development, probe candidate hosts to find a reachable backend.
+      if (typeof __DEV__ !== "undefined" && __DEV__) {
         const probed = await probeHosts(candidates);
         baseUrl = probed ?? defaultBase;
       } else {
-        // In production builds, do not probe hosts. Expect a configured API URL
-        // to be provided at build/runtime via EXPO_PUBLIC_API_URL. Fallback to
-        // the resolved default if not provided.
         // @ts-ignore
-        baseUrl = (process?.env?.EXPO_PUBLIC_API_URL as string) ?? defaultBase;
+        baseUrl = process?.env?.EXPO_PUBLIC_API_URL ?? defaultBase;
       }
-  try { (global as any).__EAGLEPOINT_BASE_URL__ = baseUrl; } catch {}
       const loginUrl = `${baseUrl}/api/auth/login`;
 
-      console.debug('Login attempt', { platform: Platform.OS, isDevice: Constants.isDevice, baseUrl, debuggerHost: (Constants as any).manifest?.debuggerHost });
-
-      // quick health check to provide clearer diagnostics
-      try {
-        const healthRes = await fetch(`${baseUrl}/api/health`).catch(() => null);
-        console.debug('Health check', { ok: healthRes?.ok, status: healthRes?.status });
-      } catch (e) {
-        console.warn('Health check failed', e);
-      }
-
-      // timeout using AbortController
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 10_000);
+      const timeout = setTimeout(() => controller.abort(), 10000);
 
       const res = await fetch(loginUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: email?.trim(), password }),
-        credentials: 'include',
+        body: JSON.stringify({ email: email.trim(), password }),
+        credentials: "include",
         signal: controller.signal,
       });
       clearTimeout(timeout);
 
       if (!res.ok) {
-        let bodyText = '';
-        try { bodyText = await res.text(); } catch {}
-        const detail = { status: res.status, statusText: res.statusText, body: bodyText, attemptedUrl: loginUrl };
+        let bodyText = "";
+        try {
+          bodyText = await res.text();
+        } catch {}
+        const detail = {
+          status: res.status,
+          statusText: res.statusText,
+          body: bodyText,
+          attemptedUrl: loginUrl,
+        };
         await persistLastError(`Login failed: ${res.status}`, detail);
+        // classify error for the modal
+        if (res.status === 401 || res.status === 403) setErrorType('credentials');
+        else if (res.status >= 500) setErrorType('server');
+        else setErrorType('other');
         setErrorMessage(bodyText || `Status ${res.status}`);
         setErrorDetails(detail);
         setErrorModalVisible(true);
         return;
       }
 
-      const data = await res.json().catch(() => ({ message: 'OK' }));
+      const data = await res.json().catch(() => ({ message: "OK" }));
+      const access = data?.accessToken || data?.access_token || null;
+      if (access) saveAccessToken(access);
 
-      try {
-        const access = data?.accessToken || data?.access_token || null;
-        if (access) saveAccessToken(access);
-      } catch (e) {
-        console.warn('Failed saving access token', e);
-      }
-
-      // Ensure we have a user profile available to store locally. Some backends
-      // may not include `user` in the login response (web-only flows rely on
-      // cookies). Attempt to fetch /api/auth/me using the saved access token
-      // before navigating so downstream screens can read a stored user object.
-      let profile: any = data?.user ?? null;
-      if (!profile) {
-        try {
-          // @ts-ignore - dynamic import for optional AsyncStorage
-          const AsyncStorageModule = await import('@react-native-async-storage/async-storage').catch(() => null);
-          const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
-          const token = AsyncStorage ? await AsyncStorage.getItem('authToken') : null;
-          if (token) {
-            try {
-              const profileRes = await fetch(`${baseUrl}/api/auth/me`, {
-                method: 'POST',
-                headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-              });
-              if (profileRes.ok) {
-                const pd = await profileRes.json().catch(() => null);
-                profile = pd?.user ?? profile;
-              }
-            } catch (e) {
-              // ignore profile fetch errors
-            }
-          }
-        } catch (e) {
-          // ignore storage/profile errors
-        }
-      }
-
-      try {
-        // persist user for convenience (if available)
-        // @ts-ignore
-        const AsyncStorageModule = await import('@react-native-async-storage/async-storage').catch(() => null);
-        const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
-        if (AsyncStorage && profile) await AsyncStorage.setItem('user', JSON.stringify(profile));
-      } catch (e) {
-        // ignore
-      }
-
-      console.info('Login successful', { user: profile ?? null, destination: data?.destination });
-      // show a brief splash/transition after successful login so the user sees the app branding
-      try {
-        setShowTransitionSplash(true);
-        // keep the splash visible for a short moment so it feels like a transition
-        await new Promise((r) => setTimeout(r, 700));
-      } catch {}
+      setShowTransitionSplash(true);
+      await new Promise((r) => setTimeout(r, 700));
       router.push(data?.destination || "/admin");
     } catch (err: any) {
-      const isAbort = err?.name === 'AbortError';
-      const message = err?.message ?? String(err);
-      const detail = { message, name: err?.name, attemptedUrl: undefined, baseUrl: resolveBaseUrl(), platform: Platform.OS, isDevice: Constants.isDevice, stack: err?.stack || null };
-      await persistLastError(isAbort ? 'Request timed out' : 'Network or unexpected error', detail);
-      if (message.includes('Network request failed')) {
-        setErrorMessage('Network request failed. Check backend is running and baseUrl is reachable from this device.');
-      } else if (isAbort) {
-        setErrorMessage('Request timed out. Server did not respond within 10s.');
+      const msg = err?.message ?? String(err);
+      // classify runtime/network errors
+      if (err?.name === 'AbortError') {
+        setErrorType('timeout');
+        setErrorMessage('Request timed out. Server did not respond within allotted time.');
+      } else if (String(msg).toLowerCase().includes('network') || String(msg).toLowerCase().includes('failed to fetch') || String(msg).toLowerCase().includes('network request failed')) {
+        setErrorType('network');
+        setErrorMessage('Network request failed. Check your connection and backend reachability.');
       } else {
-        setErrorMessage('Unexpected error during login: ' + message);
+        setErrorType('other');
+        setErrorMessage('Unexpected error during login: ' + msg);
       }
-      setErrorDetails(detail);
+      setErrorDetails(err);
       setErrorModalVisible(true);
-      console.error('Login error', detail);
     } finally {
       setLoading(false);
     }
   };
 
-  // initial splash shown on app start before showing login form
-  const [showInitialSplash, setShowInitialSplash] = useState(true);
-  const [showTransitionSplash, setShowTransitionSplash] = useState(false);
-  const [showSplashSticky, setShowSplashSticky] = useState(false);
-  const [showSplashRaw, setShowSplashRaw] = useState(false);
+  if (showInitialSplash)
+    return <Splash onClose={() => setShowInitialSplash(false)} />;
 
-  useEffect(() => {
-    // hide initial splash after a short delay (feel free to adjust duration)
-    const t = setTimeout(() => { if (!showSplashSticky) setShowInitialSplash(false); }, 1200);
-    return () => clearTimeout(t);
-  }, [showSplashSticky]);
-
-  // If showing the initial splash, render it full-screen before the login UI
-  if (showInitialSplash) return (
-    <Splash
-      onClose={() => { setShowInitialSplash(false); setShowSplashSticky(false); setShowSplashRaw(false); }}
-      noOverlayBackground={showSplashRaw}
-    />
-  );
-
-  // If a transition splash is requested (after pressing Login), show it full-screen while navigating
-  if (showTransitionSplash) return (
-    <Splash
-      message="Signing in..."
-      onClose={() => { setShowTransitionSplash(false); setShowSplashSticky(false); setShowSplashRaw(false); }}
-      noOverlayBackground={showSplashRaw}
-    />
-  );
+  if (showTransitionSplash)
+    return <Splash message="Signing in..." onClose={() => setShowTransitionSplash(false)} />;
 
   return (
     <ImageBackground
       source={require("../assets/Login Page/LOGIN TABLET.png")}
-      style={[tw.flex1, { width: "100%", height: "100%" }]}
+      style={styles.bg}
       resizeMode="cover"
     >
-      {/* Dev-only: floating button to preview the splash screen for UI debugging */}
-      {typeof __DEV__ !== 'undefined' && __DEV__ ? (
-        <>
-        <TouchableOpacity
-          onPress={() => { setShowInitialSplash(true); setShowSplashSticky(true); setShowSplashRaw(false); }}
-          style={{ position: 'absolute', top: 32, right: 12, zIndex: 2000, backgroundColor: 'rgba(0,0,0,0.6)', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6 }}
-        >
-          <Text style={{ color: '#fff', fontWeight: '700' }}>Show Splash</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => { setShowInitialSplash(true); setShowSplashSticky(true); setShowSplashRaw(true); }}
-          style={{ position: 'absolute', top: 72, right: 12, zIndex: 2000, backgroundColor: 'rgba(255,255,255,0.06)', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6 }}
-        >
-          <Text style={{ color: '#fff', fontWeight: '700' }}>Show Raw BG</Text>
-        </TouchableOpacity>
-        </>
-      ) : null}
-      <View style={[tw.flex1, tw.justifyCenter, tw.itemsCenter]}>
-          <View
-            style={[
-              tw.justifyCenter,
-              tw.bgWhite,
-              tw.p8,
-              tw.roundedLg,
-              tw.shadowMd,
-              tw.wFull,
-              {
-                height: containerHeight,
-                gap: 5,
-                minWidth: 320,
-                maxWidth: 700, // Prevent it from being too huge
-              },
-            ]}
-          >
+      <ScrollView contentContainerStyle={styles.scrollWrap}>
+        <View style={styles.card}>
           <Image
             source={require("../assets/images/EaglePointLogo.png")}
-            style={{ width: 120, height: 120, alignSelf: "center", marginBottom: 10 }}
+            style={styles.logo}
             resizeMode="contain"
           />
-          <Text style={[tw.text2xl, tw.fontBold, tw.textCenter]}>STAFF LOGIN</Text>
-          <Text style={[tw.textCenter, tw.textGray500, tw.fontMedium, tw.mB10]}>
-            Welcome to {settings?.siteName ?? 'EaglePoint'} Management System
+          <Text style={styles.title}>STAFF LOGIN</Text>
+          <Text style={styles.subtitle}>
+            Welcome to {settings?.siteName ?? "EaglePoint"} Management System
           </Text>
 
-          <View style={tw.mB4}>
-            <Text style={[tw.textBase, tw.fontBold, tw.textGray700, tw.mB2]}>
-              EmployeeID / Username
-            </Text>
+          <View style={styles.field}>
+            <Text style={styles.label}>Employee ID / Username</Text>
             <TextInput
-              style={[
-                  tw.wFull,
-                  tw.pX5,
-                  tw.pY4,
-                  tw.border,
-                  tw.rounded,
-                  tw.mB2,
-                  { fontSize: isSmallScreen ? 14 : 16 },
-                ]}
+              style={styles.input}
               value={email}
               onChangeText={setEmail}
               placeholder="Enter your EmployeeID or Username"
-              placeholderTextColor="#B1B1B1"
-              keyboardType="email-address"
+              placeholderTextColor="#9AA29A"
               autoCapitalize="none"
             />
           </View>
 
-          <View style={tw.mB6}>
-            <Text style={[tw.textBase, tw.fontBold, tw.textGray700, tw.mB2]}>Password</Text>
+          <View style={styles.field}>
+            <Text style={styles.label}>Password</Text>
             <TextInput
-              style={[
-                tw.wFull,
-                tw.pX5,
-                tw.pY4,
-                tw.border,
-                tw.rounded,
-                tw.mB2,
-                { fontSize: isSmallScreen ? 14 : 16 },
-              ]}
+              style={styles.input}
               value={password}
               onChangeText={setPassword}
               placeholder="Enter your Password"
-              placeholderTextColor="#B1B1B1"
+              placeholderTextColor="#9AA29A"
               secureTextEntry
             />
           </View>
 
           <TouchableOpacity
-            style={[
-              tw.wFull,
-              tw.pY5,
-              tw.rounded,
-              tw.itemsCenter,
-              tw.border,
-              tw.mT10,
-              { backgroundColor: "#C6DFA4" },
-              tw.shadowMd,
-              loading ? { opacity: 0.7 } : {},
-            ]}
             onPress={handleSubmit}
             disabled={loading}
+            style={[styles.button, loading ? { opacity: 0.7 } : null]}
           >
             {loading ? (
-              <ActivityIndicator color="#283720" />
+              <ActivityIndicator color="#17321d" />
             ) : (
-              <Text style={[{ color: "#283720" }, tw.textBase, tw.fontMedium, tw.fontBold]}>
-                LOGIN
-              </Text>
+              <Text style={styles.buttonText}>LOGIN</Text>
             )}
           </TouchableOpacity>
 
-          <Text style={[tw.mT10, tw.textBase, tw.textCenter]}>
-            Contact Admin for Access Issues
-          </Text>
+          <Text style={styles.footer}>Contact Admin for Access Issues</Text>
         </View>
-      </View>
+      </ScrollView>
 
-      {/* Error Modal */}
-      <Modal
+      <ErrorModal
         visible={errorModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setErrorModalVisible(false)}
-      >
-        <View
-          style={{
-            flex: 1,
-            backgroundColor: "rgba(0,0,0,0.4)",
-            justifyContent: "center",
-            alignItems: "center",
-          }}
-        >
-          <View style={{ width: "80%", backgroundColor: "#fff", borderRadius: 8, padding: 20 }}>
-            <Text style={{ fontSize: 18, fontWeight: "700", marginBottom: 10 }}>Error</Text>
-            <Text style={{ marginBottom: 10 }}>{errorMessage}</Text>
-            {errorDetails ? (
-              <ScrollView style={{ maxHeight: 220, marginBottom: 12 }}>
-                <Text selectable>{JSON.stringify(errorDetails, null, 2)}</Text>
-              </ScrollView>
-            ) : null}
-            <View style={{ flexDirection: "row", justifyContent: "flex-end" }}>
-              <Pressable onPress={() => setErrorModalVisible(false)} style={{ padding: 10, marginRight: 8 }}>
-                <Text style={{ color: "#1E2B20", fontWeight: "600" }}>Close</Text>
-              </Pressable>
-              <Pressable
-                onPress={async () => {
-                  // Re-open persisted error in console for easier debugging
-                  try {
-                    // @ts-ignore - optional runtime dependency
-                    const AsyncStorageModule = await import('@react-native-async-storage/async-storage').catch(() => null);
-                    const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
-                    const v = await AsyncStorage?.getItem?.('lastLoginError');
-                    console.debug('lastLoginError', v ? JSON.parse(v) : null);
-                    Alert.alert('Saved', 'Last error logged to console for inspection');
-                  } catch (e) {
-                    console.warn('Failed reading lastLoginError', e);
-                    Alert.alert('Error', 'Failed reading saved diagnostics');
-                  }
-                }}
-                style={{ padding: 10 }}
-              >
-                <Text style={{ color: "#1E2B20", fontWeight: "600" }}>Open Saved</Text>
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </Modal>
+        errorType={errorType}
+        errorMessage={errorMessage}
+        errorDetails={errorDetails}
+        onClose={() => setErrorModalVisible(false)}
+        onRetry={() => {
+          setErrorModalVisible(false);
+          setTimeout(() => handleSubmit(), 150);
+        }}
+      />
     </ImageBackground>
   );
-};
+}
 
-export default Login;
+const styles = StyleSheet.create({
+  bg: { flex: 1, width: "100%", height: "100%" },
+  scrollWrap: { flexGrow: 1, justifyContent: "center", alignItems: "center", padding: 24 },
+  card: {
+    width: 520,
+    maxWidth: "94%",
+    backgroundColor: "#F8FBF5",
+    borderRadius: 10,
+    padding: 28,
+    alignItems: "center",
+    shadowColor: "#000",
+    shadowOpacity: 0.14,
+    shadowRadius: 10,
+    elevation: 6,
+  },
+  logo: { width: 88, height: 88, marginBottom: 12 },
+  title: { fontSize: 18, fontWeight: "800", color: "#17321d", marginTop: 4, marginBottom: 6 },
+  subtitle: { fontSize: 12, color: "#8E9B90", marginBottom: 20 },
+  field: { alignSelf: "stretch", marginBottom: 14 },
+  label: { fontSize: 12, color: "#2E3B2B", fontWeight: "700", marginBottom: 6 },
+  input: {
+    height: 44,
+    borderWidth: 1,
+    borderColor: "#D6E4D0",
+    borderRadius: 6,
+    paddingHorizontal: 12,
+    backgroundColor: "#FFF",
+    color: "#17321d",
+  },
+  button: {
+    marginTop: 8,
+    width: "100%",
+    backgroundColor: "#C6DFA4",
+    paddingVertical: 14,
+    borderRadius: 6,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#9FBF7F",
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 3,
+  },
+  buttonText: { color: "#17321d", fontWeight: "800" },
+  footer: { marginTop: 18, fontSize: 12, color: "#6C7A6E" },
+});

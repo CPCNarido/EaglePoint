@@ -237,7 +237,11 @@ export default function DispatcherDashboard() {
     <View style={styles.container}>
       {/* Badges moved into per-tab headers via DispatcherHeader component */}
       {/* Sidebar */}
-      <View style={styles.sidebar}>
+      {/* @ts-ignore - attach data-role attribute for web DOM so print CSS can target it */}
+      <View // @ts-ignore
+        data-role="sidebar"
+        style={styles.sidebar}
+      >
         <View style={styles.logoContainer}>
           <Image
             source={require('../../../assets/General/Logo.png')}
@@ -287,7 +291,11 @@ export default function DispatcherDashboard() {
       </View>
 
       {/* Main Content */}
-      <View style={styles.mainContent}>
+      {/* @ts-ignore - attach data-role attribute for web DOM so print CSS can target it */}
+      <View // @ts-ignore
+        data-role="main"
+        style={styles.mainContent}
+      >
         {/* Badges are now rendered inside each tab header via DispatcherHeader */}
 
         {renderActiveTab()}

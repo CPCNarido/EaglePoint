@@ -895,7 +895,11 @@ export default function AdminDashboard() {
       onTouchStart={() => { handleUserInteraction(); }}
     >
       {/* Sidebar */}
-      <View style={[tw.w64, tw.p5, { backgroundColor: '#1E2B20', justifyContent: 'space-between' }]}>
+      {/* @ts-ignore - attach data-role to the DOM element on web for print CSS */}
+      <View // @ts-ignore
+        data-role="sidebar"
+        style={[tw.w64, tw.p5, { backgroundColor: '#1E2B20', justifyContent: 'space-between' }]}
+      >
         <View style={styles.logoContainer}>
           <Image
             // local asset; bundled via require so React Native includes it
@@ -948,7 +952,10 @@ export default function AdminDashboard() {
       </View>
 
       {/* Main Content */}
-  <View style={[tw.flex1, tw.p6]}>{renderContent()}</View>
+      {/* @ts-ignore - attach data-role to the DOM element on web for print CSS */}
+  <View // @ts-ignore
+    data-role="main"
+    style={[tw.flex1, tw.p6]}>{renderContent()}</View>
       {/* Transient saved-style overlay (matches System Settings behavior) */}
       {adminShowSavedNotification && (notifications || []).length > 0 && (
         <Pressable

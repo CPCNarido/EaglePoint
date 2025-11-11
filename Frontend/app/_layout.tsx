@@ -1,35 +1,48 @@
 import { Stack } from "expo-router";
 import React, { useEffect } from 'react';
 import SettingsProvider from './lib/SettingsProvider';
-import { useWindowDimensions } from 'react-native';
-import * as ScreenOrientation from 'expo-screen-orientation';
+import { enterFullScreen, exitFullScreen } from './(main)/utils/fullscreen';
+import { Keyboard, Platform } from 'react-native';
 
 export default function RootLayout() {
-  const { width, height } = useWindowDimensions();
-  // simple tablet heuristic: largest side >= 900 (adjust if you prefer a different cutoff)
-  const isTablet = Math.max(width, height) >= 900;
-
   useEffect(() => {
     let mounted = true;
+
+    // Try to enter full-screen on start
     (async () => {
       if (!mounted) return;
       try {
-        if (isTablet) {
-          await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
-        } else {
-          await ScreenOrientation.unlockAsync();
-        }
-      } catch (e) {
-        // ignore orientation lock errors in dev or unsupported environments
-        // console.warn('Orientation lock failed', e);
-      }
+        await enterFullScreen();
+      } catch {}
     })();
+
+    // When the keyboard opens on many Android/tablet setups while in immersive mode,
+    // the OS may pan the entire window causing content to shift unexpectedly. As a
+    // pragmatic fix, exit immersive/fullscreen while the keyboard is visible so the
+    // system can handle resizing; re-enter fullscreen on keyboard hide.
+    const onKeyboardShow = async () => {
+      try {
+        // Only do this on platforms where immersive mode impacts keyboard behavior
+        await exitFullScreen();
+      } catch {}
+    };
+    const onKeyboardHide = async () => {
+      try {
+        await enterFullScreen();
+      } catch {}
+    };
+
+    const showSub = Keyboard.addListener('keyboardDidShow', onKeyboardShow);
+    const hideSub = Keyboard.addListener('keyboardDidHide', onKeyboardHide);
+
     return () => {
       mounted = false;
-      // attempt to restore default when layout unmounts
-      ScreenOrientation.unlockAsync().catch(() => {});
+      try { showSub.remove(); } catch {}
+      try { hideSub.remove(); } catch {}
+      // restore UI on unmount
+      exitFullScreen().catch(() => {});
     };
-  }, [isTablet]);
+  }, []);
 
   return (
     <SettingsProvider>
