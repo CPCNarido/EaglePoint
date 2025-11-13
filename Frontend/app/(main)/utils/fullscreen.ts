@@ -43,7 +43,7 @@ export const enterFullScreen = async () => {
     const soModule = await import('expo-screen-orientation').catch(() => null);
     const so: any = soModule?.default ?? soModule;
     if (so && so.lockAsync && so.OrientationLock) {
-      try { await so.lockAsync(so.OrientationLock.LANDSCAPE_RIGHT); } catch {}
+      try { await so.lockAsync(so.OrientationLock.LANDSCAPE); } catch {}
     }
   } catch (e) {
     /* swallow - best-effort */

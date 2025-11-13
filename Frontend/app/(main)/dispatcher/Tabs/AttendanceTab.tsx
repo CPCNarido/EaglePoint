@@ -15,6 +15,7 @@ import {
   Alert,
 } from "react-native";
 import { PieChart } from 'react-native-chart-kit';
+import DateTimePickerModal from 'react-native-modal-datetime-picker';
 import DispatcherHeader from "../DispatcherHeader";
 
 export default function AttendanceTab(props?: any) {
@@ -26,22 +27,22 @@ export default function AttendanceTab(props?: any) {
   const [search, setSearch] = useState("");
   // Role / Status filters (two-column filter UI)
   const roleOptions = ["Dispatcher", "Serviceman", "BallHandler", "Other"];
-  const statusOptions = ["Present", "Absent", "No Record"];
+  const statusOptions = ["Present", "Absent", "Clocked Out", "No Record"];
   const [selectedRoles, setSelectedRoles] = useState<string[]>([...roleOptions]);
   const [selectedStatuses, setSelectedStatuses] = useState<string[]>([...statusOptions]);
   const [showFilters, setShowFilters] = useState<boolean>(false);
   const [editing, setEditing] = useState(false);
   const [batchMode, setBatchMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [manualVisible, setManualVisible] = useState(false);
 
   // Batch update logs: record per-employee result when performing batch updates
   const [batchLogs, setBatchLogs] = useState<Array<any>>([]);
   const [showBatchLogs, setShowBatchLogs] = useState(false);
 
-  const [selectedStaff, setSelectedStaff] = useState("");
-  const [clockIn, setClockIn] = useState("");
-  const [clockOut, setClockOut] = useState("");
+  // inline clock-in editing (use native time picker)
+  const [editingClockInId, setEditingClockInId] = useState<string | null>(null);
+  const [editingClockDate, setEditingClockDate] = useState<Date | null>(null);
+  const [showTimePicker, setShowTimePicker] = useState(false);
 
   // ✅ Dynamic summary calculation
 
@@ -53,8 +54,7 @@ export default function AttendanceTab(props?: any) {
       const att = String(item.attendanceStatus ?? item.status ?? '').toLowerCase();
       if (att === 'present') present++;
       else if (att === 'absent') absent++;
-      // clocked-out is derived from raw clockOut value
-      if (item.clockOutRaw) out++;
+      else if (att === 'clocked out' || att === 'clockedout' || att === 'clocked_out') out++;
 
       // track servicemen counts using alias detection
       try {
@@ -80,10 +80,10 @@ export default function AttendanceTab(props?: any) {
     };
   }, [attendanceData]);
   const statusCounts = useMemo(() => {
-    const m: Record<string, number> = { Present: 0, Absent: 0, 'No Record': 0 };
+    const m: Record<string, number> = { Present: 0, Absent: 0, 'Clocked Out': 0, 'No Record': 0 };
     attendanceData.forEach((it) => {
       const sc = String(it.attendanceStatus ?? it.status ?? 'No Record');
-      const key = sc === 'Present' ? 'Present' : sc === 'Absent' ? 'Absent' : 'No Record';
+      const key = sc === 'Present' ? 'Present' : sc === 'Absent' ? 'Absent' : sc === 'Clocked Out' ? 'Clocked Out' : 'No Record';
       m[key] = (m[key] || 0) + 1;
     });
     return m;
@@ -211,7 +211,7 @@ export default function AttendanceTab(props?: any) {
           const hasClockIn = !!(found && found.clock_in);
           const hasClockOut = !!(found && found.clock_out);
           if (hasClockIn && !hasClockOut) attendanceStatus = 'Present';
-          else if (hasClockIn && hasClockOut) attendanceStatus = 'Absent';
+          else if (hasClockIn && hasClockOut) attendanceStatus = 'Clocked Out';
           else {
             const raw = String((found?.notes ?? found?.status ?? found?.source ?? '')).toLowerCase();
             // accept any mention of 'absent' in notes/source/status (e.g. 'Marked absent')
@@ -421,55 +421,7 @@ export default function AttendanceTab(props?: any) {
     );
   };
 
-  const handleManualEntry = () => setManualVisible(true);
 
-  const handleApplyManual = () => {
-    (async () => {
-      try {
-        const match = attendanceData.find(
-          (item) =>
-            item.name.toLowerCase() === selectedStaff.toLowerCase() ||
-            item.userId.toLowerCase() === selectedStaff.toLowerCase()
-        );
-        if (!match) {
-          Alert.alert('Not found', 'No matching staff member found');
-          return;
-        }
-
-        if (clockIn && clockIn.trim().length > 0) {
-          let ts: string | undefined = undefined;
-          try {
-            const parsed = new Date(clockIn);
-            ts = isNaN(parsed.getTime()) ? undefined : parsed.toISOString();
-          } catch (e) { ts = undefined; }
-          await apiClock(match.id, 'in', ts);
-        } else {
-          await apiClock(match.id, 'in');
-        }
-
-        if (clockOut && clockOut.trim().length > 0) {
-          let ts2: string | undefined = undefined;
-          try {
-            const parsed2 = new Date(clockOut);
-            ts2 = isNaN(parsed2.getTime()) ? undefined : parsed2.toISOString();
-          } catch (e) { ts2 = undefined; }
-          await apiClock(match.id, 'out', ts2);
-        }
-
-        await fetchStaff();
-        Alert.alert('Manual Entry', 'Manual time(s) applied');
-      } catch (e: any) {
-        Alert.alert('Manual Entry Failed', String(e?.message ?? e));
-      } finally {
-        setSelectedStaff('');
-        setClockIn('');
-        setClockOut('');
-        setManualVisible(false);
-      }
-    })();
-  };
-
-  const handleCancelManual = () => setManualVisible(false);
 
   const incomingCounts = props?.counts ?? {};
   const incomingAssigned = props?.assignedBays ?? undefined;
@@ -493,6 +445,58 @@ export default function AttendanceTab(props?: any) {
     const tot = Math.max(1, presentCount + absentCount + clockedOutCount);
     return Math.round((presentCount / tot) * 100);
   }, [presentCount, absentCount, clockedOutCount]);
+
+  // Format a time-only string (HH:MM) from either raw ISO or existing formatted string
+  const formatTimeOnly = (rawOrFormatted?: string | null) => {
+    if (!rawOrFormatted) return '------';
+    try {
+      const d = new Date(rawOrFormatted);
+      if (!isNaN(d.getTime())) {
+        const hh = d.getHours();
+        const mm = d.getMinutes();
+        const hh12 = hh % 12 === 0 ? 12 : hh % 12;
+        const ampm = hh >= 12 ? 'PM' : 'AM';
+        return `${String(hh12).padStart(2, '0')}:${String(mm).padStart(2, '0')} ${ampm}`;
+      }
+    } catch (e) {}
+    // fallback: try to extract time with regex
+    const m = String(rawOrFormatted).match(/(\d{1,2}:\d{2})/);
+    return m ? m[1] : '------';
+  };
+
+  const startEditClockIn = (item: any) => {
+    setEditingClockInId(item.id);
+    // prefer raw ISO if present
+    let baseDate = new Date();
+    if (item.clockInRaw) {
+      const d = new Date(item.clockInRaw);
+      if (!isNaN(d.getTime())) baseDate = d;
+    } else if (item.clockIn) {
+      const parsed = new Date(item.clockIn);
+      if (!isNaN(parsed.getTime())) baseDate = parsed;
+    }
+    setEditingClockDate(baseDate);
+    // open picker immediately for quick selection
+    setShowTimePicker(true);
+  };
+
+  const saveEditClockIn = async (item: any) => {
+    if (!editingClockInId) return;
+    try {
+      const now = new Date();
+      const src = editingClockDate ?? now;
+      const dt = new Date(now.getFullYear(), now.getMonth(), now.getDate(), src.getHours(), src.getMinutes(), 0, 0);
+      const iso = dt.toISOString();
+      await apiClock(item.id, 'in', iso);
+      await fetchStaff();
+    } catch (e: any) {
+      Alert.alert('Failed', String(e?.message ?? e));
+    } finally {
+      setEditingClockInId(null);
+      setEditingClockDate(null);
+      setShowTimePicker(false);
+    }
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -645,7 +649,7 @@ export default function AttendanceTab(props?: any) {
                   style={[styles.chip, selectedStatuses.includes(s) ? styles.chipActive : {}]}
                 >
                   <Text style={styles.chipText}>{s}</Text>
-                  <View style={[styles.countBadge, s === 'Present' ? { backgroundColor: '#2e7d32' } : s === 'Absent' ? { backgroundColor: '#c62828' } : { backgroundColor: '#666' }]}>
+                  <View style={[styles.countBadge, s === 'Present' ? { backgroundColor: '#2e7d32' } : s === 'Absent' ? { backgroundColor: '#c62828' } : s === 'Clocked Out' ? { backgroundColor: '#AEB3B8' } : { backgroundColor: '#666' }]}>
                     <Text style={styles.countBadgeText}>{statusCounts[s] ?? 0}</Text>
                   </View>
                 </TouchableOpacity>
@@ -693,7 +697,7 @@ export default function AttendanceTab(props?: any) {
           </View>
         }
         renderItem={({ item }) => (
-          <TouchableOpacity onPress={() => (batchMode ? toggleSelect(item.id) : toggleStatus(item.id))}>
+          <TouchableOpacity onPress={() => { if (batchMode) toggleSelect(item.id); else if (editing) { startEditClockIn(item); } else toggleStatus(item.id); }}>
             <View
               style={[
                 styles.tableRow,
@@ -716,69 +720,42 @@ export default function AttendanceTab(props?: any) {
               <Text
                 style={[
                   styles.status,
-                  { backgroundColor: item.attendanceStatus === "Present" ? "#c8e6c9" : "#ffcdd2" },
+                  { backgroundColor: item.attendanceStatus === "Present" ? "#c8e6c9" : item.attendanceStatus === 'Clocked Out' ? '#e0e0e0' : '#ffcdd2' },
                 ]}
               >
                 {item.attendanceStatus ?? item.status}
               </Text>
-              <Text style={styles.tableText}>{item.clockIn || "------"}</Text>
-              <Text style={styles.tableText}>{item.clockOut || "------"}</Text>
+              {editing && editingClockInId === item.id ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center' }}>
+                  <TouchableOpacity onPress={() => setShowTimePicker(true)} style={{ paddingVertical: 8, paddingHorizontal: 12, backgroundColor: '#fff', borderRadius: 6 }}>
+                    <Text style={{ fontWeight: '700' }}>{editingClockDate ? formatTimeOnly(editingClockDate.toISOString()) : 'Set time'}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => saveEditClockIn(item)} style={{ marginLeft: 8 }}>
+                    <Text style={{ color: '#1976d2', fontWeight: '700' }}>Save</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => { setEditingClockInId(null); setEditingClockDate(null); setShowTimePicker(false); }} style={{ marginLeft: 8 }}>
+                    <Text style={{ color: '#777' }}>Cancel</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <Text style={styles.tableText}>{formatTimeOnly(item.clockInRaw ?? item.clockIn)}</Text>
+              )}
+              <Text style={styles.tableText}>{formatTimeOnly(item.clockOutRaw ?? item.clockOut)}</Text>
             </View>
           </TouchableOpacity>
         )}
       />
 
-      <TouchableOpacity style={styles.manualEntryButton} onPress={handleManualEntry}>
-        <Text style={styles.manualEntryText}>+ Manual Entry</Text>
-      </TouchableOpacity>
+      <DateTimePickerModal
+        isVisible={showTimePicker}
+        mode="time"
+        date={editingClockDate ?? new Date()}
+        onConfirm={(date) => { setEditingClockDate(date); setShowTimePicker(false); }}
+        onCancel={() => setShowTimePicker(false)}
+        is24Hour={false}
+      />
 
-      <Modal visible={manualVisible} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalBox}>
-            <Text style={styles.modalTitle}>Manual Time Correction</Text>
-            <View style={styles.separator} />
-
-            <Text style={styles.label}>Select Staff Member</Text>
-            <TextInput
-              placeholder="Enter Player’s Name or Nickname"
-              value={selectedStaff}
-              onChangeText={setSelectedStaff}
-              style={styles.input}
-            />
-
-            <Text style={styles.label}>Clock-In Time</Text>
-            <TextInput
-              placeholder="e.g., 08:00 AM"
-              value={clockIn}
-              onChangeText={setClockIn}
-              style={styles.input}
-            />
-
-            <Text style={styles.label}>Clock-Out Time (optional)</Text>
-            <TextInput
-              placeholder="e.g., 05:00 PM"
-              value={clockOut}
-              onChangeText={setClockOut}
-              style={styles.input}
-            />
-
-            <View style={styles.modalButtons}>
-              <TouchableOpacity
-                style={[styles.modalButton, { backgroundColor: "#cde3b6" }]}
-                onPress={handleCancelManual}
-              >
-                <Text style={{ color: "#2d3e2f", fontWeight: "600" }}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalButton, { backgroundColor: "#8b1e1e" }]}
-                onPress={handleApplyManual}
-              >
-                <Text style={{ color: "white", fontWeight: "600" }}>Apply</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
+      {/* Manual entry removed — inline editing available when editing mode is active */}
       {/* Batch logs modal - shows per-employee DB result for recent batch operations */}
       <Modal visible={showBatchLogs} transparent animationType="fade" onRequestClose={() => setShowBatchLogs(false)}>
         <View style={styles.modalOverlay}>

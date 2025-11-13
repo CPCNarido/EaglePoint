@@ -286,11 +286,39 @@ export default function BayAssignmentScreen({ userName, counts, assignedBays }: 
           }
         } catch (e) { /* ignore */ }
 
-        // Fetch servicemen (include online flag)
+        // Fetch servicemen (include online flag). Only show servicemen who are currently "present"
+        // i.e. have a clock-in and have NOT clocked out. If attendance fetch fails, fall back to full staff list.
         try {
           const r2 = await fetchWithAuth(`${baseUrl}/api/admin/staff`, { method: 'GET' });
-          if (r2 && r2.ok) {
-            const staff = await r2.json();
+          let staff: any[] = [];
+          if (r2 && r2.ok) staff = await r2.json();
+
+          // try to fetch attendance rows to determine who is present
+          try {
+            const rAtt = await fetchWithAuth(`${baseUrl}/api/admin/attendance`, { method: 'GET' });
+            if (rAtt && rAtt.ok) {
+              const rows = await rAtt.json();
+              const presentSet = new Set<number>();
+              if (Array.isArray(rows)) {
+                for (const row of rows) {
+                  const empId = Number(row?.employee_id ?? row?.employeeId ?? row?.staff_id ?? row?.staffId ?? row?.serviceman_id ?? row?.servicemanId ?? null);
+                  const hasClockIn = !!(row?.clock_in || row?.clockIn || row?.start_time || row?.startTime);
+                  const hasClockOut = !!(row?.clock_out || row?.clockOut || row?.end_time || row?.endTime);
+                  if (!Number.isNaN(empId) && hasClockIn && !hasClockOut) presentSet.add(empId);
+                }
+              }
+
+              const svc = Array.isArray(staff) ? staff.filter((s: any) => isServicemanRole(s.role)).sort((a: any,b: any)=> (a.employee_id||0)-(b.employee_id||0)) : [];
+              // only include those who are present
+              const filtered = svc.filter((s: any) => presentSet.has(Number(s.employee_id)));
+              if (mounted) setServicemen(filtered.map((s: any) => ({ id: s.employee_id, name: s.full_name || s.username, online: !!s.online })));
+            } else {
+              // attendance fetch failed, fall back to staff-only list
+              const svc = Array.isArray(staff) ? staff.filter((s: any) => isServicemanRole(s.role)).sort((a: any,b: any)=> (a.employee_id||0)-(b.employee_id||0)) : [];
+              if (mounted) setServicemen(svc.map((s: any) => ({ id: s.employee_id, name: s.full_name || s.username, online: !!s.online })));
+            }
+          } catch (e) {
+            // attendance fetch errored - fall back to staff-only list
             const svc = Array.isArray(staff) ? staff.filter((s: any) => isServicemanRole(s.role)).sort((a: any,b: any)=> (a.employee_id||0)-(b.employee_id||0)) : [];
             if (mounted) setServicemen(svc.map((s: any) => ({ id: s.employee_id, name: s.full_name || s.username, online: !!s.online })));
           }
@@ -309,11 +337,13 @@ export default function BayAssignmentScreen({ userName, counts, assignedBays }: 
               if (mounted) setTotalBaysCount(rows.length);
               for (const b of rows) {
                 const bayNo = Number(b?.bay_number ?? b?.bayNo ?? b?.bay_no ?? b?.bay ?? null);
-                const session = (b?.status ?? b?.session ?? b?.sessionType ?? '').toString();
-                const sessionLower = session.toLowerCase();
+                const rawSession = b?.session;
+                const sessionAction = rawSession && typeof rawSession === 'object' ? (rawSession.action || rawSession.status || rawSession.type || rawSession.session_type) : rawSession;
+                const sessionCandidate = String(b?.status ?? sessionAction ?? b?.session_type ?? b?.sessionType ?? b?.type ?? b?.bay_status ?? b?.action ?? '').toString();
+                const sessionLower = (sessionCandidate || '').toLowerCase();
                 // detect reserved / special-use markers in data (various possible keys)
-                const isReservedFlag = !!(b?.reserved || b?.is_reserved || b?.reserved_for || sessionLower.includes('reserved') || b?.status === 'Reserved');
-                const isSpecialFlag = !!(b?.special_use || b?.specialUse || b?.is_special_use || b?.specialuse || sessionLower.includes('special'));
+                const isReservedFlag = !!(b?.reserved || b?.is_reserved || b?.reserved_for || sessionLower.includes('reserved') || sessionLower.includes('specialuse') || sessionLower === 'specialuse' || String(b?.status) === 'Reserved');
+                const isSpecialFlag = !!(b?.special_use || b?.specialUse || b?.is_special_use || b?.specialuse || sessionLower.includes('special') || sessionLower.includes('specialuse'));
                 const isAvailableRaw = ((!b?.player && !b?.player_name) || sessionLower.includes('available') || (sessionLower.includes('timed') && !b?.player));
                 const isAvailable = isAvailableRaw && !isReservedFlag && !isSpecialFlag;
                 if (!Number.isNaN(bayNo) && isAvailable) avail.push(bayNo);

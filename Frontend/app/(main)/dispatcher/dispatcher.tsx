@@ -14,6 +14,7 @@ import { logoutAndClear } from '../../_lib/auth';
 import { fetchWithAuth } from '../../_lib/fetchWithAuth';
 import { isServicemanRole } from '../utils/staffHelpers';
 import { useSettings } from '../../lib/SettingsProvider';
+import { legendMatchesStatus } from '../utils/uiHelpers';
 
 import DashboardTab from "./Tabs/DashboardTab";
 import BayAssignmentTab from "./Tabs/BayAssignmentTab";
@@ -123,7 +124,24 @@ export default function DispatcherDashboard() {
             const ov = await r.json();
             if (!mounted) return;
             const total = ov?.totalBays ?? (Array.isArray(ov?.bays) ? ov.bays.length : null);
-            const avail = ov?.availableBays ?? null;
+            let avail: number | null = ov?.availableBays ?? null;
+            if (avail === null && Array.isArray(ov?.bays)) {
+              const bays = ov.bays;
+              const unavailable = bays.filter((b: any) => {
+                const rawSession = b?.session;
+                const sessionAction = rawSession && typeof rawSession === 'object' ? (rawSession.action || rawSession.status || rawSession.type || rawSession.session_type) : rawSession;
+                const statusCandidate = String(b?.status ?? b?.originalStatus ?? sessionAction ?? b?.session_type ?? b?.sessionType ?? b?.type ?? b?.bay_status ?? b?.action ?? '').trim();
+                const statusLower = String(statusCandidate).toLowerCase();
+                const isReserved = legendMatchesStatus(['reserved'], statusCandidate) || !!(b?.reserved || b?.is_reserved || b?.reserved_for) || statusLower.includes('specialuse') || statusLower === 'specialuse';
+                const isSpecial = legendMatchesStatus(['reserved'], statusCandidate) || !!(b?.special_use || b?.specialUse || b?.is_special_use || b?.specialuse) || statusLower.includes('specialuse') || statusLower === 'specialuse';
+                const isOccupied = legendMatchesStatus(['assigned', 'maintenance', 'timed'], statusCandidate) || (() => {
+                  const s = String(statusCandidate).toLowerCase();
+                  return ['occupied', 'assigned', 'inuse', 'in-use', 'maintenance', 'inprogress', 'open time', 'opentime'].some(k => s.includes(k));
+                })();
+                return isReserved || isSpecial || isOccupied;
+              }).length;
+              avail = Math.max(0, (total != null ? Number(total) : bays.length) - unavailable);
+            }
             setGlobalTotalBays(total != null ? Number(total) : null);
             setGlobalAvailableBays(avail != null ? Number(avail) : null);
             // derive assigned bays from overview if available
@@ -160,16 +178,35 @@ export default function DispatcherDashboard() {
           }
         } catch {}
 
-        // staff
+        // staff + attendance: compute servicemen available as those who have clocked in and NOT yet clocked out
         try {
           const r2 = await fetchWithAuth(`${baseUrl}/api/admin/staff`, { method: 'GET' });
           if (r2 && r2.ok) {
             const staff = await r2.json();
             if (!mounted) return;
             const svc = Array.isArray(staff) ? staff.filter((s: any) => isServicemanRole(s.role)) : [];
-            setGlobalServicemenTotal(svc.length);
-            const busy = svc.filter((s:any) => !!s.online).length;
-            setGlobalServicemenAvailable(Math.max(0, svc.length - busy));
+            // try to fetch attendance rows to make an accurate present/available count
+            try {
+              const ra = await fetchWithAuth(`${baseUrl}/api/admin/attendance`, { method: 'GET' });
+              const attRows = ra && ra.ok ? await ra.json() : [];
+              let available = 0;
+              let presentTotal = 0; // servicemen who have clock-in (present)
+              for (const s of svc) {
+                const empId = Number(s.employee_id ?? s.id ?? s.employeeId ?? null);
+                const found = Array.isArray(attRows) ? attRows.find((a: any) => Number(a.employee_id) === empId || String(a.employee_id) === String(empId)) : null;
+                const hasClockIn = !!(found && (found.clock_in || found.clockIn));
+                const hasClockOut = !!(found && (found.clock_out || found.clockOut));
+                if (hasClockIn) presentTotal++;
+                if (hasClockIn && !hasClockOut) available++;
+              }
+              setGlobalServicemenTotal(presentTotal);
+              setGlobalServicemenAvailable(available);
+            } catch (e) {
+              // fallback to previous heuristic (online flag)
+              const busy = svc.filter((s:any) => !!s.online).length;
+              setGlobalServicemenTotal(svc.length);
+              setGlobalServicemenAvailable(Math.max(0, svc.length - busy));
+            }
           }
         } catch {}
 
