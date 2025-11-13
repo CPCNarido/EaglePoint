@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
-import { Platform, Animated, Easing, ScrollView } from 'react-native';
+import { Platform, Animated, Easing, ScrollView, Dimensions } from 'react-native';
 import { fetchWithAuth } from '../../../_lib/fetchWithAuth';
 import { isServicemanRole, isStaffActive, formatTimestamp, getRoleCategory } from '../../utils/staffHelpers';
 import {
@@ -14,8 +14,10 @@ import {
   Switch,
   Alert,
 } from "react-native";
+import { PieChart } from 'react-native-chart-kit';
+import DispatcherHeader from "../DispatcherHeader";
 
-export default function AttendanceTab(_props?: any) {
+export default function AttendanceTab(props?: any) {
   const [attendanceData, setAttendanceData] = useState<Array<any>>([]);
   // Raw attendance rows from backend (used to merge into staff view)
   const [attendanceRows, setAttendanceRows] = useState<Array<any>>([]);
@@ -27,7 +29,7 @@ export default function AttendanceTab(_props?: any) {
   const statusOptions = ["Present", "Absent", "No Record"];
   const [selectedRoles, setSelectedRoles] = useState<string[]>([...roleOptions]);
   const [selectedStatuses, setSelectedStatuses] = useState<string[]>([...statusOptions]);
-  const [showFilters, setShowFilters] = useState<boolean>(true);
+  const [showFilters, setShowFilters] = useState<boolean>(false);
   const [editing, setEditing] = useState(false);
   const [batchMode, setBatchMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -106,10 +108,14 @@ export default function AttendanceTab(_props?: any) {
       const status = String(it.attendanceStatus ?? it.status ?? 'No Record');
       if (!selectedRoles.includes(cat)) return false;
       if (!selectedStatuses.includes(status)) return false;
+      if (filterClockedOutOnly && !it.clockOutRaw) return false;
       if (!q) return true;
       return (String(it.name ?? '').toLowerCase().includes(q) || String(it.userId ?? '').toLowerCase().includes(q));
     });
   }, [attendanceData, selectedRoles, selectedStatuses, search]);
+
+  // Quick toggle for showing only clocked-out staff in the list
+  const [filterClockedOutOnly, setFilterClockedOutOnly] = useState(false);
 
   const toggleRole = (role: string) => {
     setSelectedRoles((prev) => (prev.includes(role) ? prev.filter((r) => r !== role) : [...prev, role]));
@@ -465,36 +471,82 @@ export default function AttendanceTab(_props?: any) {
 
   const handleCancelManual = () => setManualVisible(false);
 
+  const incomingCounts = props?.counts ?? {};
+  const incomingAssigned = props?.assignedBays ?? undefined;
+  const userNameProp = props?.userName ?? undefined;
+
+  // Pie chart dataset for summary
+  const pieData = useMemo(() => {
+    const present = presentCount || 0;
+    const absent = absentCount || 0;
+    const out = clockedOutCount || 0;
+    const total = Math.max(1, present + absent + out);
+    return [
+      { name: 'Present', population: present, color: '#6A7337', legendFontColor: '#333', legendFontSize: 12 },
+      { name: 'Absent', population: absent, color: '#c62828', legendFontColor: '#333', legendFontSize: 12 },
+      { name: 'Clocked Out', population: out, color: '#AEB3B8', legendFontColor: '#333', legendFontSize: 12 },
+    ].filter((d) => d.population > 0);
+  }, [presentCount, absentCount, clockedOutCount]);
+
+  const windowWidth = Dimensions.get('window').width;
+  const presentPct = useMemo(() => {
+    const tot = Math.max(1, presentCount + absentCount + clockedOutCount);
+    return Math.round((presentCount / tot) * 100);
+  }, [presentCount, absentCount, clockedOutCount]);
+
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Eagle Point Dispatcher</Text>
-        <Text style={styles.subtitle}>Attendance</Text>
-      </View>
+      <DispatcherHeader title="Attendance" subtitle={userNameProp ? `Dispatcher ${userNameProp}` : 'Dispatcher'} counts={incomingCounts} assignedBays={incomingAssigned} showBadges={true} />
 
-      <View style={styles.summaryBar}>
-        <View style={styles.summaryItem}>
-          <Text style={[styles.summaryText, { color: "#2e7d32" }]}>🟢 Present</Text>
-          <Text style={styles.summaryNumber}>{presentCount}</Text>
+      <View style={styles.summaryBarCombined}>
+        <View style={styles.pieContainer}>
+          {pieData.length === 0 ? (
+            <View style={{ alignItems: 'center', justifyContent: 'center', height: 110 }}>
+              <Text style={{ color: '#666' }}>No data</Text>
+            </View>
+          ) : (
+            <PieChart
+              data={pieData.map((d) => ({ name: d.name, population: d.population, color: d.color, legendFontColor: d.legendFontColor, legendFontSize: d.legendFontSize }))}
+              width={Math.min(windowWidth - 60, 220)}
+              height={120}
+              chartConfig={{
+                backgroundGradientFrom: '#fff',
+                backgroundGradientTo: '#fff',
+                color: (opacity = 1) => `rgba(0,0,0, ${opacity})`,
+                decimalPlaces: 0,
+              }}
+              accessor={'population'}
+              backgroundColor={'transparent'}
+              paddingLeft={'50'}
+              center={[0, 0]}
+              hasLegend={false}
+            />
+          )}
+          <View style={styles.pieCenterOverlay}>
+            <Text style={{ fontSize: 12, color: '#fffdfdff', fontWeight: '700' }}>{presentPct}%</Text>
+            <Text style={{ fontSize: 11, color: '#ffffffff' }}>Present</Text>
+          </View>
         </View>
-        <View style={styles.summaryItem}>
-          <Text style={[styles.summaryText, { color: "#c62828" }]}>🔴 Absent</Text>
-          <Text style={styles.summaryNumber}>{absentCount}</Text>
-        </View>
-        <View style={styles.summaryItem}>
-          <Text style={[styles.summaryText, { color: "#424242" }]}>⚪ Clocked Out</Text>
-          <Text style={styles.summaryNumber}>{clockedOutCount}</Text>
-        </View>
-        <View style={styles.summaryItem}>
-          <Text style={[styles.summaryText, { color: "#1565c0" }]}>👥 Total</Text>
-          <Text style={styles.summaryNumber}>{totalCount}</Text>
-        </View>
-      </View>
 
-      <View style={styles.infoBar}>
-        <Text>Available Bays: 30/45</Text>
-        <Text>Servicemen: {servicemenPresentCount}/{totalServicemen}</Text>
-        <Text>Waiting Queue: 5</Text>
+        <View style={styles.statusCardsColumn}>
+          <TouchableOpacity style={[styles.statCard, !filterClockedOutOnly ? styles.statCardActive : {}]} onPress={() => { setSelectedStatuses(['Present']); setFilterClockedOutOnly(false); }}>
+            <View style={[styles.statDot, { backgroundColor: '#6A7337' }]} />
+            <Text style={styles.statText}>Present</Text>
+            <Text style={styles.statNumber}>{presentCount}</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={[styles.statCard, {}]} onPress={() => { setSelectedStatuses(['Absent']); setFilterClockedOutOnly(false); }}>
+            <View style={[styles.statDot, { backgroundColor: '#c62828' }]} />
+            <Text style={styles.statText}>Absent</Text>
+            <Text style={styles.statNumber}>{absentCount}</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={[styles.statCard, filterClockedOutOnly ? styles.statCardActive : {}]} onPress={() => { setFilterClockedOutOnly((s) => !s); if (!filterClockedOutOnly) setSelectedStatuses([...statusOptions]); }}>
+            <View style={[styles.statDot, { backgroundColor: '#AEB3B8' }]} />
+            <Text style={styles.statText}>Clocked Out</Text>
+            <Text style={styles.statNumber}>{clockedOutCount}</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {loading ? (
@@ -775,6 +827,24 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     elevation: 2,
   },
+  summaryBarCombined: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 8,
+    elevation: 2,
+  },
+  pieContainer: { width: 140, alignItems: 'center', justifyContent: 'center' },
+  pieCenterOverlay: { position: 'absolute', alignItems: 'center', justifyContent: 'center' },
+  statusCardsColumn: { flex: 1, marginLeft: 12 },
+  statCard: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 10, borderRadius: 10, marginBottom: 8, backgroundColor: '#fbfbfb' },
+  statCardActive: { borderWidth: 1, borderColor: '#1976d2', backgroundColor: '#eaf4ff' },
+  statDot: { width: 14, height: 14, borderRadius: 7, marginRight: 10 },
+  statText: { flex: 1, fontWeight: '700', color: '#2d3e2f' },
+  statNumber: { fontWeight: '800', color: '#333' },
   summaryItem: { alignItems: "center", flex: 1 },
   summaryText: { fontWeight: "600", fontSize: 14 },
   summaryNumber: { fontSize: 18, fontWeight: "bold", color: "#333" },
