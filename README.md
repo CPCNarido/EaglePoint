@@ -89,3 +89,10 @@ npm start
 
 To check for Db Contents run this "npx prisma studio"
 
+
+For Exporting and Clear the Attendance
+
+
+cd Backend
+node .\scripts\export_attendance_and_clear.js
+

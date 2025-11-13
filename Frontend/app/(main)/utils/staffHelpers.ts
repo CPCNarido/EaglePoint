@@ -40,8 +40,40 @@ export const formatTimestamp = (ts: any): string => {
   }
 };
 
+  export const isBallHandlerRole = (role: any): boolean => {
+    if (role === null || role === undefined) return false;
+    try {
+      const s = String(role).toLowerCase().trim();
+      return s === 'ballhandler' || s === 'ball handler' || s.includes('ballhandler') || s.includes('ball handler');
+    } catch (e) {
+      return false;
+    }
+  };
+
+  export const isDispatcherRole = (role: any): boolean => {
+    if (role === null || role === undefined) return false;
+    try {
+      const s = String(role).toLowerCase().trim();
+      return s === 'dispatcher' || s.includes('dispatcher');
+    } catch (e) {
+      return false;
+    }
+  };
+
+  export const getRoleCategory = (role: any): string => {
+    try {
+      if (isServicemanRole(role)) return 'Serviceman';
+      if (isBallHandlerRole(role)) return 'BallHandler';
+      if (isDispatcherRole(role)) return 'Dispatcher';
+      return 'Other';
+    } catch (e) { return 'Other'; }
+  };
+
 export default {
   isServicemanRole,
   isStaffActive,
   formatTimestamp,
+  isBallHandlerRole,
+  isDispatcherRole,
+  getRoleCategory,
 };

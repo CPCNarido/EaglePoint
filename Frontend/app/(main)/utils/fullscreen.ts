@@ -12,7 +12,7 @@ export const reloadApp = async () => {
     const Updates = (() => {
       try { return require('expo-updates'); } catch { return null; }
     })();
-    const upd = (Updates && (Updates as any).default) ? (Updates as any).default : Updates;
+    const upd = (Updates && (Updates as any).default) ? (Updates as any ).default : Updates;
     if (upd && typeof upd.reloadAsync === 'function') {
       try { await upd.reloadAsync(); return; } catch {}
     }
