@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { io, Socket } from 'socket.io-client';
 import { isServicemanRole } from '../../utils/staffHelpers';
 import { View, Text, ScrollView, SectionList, StyleSheet, Platform, TextInput, TouchableOpacity, FlatList, KeyboardAvoidingView, ActivityIndicator, useWindowDimensions } from 'react-native';
 
@@ -44,6 +45,14 @@ export default function TeamChats() {
   // Strict percentage of viewport: 60% of window height (no min/max)
   const rosterHeight = Math.floor(windowHeight * 0.5);
   const prevMessagesCount = useRef(0);
+  const socketRef = useRef<Socket | null>(null);
+  // buffered outgoing messages that have been sent over WS but not yet persisted
+  const outgoingBufferRef = useRef<Array<any>>([]);
+  const [wsStatus, setWsStatus] = useState<'connecting'|'open'|'closed'|'error'|'disabled'>('connecting');
+  const [bufferedCount, setBufferedCount] = useState<number>(0);
+  const retryCountRef = useRef<number>(0);
+  const reconnectTimerRef = useRef<any>(null);
+  const prevSelectedChatRef = useRef<ChatRoom | null>(null);
   const [showDebug, setShowDebug] = useState(false);
 
   useEffect(() => {
@@ -55,13 +64,162 @@ export default function TeamChats() {
         // pass the freshly-obtained id into fetchRooms so the initial fetch can
         // immediately exclude the logged user without waiting for state update.
         await fetchRooms(id ?? null);
-      } catch {
-        // even if fetchAdmin fails, try loading rooms without an id
-        await fetchRooms(null);
-      }
+          const connectWebSocket = async () => {
+            if (!adminEmployeeId) return;
+            setWsStatus('connecting');
+            try {
+              const baseUrl = await getBaseUrl();
+              // read token from async storage if available
+              // @ts-ignore
+              const AsyncStorageModule = await import('@react-native-async-storage/async-storage').catch(() => null);
+              const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
+              const token = AsyncStorage ? await AsyncStorage.getItem('authToken') : null;
+
+              // Use socket.io on the same base URL (no separate port)
+              const socketUrl = baseUrl.replace(/\/$/, '');
+              console.log('[TeamChats] connectWebSocket ->', socketUrl, 'employeeId=', adminEmployeeId);
+              try {
+                // disconnect existing if any
+                if (socketRef.current) {
+                  try { socketRef.current.disconnect(); } catch {};
+                  socketRef.current = null;
+                }
+                const opts: any = { transports: ['websocket'], autoConnect: true, reconnection: true, auth: {} };
+                if (token) opts.auth.token = token;
+                // attach employeeId as query for server convenience
+                opts.query = { employeeId: String(adminEmployeeId) };
+                const socket = io(socketUrl, opts);
+                socketRef.current = socket;
+
+                socket.on('connect', () => { retryCountRef.current = 0; setWsStatus('open'); console.log('WS connected'); });
+
+                socket.on('disconnect', (reason: any) => {
+                  console.log('WS disconnected', reason);
+                  setWsStatus('closed');
+                });
+
+                socket.on('connect_error', (err: any) => { console.log('WS connect_error', err); setWsStatus('error'); });
+
+                socket.on('message:new', (d: any) => {
+                  try {
+                    const payload = d?.message ? d.message : d;
+                    if (!payload) return;
+                    const m = payload;
+                    const incoming: ChatMessage = {
+                      message_id: m.message_id,
+                      chat_id: m.chat_id ?? 0,
+                      sender_id: m.sender_id ?? undefined,
+                      sender_name: m.sender_name ?? 'Unknown',
+                      content: m.content ?? '',
+                      sent_at: m.sent_at ?? new Date().toISOString(),
+                    };
+
+                    if (selectedChat) {
+                      if (selectedChat.chat_id && incoming.chat_id === selectedChat.chat_id) {
+                        setMessages((prev) => [...prev, incoming]);
+                        try { setLastPreview((p) => ({ ...p, [`chat-${incoming.chat_id}`]: String(incoming.content).slice(0, 80) })); } catch {}
+                        return;
+                      }
+                      if (selectedChat.employee_id && incoming.sender_id === selectedChat.employee_id) {
+                        setMessages((prev) => [...prev, incoming]);
+                        try { setLastPreview((p) => ({ ...p, [`emp-${selectedChat.employee_id}`]: String(incoming.content).slice(0, 80) })); } catch {}
+                        return;
+                      }
+                    }
+
+                    try {
+                      const key = incoming.chat_id ? `chat-${incoming.chat_id}` : `emp-${incoming.sender_id}`;
+                      setLastPreview((prev) => ({ ...prev, [key]: String(incoming.content).slice(0, 80) }));
+                      setUnseenCounts((prev) => ({ ...(prev || {}), [key]: (prev?.[key] ?? 0) + 1 }));
+                    } catch {}
+                  } catch (e) { /* ignore */ }
+                });
+              } catch (e) {
+                console.log('[TeamChats] socket.io creation failed', e);
+                socketRef.current = null;
+                setWsStatus('disabled');
+              }
+            } catch (e) {
+              console.log('[TeamChats] connectWebSocket failed', e);
+              setWsStatus('error');
+            }
+          };
+
+          let cancelled = false;
+          connectWebSocket();
+
+          return () => {
+            cancelled = true;
+            try {
+              // flush any buffered outgoing messages when component unmounts
+              (async () => { try { await flushBufferedMessages(); } catch {} })();
+              if (reconnectTimerRef.current) { clearTimeout(reconnectTimerRef.current); reconnectTimerRef.current = null; }
+              if (socketRef.current) { try { socketRef.current.disconnect(); } catch {} socketRef.current = null; }
+            } catch {};
+          };
+      } catch (e) { /* ignore */ }
     })();
-    return () => { clearInterval(t); };
-  }, []);
+
+    return () => {
+      try {
+        // flush any buffered outgoing messages when component unmounts
+        (async () => { try { await flushBufferedMessages(); } catch {} })();
+        if (socketRef.current) { try { socketRef.current.disconnect(); } catch {} socketRef.current = null; }
+      } catch {};
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adminEmployeeId]);
+
+  // Persist buffered outgoing messages for the previous selected chat when user switches chats
+  useEffect(() => {
+    (async () => {
+      try {
+        const prev = prevSelectedChatRef.current;
+        if (prev) {
+          // flush messages that were buffered for the previous chat
+          if (prev.employee_id) await flushBufferedMessages({ employeeId: prev.employee_id });
+          else if (prev.chat_id !== undefined) await flushBufferedMessages({ chat_id: prev.chat_id });
+        }
+      } catch (e) { /* ignore flush errors */ }
+      prevSelectedChatRef.current = selectedChat;
+    })();
+  }, [selectedChat]);
+
+  // Flush outgoingBufferRef to server; filter optional selector to persist only for a specific chat/employee
+  const flushBufferedMessages = async (selector?: { chat_id?: number; employeeId?: number }) => {
+    try {
+      const buf = outgoingBufferRef.current || [];
+      if (!buf.length) return;
+      const toFlush = selector ? buf.filter((it) => (selector.chat_id !== undefined ? Number(it.chat_id) === Number(selector.chat_id) : (selector.employeeId !== undefined ? Number(it.employeeId) === Number(selector.employeeId) : false))) : buf.slice();
+      if (!toFlush.length) return;
+      const baseUrl = await getBaseUrl();
+      const headers = await getAuthHeaders();
+      const r = await fetch(`${baseUrl}/api/admin/chats/persist`, { method: 'POST', credentials: 'include', headers, body: JSON.stringify({ messages: toFlush }) });
+      if (!r.ok) {
+        // do not drop buffer on failure
+        return;
+      }
+      const res = await r.json();
+      // res is array of per-item results; for successful ones, update messages state to mark sent
+      if (Array.isArray(res)) {
+        setMessages((prev) => {
+          const next = prev.map((p) => {
+            if (p.tempId) {
+              const found = res.find((x: any) => x.tempId === p.tempId || (x.message && x.message.content === p.content));
+              if (found && found.ok && found.message) {
+                return { ...p, status: 'sent', message_id: found.message.message_id ?? p.message_id, sent_at: found.message.sent_at ?? p.sent_at } as ChatMessage;
+              }
+            }
+            return p;
+          });
+          return next;
+        });
+      }
+      // remove flushed items from buffer
+      outgoingBufferRef.current = buf.filter((it) => !toFlush.includes(it));
+      try { setBufferedCount(outgoingBufferRef.current.length); } catch {}
+    } catch (e) { /* ignore best-effort */ }
+  };
 
   // fetch messages once when the selected chat changes (no polling)
   useEffect(() => {
@@ -412,6 +570,34 @@ export default function TeamChats() {
   const tempMsg: ChatMessage = { tempId, chat_id: chatId, sender_name: adminName, sender_id: adminEmployeeId ?? undefined, content, sent_at: new Date().toISOString(), status: 'pending' };
     setMessages((prev) => [...prev, tempMsg]);
     try {
+      // If socket.io present, emit and rely on server ack. If ack fails, buffer for persistence
+      if (socketRef.current && socketRef.current.connected) {
+        const payload = { message: { chat_id: chatId, sender_id: adminEmployeeId ?? undefined, sender_name: adminName, content, sent_at: new Date().toISOString(), tempId } };
+        try {
+          console.log('[TeamChats] sendMessage: emitting via socket.io', { tempId, chat_id: chatId, sender: adminEmployeeId });
+          // optimistic UI already appended; wait for server ack to mark as sent
+          socketRef.current.emit('message:new', payload, (ack: any) => {
+            try {
+              if (ack && ack.ok && ack.message) {
+                // mark the temp message as sent
+                setMessages((prev) => prev.map((it) => (it.tempId === tempId ? { ...it, status: 'sent', message_id: ack.message.message_id ?? it.message_id, sent_at: ack.message.sent_at ?? it.sent_at } : it)));
+              } else {
+                // ack failed: keep in buffer for later persistence
+                outgoingBufferRef.current.push({ tempId, chat_id: chatId, content });
+                try { setBufferedCount(outgoingBufferRef.current.length); } catch {}
+                console.log('[TeamChats] sendMessage: ack failed, buffered for persistence', { bufferedCount: outgoingBufferRef.current.length });
+              }
+            } catch (e) { /* ignore ack handler errors */ }
+          });
+          // preview update
+          try { setLastPreview((p) => ({ ...p, [`chat-${chatId}`]: String(content).slice(0, 80) })); } catch {}
+          return true;
+        } catch (e) {
+          // fall through to HTTP fallback
+        }
+      }
+
+      // Fallback: use existing HTTP POST behavior to persist immediately
       const baseUrl = await getBaseUrl();
       const endpoints = [
         `/api/admin/chats/${chatId}/messages`,
@@ -420,6 +606,7 @@ export default function TeamChats() {
       ];
       for (const ep of endpoints) {
         try {
+          console.log('[TeamChats] sendMessage: attempting HTTP fallback to', ep);
           const headers = await getAuthHeaders();
           const r = await fetch(`${baseUrl}${ep}`, { method: 'POST', credentials: 'include', headers, body: JSON.stringify({ content }) });
           if (!r.ok) continue;
@@ -431,11 +618,15 @@ export default function TeamChats() {
           try { if (typeof window !== 'undefined' && window.dispatchEvent) window.dispatchEvent(new Event('overview:updated')); } catch {}
           // re-fetch to get canonical message(s) from db
           await fetchMessages(chatId);
+          console.log('[TeamChats] sendMessage: HTTP send ok, server message id', m?.message_id);
           return true;
         } catch {}
       }
-    } catch {}
+    } catch (e) {
+      /* ignore */
+    }
     // mark failed
+    console.log('[TeamChats] sendMessage: failed to send', { tempId });
     setMessages((prev) => prev.map((it) => (it.tempId === tempId ? { ...it, status: 'failed' } : it)));
     return false;
   };
@@ -446,23 +637,46 @@ export default function TeamChats() {
   const tempMsg: ChatMessage = { tempId, chat_id: 0, sender_name: adminName, sender_id: adminEmployeeId ?? undefined, content, sent_at: new Date().toISOString(), status: 'pending' };
     setMessages((prev) => [...prev, tempMsg]);
     try {
+      // Try to send over socket.io if available
+      if (socketRef.current && socketRef.current.connected) {
+        const payload = { message: { employeeId: employeeId, sender_id: adminEmployeeId ?? undefined, sender_name: adminName, content, sent_at: new Date().toISOString(), tempId } };
+        try {
+          console.log('[TeamChats] sendDirectMessage: emitting via socket.io', { tempId, employeeId, sender: adminEmployeeId });
+          socketRef.current.emit('message:new', payload, (ack: any) => {
+            try {
+              if (ack && ack.ok && ack.message) {
+                setMessages((prev) => prev.map((it) => (it.tempId === tempId ? { ...it, status: 'sent', message_id: ack.message.message_id ?? it.message_id, sent_at: ack.message.sent_at ?? it.sent_at } : it)));
+              } else {
+                outgoingBufferRef.current.push({ tempId, employeeId, content });
+                try { setBufferedCount(outgoingBufferRef.current.length); } catch {}
+                console.log('[TeamChats] sendDirectMessage: ack failed, buffered for persistence', { bufferedCount: outgoingBufferRef.current.length });
+              }
+            } catch (e) { /* ignore */ }
+          });
+          try { setLastPreview((p) => ({ ...p, [`emp-${employeeId}`]: String(content).slice(0, 80) })); } catch {}
+          return true;
+        } catch (e) { /* fall back to HTTP */ }
+      }
+
+      // Fallback to HTTP
       const baseUrl = await getBaseUrl();
       const headers = await getAuthHeaders();
       const r = await fetch(`${baseUrl}/api/admin/chats/direct/${employeeId}/messages`, { method: 'POST', credentials: 'include', headers, body: JSON.stringify({ content }) });
       if (!r.ok) {
+        console.log('[TeamChats] sendDirectMessage: HTTP send failed', { employeeId, status: r.status });
         setMessages((prev) => prev.map((it) => (it.tempId === tempId ? { ...it, status: 'failed' } : it)));
         return false;
       }
-  const m = await r.json();
-  const serverSentAt = m?.sent_at ?? new Date().toISOString();
-  setMessages((prev) => prev.map((it) => (it.tempId === tempId ? { message_id: m?.message_id ?? undefined, chat_id: m?.chat_id ?? m?.chatId ?? 0, sender_name: adminName, sender_id: adminEmployeeId ?? undefined, content, sent_at: serverSentAt, status: 'sent' } : it)));
-  // Re-fetch conversation to pick up DB record (ownership will be resolved by sender_id or sender_name fallback)
+      const m = await r.json();
+      const serverSentAt = m?.sent_at ?? new Date().toISOString();
+      setMessages((prev) => prev.map((it) => (it.tempId === tempId ? { message_id: m?.message_id ?? undefined, chat_id: m?.chat_id ?? m?.chatId ?? 0, sender_name: adminName, sender_id: adminEmployeeId ?? undefined, content, sent_at: serverSentAt, status: 'sent' } : it)));
       try { if (typeof window !== 'undefined' && window.dispatchEvent) window.dispatchEvent(new Event('overview:updated')); } catch {}
-      // re-fetch conversation to pick up DB record
-  await fetchDirectMessages(employeeId);
-  try { setLastPreview((p) => ({ ...p, [`emp-${employeeId}`]: String(content).slice(0, 80) })); } catch {}
+      await fetchDirectMessages(employeeId);
+      try { setLastPreview((p) => ({ ...p, [`emp-${employeeId}`]: String(content).slice(0, 80) })); } catch {}
+      console.log('[TeamChats] sendDirectMessage: HTTP send ok, server message id', m?.message_id ?? m?.message?.message_id ?? null);
       return true;
-    } catch {
+    } catch (e) {
+      console.log('[TeamChats] sendDirectMessage: unexpected error', e);
       setMessages((prev) => prev.map((it) => (it.tempId === tempId ? { ...it, status: 'failed' } : it)));
       return false;
     }
@@ -728,8 +942,11 @@ export default function TeamChats() {
 
         <View style={styles.chatColumn}>
           <View style={styles.chatHeaderRow}>
-            <Text style={styles.chatTitleLarge}>{selectedChat ? `Chat with ${selectedChat.name ?? 'Chat'}` : 'Select a chat'}</Text>
-            <View />
+              <Text style={styles.chatTitleLarge}>{selectedChat ? `Chat with ${selectedChat.name ?? 'Chat'}` : 'Select a chat'}</Text>
+              <View style={{ alignItems: 'flex-end' }}>
+                <Text style={{ fontSize: 12, color: '#666' }}>{`WS: ${wsStatus}`}</Text>
+                <Text style={{ fontSize: 12, color: '#666' }}>{`Buffered: ${bufferedCount}`}</Text>
+              </View>
           </View>
           <View style={styles.chatWindowCard}>
             {loadingMessages ? <ActivityIndicator /> : (

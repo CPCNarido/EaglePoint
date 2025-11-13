@@ -61,13 +61,20 @@ export class AdminService {
     }
 
     const created = await this.prisma.chatMessage.create({ data: { chat_id: roomId, sender_id: senderId, content } });
+    // Resolve sender name for richer payloads sent to realtime transports
+    let senderName: string | null = null;
+    try {
+      const s = await this.prisma.employee.findUnique({ where: { employee_id: senderId } });
+      senderName = s?.full_name ?? s?.username ?? null;
+    } catch (e) { void e; }
     // Optionally write a system log (best-effort)
     try {
       await this.loggingService.writeLog(senderId ?? undefined, Role.Admin, `ChatMessage: chat:${roomId}`, `msg:${created.message_id}`);
     } catch (e) { void e; }
-    // Broadcast to connected clients (best-effort)
-    try { await this.chatService.notifyNewMessage(created); } catch (e) { void e; }
-  return { message_id: created.message_id, chat_id: created.chat_id, sender_id: created.sender_id, content: created.content, sent_at: created.sent_at };
+    // Broadcast to connected clients (best-effort) with sender_name included
+    const notifyPayload = { message_id: created.message_id, chat_id: created.chat_id, sender_id: created.sender_id, sender_name: senderName, content: created.content, sent_at: created.sent_at };
+    try { await this.chatService.notifyNewMessage(notifyPayload); } catch (e) { void e; }
+  return notifyPayload;
   }
 
   async broadcastMessage(content: string, senderId?: number) {
@@ -117,9 +124,16 @@ export class AdminService {
     if (!room) throw new BadRequestException('Failed creating/find chat room');
 
   const created = await this.prisma.chatMessage.create({ data: { chat_id: room.chat_id, sender_id: senderId, content } });
+  // Resolve sender name to include in real-time notifications
+  let senderName: string | null = null;
+  try {
+    const s = await this.prisma.employee.findUnique({ where: { employee_id: senderId } });
+    senderName = s?.full_name ?? s?.username ?? null;
+  } catch (e) { void e; }
   try { await this.loggingService.writeLog(senderId ?? undefined, Role.Admin, `DirectMessage: ${content?.slice(0, 80)}`, `dm:${created.message_id}`); } catch (e) { void e; }
-  try { await this.chatService.notifyNewMessage(created); } catch (e) { void e; }
-  return { message_id: created.message_id, chat_id: room.chat_id, sender_id: created.sender_id, content: created.content, sent_at: created.sent_at };
+  const notifyPayload = { message_id: created.message_id, chat_id: room.chat_id, sender_id: created.sender_id, sender_name: senderName, content: created.content, sent_at: created.sent_at };
+  try { await this.chatService.notifyNewMessage(notifyPayload); } catch (e) { void e; }
+  return notifyPayload;
   }
 
   async getDirectMessages(targetEmployeeId: number, senderId: number) {
@@ -175,6 +189,45 @@ export class AdminService {
     }
 
     return out;
+  }
+
+  /**
+   * Persist a set of buffered messages sent by a client when the user exits a conversation.
+   * Each message may be either a group/chat message (chat_id present) or a direct message
+   * (employeeId present). The method will create chat rooms as necessary and persist messages
+   * using the existing postChatMessage/postDirectMessage helpers so notifications are dispatched.
+   */
+  async persistBufferedMessages(messages: Array<any>, senderId?: number) {
+    if (!Array.isArray(messages) || messages.length === 0) throw new BadRequestException('messages is required');
+    if (!senderId) throw new BadRequestException('senderId is required');
+    Logger.log(`persistBufferedMessages: persisting ${messages.length} items for sender=${senderId}`, 'AdminService');
+    const results: any[] = [];
+    for (const m of messages) {
+      try {
+        const content = String(m?.content ?? '').trim();
+        if (!content) { results.push({ ok: false, error: 'empty content', tempId: m?.tempId ?? null }); continue; }
+        if (m?.chat_id || (m?.chat_id === 0)) {
+          const chatId = Number(m.chat_id);
+          Logger.log(`persistBufferedMessages: posting chat message chat_id=${chatId} tempId=${m?.tempId ?? 'none'} sender=${senderId}`, 'AdminService');
+          const res = await this.postChatMessage(chatId, content, senderId);
+          results.push({ ok: true, message: res, tempId: m?.tempId ?? null });
+        } else if (m?.employeeId || m?.employee_id) {
+          const emp = Number(m.employeeId ?? m.employee_id);
+          Logger.log(`persistBufferedMessages: posting direct message to employee=${emp} tempId=${m?.tempId ?? 'none'} sender=${senderId}`, 'AdminService');
+          const res = await this.postDirectMessage(emp, content, senderId);
+          results.push({ ok: true, message: res, tempId: m?.tempId ?? null });
+        } else {
+          // if no recipient specified, fail the item
+          Logger.log(`persistBufferedMessages: item missing recipient tempId=${m?.tempId ?? 'none'}`, 'AdminService');
+          results.push({ ok: false, error: 'no recipient', tempId: m?.tempId ?? null });
+        }
+      } catch (e: any) {
+        Logger.error(`persistBufferedMessages: failed item tempId=${m?.tempId ?? 'none'} error=${e?.message ?? String(e)}`, 'AdminService');
+        results.push({ ok: false, error: e?.message ?? String(e), tempId: m?.tempId ?? null });
+      }
+    }
+    Logger.log(`persistBufferedMessages: completed, results=${results.length}`, 'AdminService');
+    return results;
   }
 
 

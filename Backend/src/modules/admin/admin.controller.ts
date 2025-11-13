@@ -133,6 +133,24 @@ export class AdminController {
     }
   }
 
+  // Persist a batch of buffered messages (sent by client when user exits a convo)
+  @UseGuards(AuthGuard)
+  @Post('chats/persist')
+  async persistBufferedChats(@Body() body: any, @Req() req: Request & { user?: any }) {
+    try {
+      const senderId = req?.user?.sub ? Number(req.user.sub) : undefined;
+      const msgs = Array.isArray(body?.messages) ? body.messages : [];
+      if (!msgs.length) throw new BadRequestException('messages is required');
+      Logger.log(`persistBufferedChats: received ${msgs.length} messages from sender=${senderId}`, 'AdminController');
+      try { Logger.log(`persistBufferedChats: sample tempIds=${msgs.slice(0,5).map((m:any)=>m?.tempId||m?.content?.slice(0,20)).join(',')}`, 'AdminController'); } catch {}
+      return await this.adminService.persistBufferedMessages(msgs, senderId);
+    } catch (e: any) {
+      if (e instanceof BadRequestException) throw e;
+      Logger.error('Failed to persist buffered chats', e, 'AdminController');
+      throw new InternalServerErrorException(e?.message ?? 'Failed persisting buffered chats');
+    }
+  }
+
   // Post a message to a chat (admin)
   @UseGuards(AuthGuard)
   @Post('chats/:chatId/messages')
