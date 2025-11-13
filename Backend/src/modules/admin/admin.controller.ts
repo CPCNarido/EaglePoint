@@ -82,6 +82,23 @@ export class AdminController {
     }
   }
 
+  // Mark a batch of employees as absent for a date (admin only)
+  @UseGuards(AuthGuard)
+  @Post('attendance/mark-absent')
+  async markAbsent(@Body() body: any, @Req() req: Request & { user?: any }) {
+    try {
+      const employeeIds = Array.isArray(body?.employeeIds) ? body.employeeIds.map((v: any) => Number(v)).filter((n: number) => Number.isFinite(n)) : [];
+      if (!employeeIds.length) throw new BadRequestException('employeeIds is required');
+      const date = body?.date ? String(body.date) : undefined;
+      const adminId = req?.user?.sub ? Number(req.user.sub) : undefined;
+      return await this.adminService.markAbsentBatch(employeeIds, date, adminId);
+    } catch (e: any) {
+      if (e instanceof BadRequestException) throw e;
+      Logger.error('Failed to mark absent', e, 'AdminController');
+      throw new InternalServerErrorException(e?.message ?? 'Failed marking absent');
+    }
+  }
+
   // Chat rooms listing
   @Get('chats')
   async listChats() {
@@ -146,7 +163,7 @@ export class AdminController {
       if (e instanceof BadRequestException) throw e;
       throw new InternalServerErrorException(e?.message ?? 'Failed broadcasting message');
     }
-  }
+  } 
 
   // Send direct message to a specific employee (one-to-one)
   @UseGuards(AuthGuard)

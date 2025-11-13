@@ -1,7 +1,7 @@
-import React, { useState, useMemo, useEffect } from "react";
-import { Platform } from 'react-native';
+import React, { useState, useMemo, useEffect, useRef } from "react";
+import { Platform, Animated, Easing, ScrollView } from 'react-native';
 import { fetchWithAuth } from '../../../_lib/fetchWithAuth';
-import { isServicemanRole, isStaffActive, formatTimestamp } from '../../utils/staffHelpers';
+import { isServicemanRole, isStaffActive, formatTimestamp, getRoleCategory } from '../../utils/staffHelpers';
 import {
   View,
   Text,
@@ -22,6 +22,12 @@ export default function AttendanceTab(_props?: any) {
   const [loading, setLoading] = useState<boolean>(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  // Role / Status filters (two-column filter UI)
+  const roleOptions = ["Dispatcher", "Serviceman", "BallHandler", "Other"];
+  const statusOptions = ["Present", "Absent", "No Record"];
+  const [selectedRoles, setSelectedRoles] = useState<string[]>([...roleOptions]);
+  const [selectedStatuses, setSelectedStatuses] = useState<string[]>([...statusOptions]);
+  const [showFilters, setShowFilters] = useState<boolean>(true);
   const [editing, setEditing] = useState(false);
   const [batchMode, setBatchMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -41,36 +47,83 @@ export default function AttendanceTab(_props?: any) {
     let present = 0, absent = 0, out = 0;
     let servicemenPresent = 0, servicemenTotal = 0;
     attendanceData.forEach((item) => {
-      if (item.status === "Present" && !item.clockOut) present++;
-      else if (item.status === "Absent") absent++;
-      else if (item.status === "Present" && item.clockOut) out++;
+      // prefer normalized attendanceStatus when available
+      const att = String(item.attendanceStatus ?? item.status ?? '').toLowerCase();
+      if (att === 'present') present++;
+      else if (att === 'absent') absent++;
+      // clocked-out is derived from raw clockOut value
+      if (item.clockOutRaw) out++;
 
-      // track servicemen counts using alias detection and only counting staff considered "active"
+      // track servicemen counts using alias detection
       try {
         const role = item.group ?? item.role ?? '';
         if (isServicemanRole(role)) {
-          servicemenTotal += 1;
-          if (item.status === 'Present' && !item.clockOut) servicemenPresent += 1;
+          servicemenTotal++;
+          if (att === 'present') servicemenPresent++;
         }
       } catch (e) {
-        // ignore malformed items
+        // ignore per-item role detection errors
       }
     });
+
+    // finalize counts
+    const total = attendanceData.length;
     return {
       presentCount: present,
       absentCount: absent,
       clockedOutCount: out,
-      totalCount: attendanceData.length,
+      totalCount: total,
       servicemenPresentCount: servicemenPresent,
       totalServicemen: servicemenTotal,
     };
   }, [attendanceData]);
+  const statusCounts = useMemo(() => {
+    const m: Record<string, number> = { Present: 0, Absent: 0, 'No Record': 0 };
+    attendanceData.forEach((it) => {
+      const sc = String(it.attendanceStatus ?? it.status ?? 'No Record');
+      const key = sc === 'Present' ? 'Present' : sc === 'Absent' ? 'Absent' : 'No Record';
+      m[key] = (m[key] || 0) + 1;
+    });
+    return m;
+  }, [attendanceData]);
 
-  const filteredData = attendanceData.filter(
-    (item) =>
-      item.name.toLowerCase().includes(search.toLowerCase()) ||
-      item.userId.toLowerCase().includes(search.toLowerCase())
-  );
+  const roleCounts = useMemo(() => {
+    const m: Record<string, number> = {};
+    roleOptions.forEach((r) => (m[r] = 0));
+    attendanceData.forEach((it) => {
+      const role = String(it.group ?? it.role ?? '');
+      const cat = getRoleCategory(role) || 'Other';
+      m[cat] = (m[cat] || 0) + 1;
+    });
+    return m;
+  }, [attendanceData]);
+
+  const filteredData = useMemo(() => {
+    const q = String(search ?? '').trim().toLowerCase();
+    return attendanceData.filter((it) => {
+      const role = String(it.group ?? it.role ?? '');
+      const cat = getRoleCategory(role) || 'Other';
+      const status = String(it.attendanceStatus ?? it.status ?? 'No Record');
+      if (!selectedRoles.includes(cat)) return false;
+      if (!selectedStatuses.includes(status)) return false;
+      if (!q) return true;
+      return (String(it.name ?? '').toLowerCase().includes(q) || String(it.userId ?? '').toLowerCase().includes(q));
+    });
+  }, [attendanceData, selectedRoles, selectedStatuses, search]);
+
+  const toggleRole = (role: string) => {
+    setSelectedRoles((prev) => (prev.includes(role) ? prev.filter((r) => r !== role) : [...prev, role]));
+  };
+
+  const toggleStatusFilter = (st: string) => {
+    setSelectedStatuses((prev) => (prev.includes(st) ? prev.filter((s) => s !== st) : [...prev, st]));
+  };
+
+  // Select / Clear helpers for quick filter operations
+  const selectAllRoles = () => setSelectedRoles([...roleOptions]);
+  const clearAllRoles = () => setSelectedRoles([]);
+  const selectAllStatuses = () => setSelectedStatuses([...statusOptions]);
+  const clearAllStatuses = () => setSelectedStatuses([]);
 
   // Resolve backend base URL. Use global override when present (same approach as StaffManagement).
   const baseDefault = Platform.OS === 'android' ? 'http://10.127.147.53:3000' : 'http://localhost:3000';
@@ -147,13 +200,27 @@ export default function AttendanceTab(_props?: any) {
         const mapped = rows.map((s: any) => {
           const empId = Number(s.employee_id ?? s.id ?? s.employeeId ?? null);
           const found = attRows.find((a: any) => Number(a.employee_id) === empId || String(a.employee_id) === String(empId));
+          // derive a normalized attendance status for UI & filters
+          let attendanceStatus = 'No Record';
+          const hasClockIn = !!(found && found.clock_in);
+          const hasClockOut = !!(found && found.clock_out);
+          if (hasClockIn && !hasClockOut) attendanceStatus = 'Present';
+          else if (hasClockIn && hasClockOut) attendanceStatus = 'Absent';
+          else {
+            const raw = String((found?.notes ?? found?.status ?? found?.source ?? '')).toLowerCase();
+            // accept any mention of 'absent' in notes/source/status (e.g. 'Marked absent')
+            if (raw.includes('absent')) attendanceStatus = 'Absent';
+          }
+
           return ({
             id: String(empId ?? s.username ?? Math.random()),
             employee_id: empId,
             name: s.full_name ?? s.username ?? String(empId ?? ''),
             userId: s.username ?? String(empId ?? ''),
             group: s.role ?? '',
-            status: found ? (found.clock_out ? 'Present (Clocked-Out)' : 'Present') : 'No Record',
+            // use normalized attendanceStatus as the canonical status shown on the UI
+            status: attendanceStatus,
+            attendanceStatus,
             clockInRaw: found && found.clock_in ? found.clock_in : null,
             clockOutRaw: found && found.clock_out ? found.clock_out : null,
             clockIn: found && found.clock_in ? formatTimestamp(found.clock_in) : '',
@@ -176,6 +243,35 @@ export default function AttendanceTab(_props?: any) {
     fetchStaff();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Animated drawer state for filters
+  const animFilter = useRef(new Animated.Value(showFilters ? 0 : 1)).current;
+  useEffect(() => {
+    Animated.timing(animFilter, { toValue: showFilters ? 0 : 1, duration: 300, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+  }, [showFilters, animFilter]);
+
+  // Chip component with press animation
+  const Chip: React.FC<{ label: string; count?: number | string; active?: boolean; onPress?: () => void; onBadgePress?: () => void }> = ({ label, count, active, onPress, onBadgePress }) => {
+    const scale = useRef(new Animated.Value(1)).current;
+    const handlePressIn = () => Animated.spring(scale, { toValue: 0.96, useNativeDriver: true }).start();
+    const handlePressOut = () => Animated.spring(scale, { toValue: 1, useNativeDriver: true }).start();
+    return (
+      <Animated.View style={{ transform: [{ scale }], marginRight: 8, marginBottom: 8 }}>
+        <TouchableOpacity
+          activeOpacity={0.9}
+          onPressIn={handlePressIn}
+          onPressOut={handlePressOut}
+          onPress={onPress}
+          style={[styles.chip, active ? styles.chipActive : {}]}
+        >
+          <Animated.Text style={styles.chipText}>{label}</Animated.Text>
+          <TouchableOpacity onPress={onBadgePress} style={[styles.countBadge, typeof count === 'number' ? {} : {}]}>
+            <Text style={styles.countBadgeText}>{String(count ?? '')}</Text>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Animated.View>
+    );
+  };
 
   const toggleStatus = async (id: string) => {
     if (!editing) return;
@@ -256,6 +352,67 @@ export default function AttendanceTab(_props?: any) {
         setBatchMode(false);
       }
     })();
+  };
+
+  // Mark all staff who do NOT have a clock-in as Absent (confirmation + batch)
+  const markOthersAsAbsent = () => {
+    Alert.alert(
+      'Confirm',
+      'Mark all staff who do NOT have a clock-in as Absent?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'OK',
+          onPress: () => {
+            (async () => {
+              const logs: Array<any> = [];
+              try {
+                const baseUrl = resolveBaseUrl();
+                const others = attendanceData
+                  .filter((it) => !it.clockInRaw)
+                  .map((it) => Number(it.employee_id ?? it.id))
+                  .filter((n) => Number.isFinite(n));
+
+                if (others.length > 0) {
+                  try {
+                    const res = await fetchWithAuth(`${baseUrl}/api/admin/attendance/mark-absent`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ employeeIds: others }),
+                    });
+                    if (!res || !res.ok) throw new Error(`Request failed: ${res?.status} ${res?.statusText}`);
+                    const json = await res.json();
+                    // json is expected to be an array of per-employee results
+                    for (const r of Array.isArray(json) ? json : [json]) {
+                      if (r && r.ok) {
+                        logs.push({ employeeId: r.employeeId ?? null, ok: true, result: r });
+                        console.log('[Attendance][MarkOthers][ABSENT] success', { employeeId: r.employeeId, result: r });
+                      } else {
+                        logs.push({ employeeId: r?.employeeId ?? null, ok: false, error: r?.error ?? JSON.stringify(r) });
+                        console.warn('[Attendance][MarkOthers][ABSENT] failed', { employeeId: r?.employeeId ?? null, error: r?.error ?? JSON.stringify(r) });
+                      }
+                    }
+                  } catch (err: any) {
+                    logs.push({ employeeIds: others, ok: false, error: String(err?.message ?? err) });
+                    console.warn('[Attendance][MarkOthers][ABSENT] bulk request failed', { employeeIds: others, error: String(err?.message ?? err) });
+                  }
+                }
+
+                setBatchLogs(logs);
+                setShowBatchLogs(true);
+                await fetchStaff();
+                Alert.alert('Marked Others Absent', `Attempted to mark ${others.length} staff as absent. See logs.`);
+              } catch (e: any) {
+                Alert.alert('Mark Others Failed', String(e?.message ?? e));
+              } finally {
+                setBatchMode(false);
+                setSelectedIds([]);
+              }
+            })();
+          }
+        }
+      ]
+    );
   };
 
   const handleManualEntry = () => setManualVisible(true);
@@ -381,7 +538,69 @@ export default function AttendanceTab(_props?: any) {
             {batchMode ? "Exit Batch" : "Batch Attendance"}
           </Text>
         </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.button, { backgroundColor: showFilters ? '#1976d2' : '#777' }]}
+            onPress={() => setShowFilters((s) => !s)}
+          >
+            <Text style={styles.buttonText}>{showFilters ? 'Hide Filters' : 'Show Filters'}</Text>
+          </TouchableOpacity>
       </View>
+        {/* Two-column filters: Roles (left) and Status (right) */}
+        {showFilters && (
+          <View style={styles.filtersCard}>
+            <View style={styles.filtersHeader}>
+              <Text style={styles.filterLabel}>Filters</Text>
+              <View style={{ flexDirection: 'row' }}>
+                <TouchableOpacity style={styles.smallFilterBtn} onPress={selectAllRoles}>
+                  <Text style={styles.smallFilterBtnText}>All Roles</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.smallFilterBtn} onPress={clearAllRoles}>
+                  <Text style={styles.smallFilterBtnText}>Clear</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <View style={styles.chipsRow}>
+              {roleOptions.map((r) => (
+                <TouchableOpacity
+                  key={r}
+                  onPress={() => toggleRole(r)}
+                  style={[styles.chip, selectedRoles.includes(r) ? styles.chipActive : {}]}
+                >
+                  <Text style={styles.chipText}>{r}</Text>
+                  <View style={styles.countBadge}><Text style={styles.countBadgeText}>{roleCounts[r] ?? 0}</Text></View>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <View style={[styles.filtersHeader, { marginTop: 8 }]}>
+              <Text style={styles.filterLabel}>Status</Text>
+              <View style={{ flexDirection: 'row' }}>
+                <TouchableOpacity style={styles.smallFilterBtn} onPress={selectAllStatuses}>
+                  <Text style={styles.smallFilterBtnText}>All</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.smallFilterBtn} onPress={clearAllStatuses}>
+                  <Text style={styles.smallFilterBtnText}>Clear</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <View style={styles.chipsRow}>
+              {statusOptions.map((s) => (
+                <TouchableOpacity
+                  key={s}
+                  onPress={() => toggleStatusFilter(s)}
+                  style={[styles.chip, selectedStatuses.includes(s) ? styles.chipActive : {}]}
+                >
+                  <Text style={styles.chipText}>{s}</Text>
+                  <View style={[styles.countBadge, s === 'Present' ? { backgroundColor: '#2e7d32' } : s === 'Absent' ? { backgroundColor: '#c62828' } : { backgroundColor: '#666' }]}>
+                    <Text style={styles.countBadgeText}>{statusCounts[s] ?? 0}</Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        )}
 
       {batchMode && (
         <View style={styles.batchActions}>
@@ -397,6 +616,12 @@ export default function AttendanceTab(_props?: any) {
           >
             <Text style={styles.batchButtonText}>Batch Clock-Out</Text>
           </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.batchButton, { backgroundColor: "#f8d7da" }]}
+            onPress={markOthersAsAbsent}
+          >
+            <Text style={styles.batchButtonText}>Mark Others As Absent</Text>
+          </TouchableOpacity>
         </View>
       )}
 
@@ -409,6 +634,7 @@ export default function AttendanceTab(_props?: any) {
             <Text style={[styles.tableText, styles.colName]}>Name</Text>
             <Text style={styles.tableText}>User ID</Text>
             <Text style={styles.tableText}>Group</Text>
+            <Text style={styles.tableText}>Attendance</Text>
             <Text style={styles.tableText}>Status</Text>
             <Text style={styles.tableText}>Clock-In</Text>
             <Text style={styles.tableText}>Clock-Out</Text>
@@ -429,18 +655,19 @@ export default function AttendanceTab(_props?: any) {
                   <Text>{selectedIds.includes(item.id) ? "☑️" : "⬜"}</Text>
                 </View>
               ) : (
-                <Switch value={item.status === "Present"} disabled />
+                <Switch value={item.attendanceStatus === "Present"} disabled />
               )}
               <Text style={[styles.tableText, styles.colName]}>{item.name}</Text>
               <Text style={styles.tableText}>{item.userId}</Text>
               <Text style={styles.tableText}>{item.group}</Text>
+              <Text style={styles.tableText}>{item.attendanceStatus ?? item.status ?? 'No Record'}</Text>
               <Text
                 style={[
                   styles.status,
-                  { backgroundColor: item.status === "Present" ? "#c8e6c9" : "#ffcdd2" },
+                  { backgroundColor: item.attendanceStatus === "Present" ? "#c8e6c9" : "#ffcdd2" },
                 ]}
               >
-                {item.status}
+                {item.attendanceStatus ?? item.status}
               </Text>
               <Text style={styles.tableText}>{item.clockIn || "------"}</Text>
               <Text style={styles.tableText}>{item.clockOut || "------"}</Text>
@@ -611,7 +838,7 @@ const styles = StyleSheet.create({
   batchButton: {
     padding: 10,
     borderRadius: 8,
-    width: "45%",
+    width: "30%",
     alignItems: "center",
   },
   batchButtonText: { fontWeight: "600", color: "#2d3e2f" },
@@ -663,4 +890,20 @@ const styles = StyleSheet.create({
     width: 90,
     alignItems: "center",
   },
+  filterRow: { flexDirection: 'row', justifyContent: 'space-between', marginVertical: 8 },
+  filterColumn: { flex: 1, backgroundColor: '#fff', padding: 8, borderRadius: 8, marginRight: 6 },
+  filterLabel: { fontWeight: '700', marginBottom: 6 },
+  filterButton: { padding: 8, borderRadius: 6, backgroundColor: '#f3f3f3', marginBottom: 6 },
+  filterButtonActive: { backgroundColor: '#cfe8ff' },
+  filterControls: { flexDirection: 'row', justifyContent: 'flex-start', marginBottom: 8 },
+  smallFilterBtn: { backgroundColor: '#eef6ff', paddingVertical: 6, paddingHorizontal: 8, borderRadius: 6, marginRight: 8 },
+  smallFilterBtnText: { color: '#064e9c', fontWeight: '700', fontSize: 12 },
+  filtersCard: { backgroundColor: '#fff', padding: 10, borderRadius: 10, marginVertical: 8, elevation: 2 },
+  filtersHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  chipsRow: { flexDirection: 'row', flexWrap: 'wrap' },
+  chip: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 20, backgroundColor: '#f3f3f3', marginRight: 8, marginBottom: 8 },
+  chipActive: { backgroundColor: '#cfe8ff', borderWidth: 1, borderColor: '#1976d2' },
+  chipText: { fontWeight: '700', marginRight: 8 },
+  countBadge: { minWidth: 22, height: 22, borderRadius: 11, backgroundColor: '#999', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 6 },
+  countBadgeText: { color: '#fff', fontWeight: '700', fontSize: 11 },
 });

@@ -850,6 +850,49 @@ export class AdminService {
     return updated;
   }
 
+  /**
+   * Mark a list of employees as absent for a given date (or today if no date provided).
+   * Behavior: upsert an Attendance row for each employee/date and set source/notes to indicate absent.
+   * Returns an array of per-employee result objects.
+   */
+  async markAbsentBatch(employeeIds: number[], date?: string, adminId?: number) {
+    if (!employeeIds || !Array.isArray(employeeIds) || employeeIds.length === 0) throw new BadRequestException('employeeIds is required');
+    const ts = date ? new Date(String(date)) : new Date();
+    if (isNaN(ts.getTime())) throw new BadRequestException('Invalid date');
+    const dateOnly = await this.bucketDateForTimestamp(ts);
+
+    const results: any[] = [];
+    for (const rawId of employeeIds) {
+      const employeeId = Number(rawId);
+      if (!employeeId) {
+        results.push({ employeeId: rawId, ok: false, error: 'invalid employeeId' });
+        continue;
+      }
+      try {
+        let rec: any = null;
+        try {
+          rec = await this.prisma.attendance.findUnique({ where: { employee_id_date: { employee_id: employeeId, date: dateOnly } as any } }).catch(() => null);
+        } catch (e) {
+          rec = null;
+        }
+        if (!rec) {
+          rec = await this.prisma.attendance.create({ data: { employee_id: employeeId, date: dateOnly, source: 'absent', notes: 'Marked absent' } });
+        } else {
+          rec = await this.prisma.attendance.update({ where: { attendance_id: rec.attendance_id }, data: { source: 'absent', notes: 'Marked absent' } });
+        }
+        results.push({ employeeId, ok: true, attendance_id: rec.attendance_id });
+      } catch (e: any) {
+        results.push({ employeeId, ok: false, error: e?.message ?? String(e) });
+      }
+    }
+
+    try {
+      await this.loggingService.writeLog(adminId ?? undefined, Role.Admin, `MarkAbsentBatch`, `count:${employeeIds.length}`);
+    } catch (e) { void e; }
+
+    return results;
+  }
+
   // Return recent system logs (audit entries)
   async getAuditLogs(opts: { limit?: number; startDate?: string; endDate?: string; userId?: number } = {}) {
     const limit = Number(opts.limit ?? 200);
