@@ -4,6 +4,7 @@ import { View, Text, TextInput, TouchableOpacity, FlatList, ScrollView, StyleShe
 import ErrorModal from '../../../components/ErrorModal';
 import { friendlyMessageFromThrowable } from '../../../lib/errorUtils';
 import { fetchWithAuth } from '../../../_lib/fetchWithAuth';
+import { isServicemanRole } from '../../utils/staffHelpers';
 
 export default function SessionControlTab({ userName, counts, assignedBays }: { userName?: string; counts?: { availableBays?: number; totalBays?: number; servicemenAvailable?: number; servicemenTotal?: number; waitingQueue?: number }; assignedBays?: number[] | null }) {
   const [sessions, setSessions] = useState<any[]>([]);
@@ -77,12 +78,12 @@ export default function SessionControlTab({ userName, counts, assignedBays }: { 
           if (token) staffHeaders['Authorization'] = `Bearer ${token}`;
         } catch {}
   const r = await fetchWithAuth(`${baseUrl}/api/admin/staff`, { method: 'GET', headers: staffHeaders });
-        if (r && r.ok) {
-          const rows = await r.json();
-          if (!mounted) return;
-          const svc = Array.isArray(rows) ? rows.filter((s:any) => String(s.role).toLowerCase() === 'serviceman' || String(s.role).toLowerCase() === 'ballhandler' || String(s.role).toLowerCase() === 'ball handler') : [];
-          setServicemen(svc);
-        }
+          if (r && r.ok) {
+            const rows = await r.json();
+            if (!mounted) return;
+            const svc = Array.isArray(rows) ? rows.filter((s:any) => isServicemanRole(s.role)) : [];
+            setServicemen(svc);
+          }
       } catch (e) {
         // ignore
       }

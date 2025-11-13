@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { isServicemanRole } from '../../utils/staffHelpers';
 import { View, Text, ScrollView, SectionList, StyleSheet, Platform, TextInput, TouchableOpacity, FlatList, KeyboardAvoidingView, ActivityIndicator, useWindowDimensions } from 'react-native';
 
 type ChatRoom = { chat_id?: number; name?: string | null; is_group?: boolean; employee_id?: number; role?: string; online?: boolean };
@@ -156,12 +157,12 @@ export default function TeamChats() {
           const key = it.employee_id ? it.employee_id : `chat-${it.chat_id ?? 'unknown'}`;
           if (!map.has(key)) map.set(key, it);
         }
-        // Exclude the logged-in employee and any staff with role 'serviceman'
+        // Exclude the logged-in employee and any staff with serviceman-like roles
         const adminIdToCheck = currentAdminId ?? adminEmployeeId;
         return Array.from(map.values()).filter((r) => {
           const isSelf = Boolean(r.employee_id && adminIdToCheck && r.employee_id === adminIdToCheck);
-          const isServiceman = Boolean(r.role && String(r.role).toLowerCase() === 'serviceman');
-          return !isSelf && !isServiceman;
+          const isSvc = Boolean(r.role && isServicemanRole(r.role));
+          return !isSelf && !isSvc;
         });
       };
 

@@ -18,6 +18,7 @@ import ErrorModal from '../../../components/ErrorModal';
 import Toast from '../../../components/Toast';
 import { friendlyMessageFromThrowable } from '../../../lib/errorUtils';
 import { fetchWithAuth } from '../../../_lib/fetchWithAuth';
+import { isServicemanRole } from '../../utils/staffHelpers';
 
 export default function BayAssignmentScreen({ userName, counts, assignedBays }: { userName?: string; counts?: { availableBays?: number; totalBays?: number; servicemenAvailable?: number; servicemenTotal?: number; waitingQueue?: number }; assignedBays?: number[] | null }) {
   const [players, setPlayers] = useState<any[]>([]);
@@ -290,7 +291,7 @@ export default function BayAssignmentScreen({ userName, counts, assignedBays }: 
           const r2 = await fetchWithAuth(`${baseUrl}/api/admin/staff`, { method: 'GET' });
           if (r2 && r2.ok) {
             const staff = await r2.json();
-            const svc = Array.isArray(staff) ? staff.filter((s: any) => String(s.role).toLowerCase() === 'serviceman').sort((a: any,b: any)=> (a.employee_id||0)-(b.employee_id||0)) : [];
+            const svc = Array.isArray(staff) ? staff.filter((s: any) => isServicemanRole(s.role)).sort((a: any,b: any)=> (a.employee_id||0)-(b.employee_id||0)) : [];
             if (mounted) setServicemen(svc.map((s: any) => ({ id: s.employee_id, name: s.full_name || s.username, online: !!s.online })));
           }
         } catch (e) { /* ignore */ }

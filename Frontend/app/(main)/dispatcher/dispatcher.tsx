@@ -12,6 +12,7 @@ import { useRouter } from "expo-router";
 import { MaterialIcons } from "@expo/vector-icons";
 import { logoutAndClear } from '../../_lib/auth';
 import { fetchWithAuth } from '../../_lib/fetchWithAuth';
+import { isServicemanRole } from '../utils/staffHelpers';
 import { useSettings } from '../../lib/SettingsProvider';
 
 import DashboardTab from "./Tabs/DashboardTab";
@@ -80,16 +81,10 @@ export default function DispatcherDashboard() {
           // fallback to manual attempts below
         }
         if (!data) {
-          // fallback to bearer token saved in AsyncStorage
+          // fallback: try the centralized fetchWithAuth which attaches stored token
           try {
-            // @ts-ignore
-            const AsyncStorageModule = await import('@react-native-async-storage/async-storage').catch(() => null);
-            const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
-            const token = AsyncStorage ? await AsyncStorage.getItem('authToken') : null;
-            if (token) {
-              const r2 = await fetch(`${baseUrl}/api/admin/me`, { method: 'GET', headers: { Authorization: `Bearer ${token}` } });
-              if (r2.ok) data = await r2.json();
-            }
+            const r2 = await fetchWithAuth(`${baseUrl}/api/admin/me`, { method: 'GET' });
+            if (r2 && r2.ok) data = await r2.json();
           } catch {}
         }
 
@@ -171,7 +166,7 @@ export default function DispatcherDashboard() {
           if (r2 && r2.ok) {
             const staff = await r2.json();
             if (!mounted) return;
-            const svc = Array.isArray(staff) ? staff.filter((s: any) => String(s.role).toLowerCase() === 'serviceman') : [];
+            const svc = Array.isArray(staff) ? staff.filter((s: any) => isServicemanRole(s.role)) : [];
             setGlobalServicemenTotal(svc.length);
             const busy = svc.filter((s:any) => !!s.online).length;
             setGlobalServicemenAvailable(Math.max(0, svc.length - busy));

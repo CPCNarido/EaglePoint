@@ -738,6 +738,118 @@ export class AdminService {
     }
   }
 
+  // Helper: compute a date-only bucket (Date at UTC midnight) for a given timestamp using SiteConfig.timezone
+  private async bucketDateForTimestamp(ts: Date): Promise<Date> {
+    try {
+      const site = await (this.prisma as any).siteConfig.findFirst();
+      const tz = site?.timezone ?? 'UTC';
+      // Use Intl.DateTimeFormat to get a YYYY-MM-DD string in the target timezone
+      const dateStr = new Intl.DateTimeFormat('en-CA', { timeZone: String(tz) }).format(ts);
+      const parts = String(dateStr).split('-').map((p) => Number(p));
+      if (parts.length === 3 && parts.every((n) => Number.isFinite(n))) {
+        const [y, m, d] = parts;
+        return new Date(Date.UTC(y, m - 1, d));
+      }
+    } catch (e) {
+      // ignore and fallback to server-local date
+      void e;
+    }
+    // fallback: server-local date bucket
+    const dateOnly = new Date(ts);
+    dateOnly.setHours(0, 0, 0, 0);
+    return new Date(Date.UTC(dateOnly.getFullYear(), dateOnly.getMonth(), dateOnly.getDate()));
+  }
+
+  /**
+   * Clock an attendance punch (in/out) for an employee.
+   * Body: { employeeId: number, type: 'in'|'out', timestamp?: ISOString, source?: string }
+   * Behavior: upsert today's Attendance row for the employee and set clock_in or clock_out.
+   */
+  async clockAttendance(payload: { employeeId?: number; type?: string; timestamp?: string; source?: string }) {
+    const employeeId = Number(payload?.employeeId ?? 0);
+    const type = String(payload?.type ?? '').toLowerCase();
+    if (!employeeId || !['in', 'out'].includes(type)) throw new BadRequestException('employeeId and type (in|out) are required');
+    const ts = payload?.timestamp ? new Date(String(payload.timestamp)) : new Date();
+    if (isNaN(ts.getTime())) throw new BadRequestException('Invalid timestamp');
+
+  // Normalize date bucket to configured site timezone (returns UTC-midnight for that local date)
+  const dateOnly = await this.bucketDateForTimestamp(ts);
+
+    // Try to find existing attendance for this employee/date
+    let rec: any = null;
+    try {
+      rec = await this.prisma.attendance.findUnique({ where: { employee_id_date: { employee_id: employeeId, date: dateOnly } as any } }).catch(() => null);
+    } catch (e) {
+      // ignore and continue
+      rec = null;
+    }
+
+    if (!rec) {
+      rec = await this.prisma.attendance.create({ data: { employee_id: employeeId, date: dateOnly, source: payload?.source ?? null } });
+    }
+
+    const updates: any = {};
+    if (type === 'in') {
+      if (!rec.clock_in) updates.clock_in = ts;
+    } else if (type === 'out') {
+      updates.clock_out = ts;
+    }
+
+    if (Object.keys(updates).length > 0) {
+      rec = await this.prisma.attendance.update({ where: { attendance_id: rec.attendance_id }, data: updates });
+    }
+
+    // Best-effort logging
+    try { await this.loggingService.writeLog(employeeId, Role.Dispatcher as any, `Clock:${type}`, `attendance:${rec.attendance_id}`); } catch (e) { void e; }
+
+    return rec;
+  }
+
+  /**
+   * Query attendance rows by optional date and/or employeeId.
+   * Query params: date=YYYY-MM-DD, employeeId
+   */
+  async getAttendance(opts: { date?: string; employeeId?: number } = {}) {
+    const where: any = {};
+    if (opts.employeeId) where.employee_id = Number(opts.employeeId);
+    if (opts.date) {
+      // Interpret the provided date in site timezone and normalize to the same bucket used when punching
+      const parsed = new Date(String(opts.date));
+      if (isNaN(parsed.getTime())) throw new BadRequestException('Invalid date');
+      where.date = await this.bucketDateForTimestamp(parsed);
+    }
+
+    const rows = await this.prisma.attendance.findMany({ where, include: { employee: true }, orderBy: { date: 'desc' }, take: 1000 });
+    return rows.map((r: any) => ({
+      attendance_id: r.attendance_id,
+      employee_id: r.employee_id,
+      employee_name: r.employee?.full_name ?? r.employee?.username ?? null,
+      date: r.date,
+      clock_in: r.clock_in ?? null,
+      clock_out: r.clock_out ?? null,
+      source: r.source ?? null,
+      notes: r.notes ?? null,
+    }));
+  }
+
+  /**
+   * Patch an attendance record by id (admin-only).
+   */
+  async patchAttendance(id: number, body: any, adminId?: number) {
+    if (!id) throw new BadRequestException('Invalid id');
+    const data: any = {};
+    if (body.clock_in !== undefined) data.clock_in = body.clock_in ? new Date(String(body.clock_in)) : null;
+    if (body.clock_out !== undefined) data.clock_out = body.clock_out ? new Date(String(body.clock_out)) : null;
+    if (body.notes !== undefined) data.notes = body.notes ?? null;
+    if (body.source !== undefined) data.source = body.source ?? null;
+
+    if (Object.keys(data).length === 0) throw new BadRequestException('No updatable fields provided');
+
+    const updated = await this.prisma.attendance.update({ where: { attendance_id: id }, data });
+    try { await this.loggingService.writeLog(adminId ?? undefined, Role.Admin, `PatchAttendance:${id}`, `attendance:${id}`); } catch (e) { void e; }
+    return updated;
+  }
+
   // Return recent system logs (audit entries)
   async getAuditLogs(opts: { limit?: number; startDate?: string; endDate?: string; userId?: number } = {}) {
     const limit = Number(opts.limit ?? 200);

@@ -14,4 +14,9 @@ export class DispatcherController {
   async bays() {
     return this.service.listBays();
   }
+
+  @Get('staff-on-duty')
+  async staffOnDuty() {
+    return this.service.getStaffOnDutyList();
+  }
 }

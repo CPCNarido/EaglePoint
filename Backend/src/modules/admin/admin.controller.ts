@@ -50,6 +50,38 @@ export class AdminController {
     return this.adminService.getStaff();
   }
 
+  // Attendance endpoints
+  // Clock-in / Clock-out endpoint: requires auth (token) so we can attribute actor if needed
+  @UseGuards(AuthGuard)
+  @Post('attendance/clock')
+  async clockAttendance(@Body() body: any, @Req() req: Request & { user?: any }) {
+    try {
+      // allow employeeId in body; actor may be the same as token user
+      const actor = req?.user?.sub ? Number(req.user.sub) : undefined;
+      const res = await this.adminService.clockAttendance(body || {});
+      return res;
+    } catch (e: any) {
+      if (e instanceof BadRequestException) throw e;
+      Logger.error('Failed to clock attendance', e, 'AdminController');
+      throw new InternalServerErrorException(e?.message ?? 'Failed to clock attendance');
+    }
+  }
+
+  // Query attendance rows
+  @UseGuards(AuthGuard)
+  @Get('attendance')
+  async getAttendance(@Query() query: any) {
+    try {
+      const date = query?.date ? String(query.date) : undefined;
+      const employeeId = query?.employeeId ? Number(query.employeeId) : undefined;
+      return await this.adminService.getAttendance({ date, employeeId });
+    } catch (e: any) {
+      if (e instanceof BadRequestException) throw e;
+      Logger.error('Failed to get attendance', e, 'AdminController');
+      throw new InternalServerErrorException(e?.message ?? 'Failed getting attendance');
+    }
+  }
+
   // Chat rooms listing
   @Get('chats')
   async listChats() {
@@ -437,6 +469,22 @@ export class AdminController {
       if (e instanceof BadRequestException) throw e;
       Logger.error('Failed to patch session', e, 'AdminController');
       throw new InternalServerErrorException(e?.message ?? 'Failed patching session');
+    }
+  }
+
+  // Patch attendance record (admin only)
+  @UseGuards(AuthGuard)
+  @Patch('attendance/:id')
+  async patchAttendance(@Param('id') idStr: string, @Body() body: any, @Req() req: Request & { user?: any }) {
+    try {
+      const id = Number(idStr);
+      if (Number.isNaN(id)) throw new BadRequestException('Invalid id');
+      const adminId = req?.user?.sub ? Number(req.user.sub) : undefined;
+      return await this.adminService.patchAttendance(id, body || {}, adminId);
+    } catch (e: any) {
+      if (e instanceof BadRequestException) throw e;
+      Logger.error('Failed to patch attendance', e, 'AdminController');
+      throw new InternalServerErrorException(e?.message ?? 'Failed patching attendance');
     }
   }
 

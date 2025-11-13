@@ -21,6 +21,7 @@ model Employee {
   updatedBays                 Bay[]                         @relation("BayUpdatedBy")
   dispatcherAssignments       BayAssignment[]               @relation("DispatcherAssignments")
   servicemanAssignments       BayAssignment[]               @relation("ServicemanAssignments")
+  attendances                 Attendance[]
   receivedMessages            ChatMessage[]                 @relation("ReceivedMessages")
   sentMessages                ChatMessage[]                 @relation("SentMessages")
   chatParticipants            ChatParticipant[]
@@ -230,4 +231,21 @@ enum SessionType {
   Open
   Timed
   Reserved
+}
+
+model Attendance {
+  attendance_id Int       @id @default(autoincrement())
+  employee_id   Int
+  date          DateTime  @db.Date
+  clock_in      DateTime?
+  clock_out     DateTime?
+  source        String?
+  notes         String?
+  created_at    DateTime  @default(now())
+  updated_at    DateTime  @updatedAt
+
+  employee Employee @relation(fields: [employee_id], references: [employee_id])
+
+  @@unique([employee_id, date])
+  @@index([date])
 }

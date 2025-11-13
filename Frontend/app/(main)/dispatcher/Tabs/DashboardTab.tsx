@@ -7,6 +7,7 @@ import Toast from '../../../components/Toast';
 import { friendlyMessageFromThrowable } from '../../../lib/errorUtils';
 import { MaterialIcons } from "@expo/vector-icons";
 import { fetchWithAuth } from '../../../_lib/fetchWithAuth';
+import { isServicemanRole } from '../../utils/staffHelpers';
 
 type BayRow = {
   bay_id: number;
@@ -1045,7 +1046,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
                                   const r = await fetchWithAuth(`${baseUrl}/api/admin/staff`, { method: 'GET' });
                                   if (r && r.ok) {
                                     const rows = await r.json();
-                                    const svc = Array.isArray(rows) ? rows.filter((s:any) => String(s.role).toLowerCase().includes('serviceman') || String(s.role).toLowerCase().includes('ballhandler')) : [];
+                                    const svc = Array.isArray(rows) ? rows.filter((s:any) => isServicemanRole(s.role)) : [];
                                     setServicemen(svc);
                                   }
                                 } catch (e) { /* ignore fetch failure, still open modal */ }
