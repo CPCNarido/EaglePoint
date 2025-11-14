@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   View,
   Text,
@@ -6,19 +6,18 @@ import {
   ScrollView,
   StyleSheet,
   Platform,
+  Image,
 } from "react-native";
 import { useRouter } from "expo-router";
 import { MaterialIcons as Icon } from "@expo/vector-icons";
 import { logoutAndClear } from '../../_lib/auth';
+import { fetchWithAuth } from '../../_lib/fetchWithAuth';
 import { useSettings } from '../../lib/SettingsProvider';
 import ConfirmModal from '../../components/ConfirmModal';
-
-type SidebarButtonProps = {
-  icon: string;
-  label: string;
-  active: boolean;
-  onPress: () => void;
-};
+import DashboardTab from './Tabs/DashboardTab';
+import TransactionTab from './Tabs/TransactionTab';
+import PlayerListTab from './Tabs/PlayerListTab';
+import TeamChats from '../admin/Tabs/TeamChats';
 
 type OverviewItem = {
   title: string;
@@ -32,12 +31,47 @@ export default function CashierLayout() {
   const [activeTab, setActiveTab] = useState<string>("Dashboard");
   const [logoutModalVisible, setLogoutModalVisible] = useState<boolean>(false);
   const router = useRouter();
+  // Live overview state (keeps cashier in sync with Admin dashboard)
+  const [overview, setOverview] = useState<any>(null);
+  const [loadingOverview, setLoadingOverview] = useState<boolean>(false);
+  const prevOverviewJsonRef = useRef<string | null>(null);
+  const isFetchingRef = useRef(false);
 
   const performLogout = async () => {
     setLogoutModalVisible(false);
     await logoutAndClear();
     router.replace("/");
   };
+
+  // Fetch logged-in employee info for sidebar (mirror Admin/Dispatcher behavior)
+  const [userName, setUserName] = useState<string>('CASHIER');
+  const [userEmployeeId, setUserEmployeeId] = useState<string>('');
+
+  useEffect(() => {
+    (async () => {
+      try {
+        let baseUrl = Platform.OS === 'android' ? 'http://10.127.147.53:3000' : 'http://localhost:3000';
+        try {
+          // @ts-ignore
+          const AsyncStorageModule = await import('@react-native-async-storage/async-storage').catch(() => null);
+          const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
+          const override = AsyncStorage ? await AsyncStorage.getItem('backendBaseUrlOverride') : null;
+          if (override) baseUrl = override;
+        } catch {}
+
+        let d: any = null;
+        try {
+          const r = await fetchWithAuth(`${baseUrl}/api/admin/me`, { method: 'GET' });
+          if (r.ok) d = await r.json();
+        } catch {}
+        if (!d) return;
+        const name = d?.full_name || d?.name || d?.username || 'CASHIER';
+        const empId = d?.employee_id ?? d?.employeeId ?? null;
+        setUserName(name);
+        setUserEmployeeId(empId != null ? String(empId) : '');
+      } catch {}
+    })();
+  }, []);
 
   const handleLogout = () => {
     // Use the same modal-based logout UX across platforms
@@ -47,50 +81,165 @@ export default function CashierLayout() {
   const renderContent = () => {
     switch (activeTab) {
       case "Dashboard":
-        return <DashboardContent />;
+        return <DashboardTab overview={overview} userName={userName} />;
       case "Transaction":
-        return <TransactionContent />;
+        return <TransactionTab userName={userName} />;
       case "Player List":
-        return <PlayerListContent />;
+        return <PlayerListTab userName={userName} />;
+      case "Team Chats":
+        return <TeamChats />;
       default:
-        return <DashboardContent />;
+        return <DashboardTab overview={overview} userName={userName} />;
     }
   };
+
+  // Fetch overview (polling) - modeled after AdminDashboard.fetchOverview
+  const fetchOverview = useCallback(async () => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
+    setLoadingOverview(true);
+    try {
+      let baseUrl = Platform.OS === 'android' ? 'http://10.127.147.53:3000' : 'http://localhost:3000';
+      try {
+        // @ts-ignore
+        const AsyncStorageModule = await import('@react-native-async-storage/async-storage').catch(() => null);
+        const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
+        const override = AsyncStorage ? await AsyncStorage.getItem('backendBaseUrlOverride') : null;
+        if (override) baseUrl = override;
+      } catch {}
+
+      const res = await fetchWithAuth(`${baseUrl}/api/admin/overview`, { method: 'GET' });
+      if (!res.ok) {
+        setOverview(null);
+        return;
+      }
+      const data = await res.json();
+      try {
+        const dataJson = JSON.stringify(data);
+        if (prevOverviewJsonRef.current && prevOverviewJsonRef.current !== dataJson) {
+          prevOverviewJsonRef.current = dataJson;
+          setOverview(data);
+          return;
+        }
+        prevOverviewJsonRef.current = dataJson;
+      } catch {}
+      setOverview(data);
+    } catch {
+      setOverview(null);
+    } finally {
+      setLoadingOverview(false);
+      isFetchingRef.current = false;
+    }
+  }, []);
+
+  useEffect(() => {
+    // initial fetch
+    fetchOverview();
+    const interval = setInterval(() => fetchOverview(), 2000);
+    // listen for external overview update events
+    let overviewUpdateTimer: any = null;
+    const onOverviewUpdated = () => {
+      try { if (overviewUpdateTimer) clearTimeout(overviewUpdateTimer); } catch {}
+      overviewUpdateTimer = setTimeout(() => { fetchOverview(); }, 2000);
+    };
+    try { if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('overview:updated', onOverviewUpdated as EventListener); } catch {}
+
+    return () => {
+      clearInterval(interval);
+      try { if (overviewUpdateTimer) clearTimeout(overviewUpdateTimer); } catch {}
+      try { if (typeof window !== 'undefined' && window.removeEventListener) window.removeEventListener('overview:updated', onOverviewUpdated as EventListener); } catch {}
+    };
+  }, [fetchOverview]);
+
+  // SSE stream for immediate updates (mirrors Admin behavior)
+  useEffect(() => {
+    let es: any = null;
+    (async () => {
+      try {
+        let baseUrl = Platform.OS === 'android' ? 'http://10.127.147.53:3000' : 'http://localhost:3000';
+        try {
+          // @ts-ignore
+          const AsyncStorageModule = await import('@react-native-async-storage/async-storage').catch(() => null);
+          const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
+          const override = AsyncStorage ? await AsyncStorage.getItem('backendBaseUrlOverride') : null;
+          if (override) baseUrl = override;
+        } catch {}
+
+        if (typeof EventSource !== 'undefined') {
+          let token: string | null = null;
+          try { if (typeof window !== 'undefined' && window.localStorage) token = window.localStorage.getItem('authToken'); } catch {}
+          if (!token) {
+            try {
+              // @ts-ignore
+              const AsyncStorageModule = await import('@react-native-async-storage/async-storage').catch(() => null);
+              const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
+              if (AsyncStorage && AsyncStorage.getItem) token = await AsyncStorage.getItem('authToken');
+            } catch {}
+          }
+
+          const streamBase = baseUrl.replace(/\/$/, '');
+          const streamUrl = token ? `${streamBase}/api/admin/chats/stream?token=${encodeURIComponent(token)}` : `${streamBase}/api/admin/chats/stream`;
+          try {
+            es = new EventSource(streamUrl);
+            es.onmessage = (ev: any) => {
+              try {
+                const payload = JSON.parse(ev.data);
+                try {
+                  const json = JSON.stringify(payload);
+                  prevOverviewJsonRef.current = json;
+                  setOverview(payload);
+                } catch {}
+              } catch {}
+            };
+            es.onerror = () => { try { es.close(); } catch {} };
+          } catch {}
+        }
+      } catch {}
+    })();
+
+    return () => { try { if (es) es.close(); } catch {} };
+  }, []);
 
   return (
     <View style={styles.container}>
       {/* Sidebar */}
-      <View style={styles.sidebar}>
-        <View>
-          <Text style={styles.logoTitle}>{settings.siteName}{"\n"}CASHIER</Text>
-
-          {/* Navigation Buttons */}
-          <View style={styles.navContainer}>
-            <SidebarButton
-              icon="dashboard"
-              label="Dashboard"
-              active={activeTab === "Dashboard"}
-              onPress={() => setActiveTab("Dashboard")}
-            />
-            <SidebarButton
-              icon="point-of-sale"
-              label="Transaction"
-              active={activeTab === "Transaction"}
-              onPress={() => setActiveTab("Transaction")}
-            />
-            <SidebarButton
-              icon="people-alt"
-              label="Player List"
-              active={activeTab === "Player List"}
-              onPress={() => setActiveTab("Player List")}
-            />
+      {/* @ts-ignore - attach data-role to the DOM element on web for print CSS */}
+      <View // @ts-ignore
+        data-role="sidebar"
+        style={styles.sidebar}
+      >
+        <View style={styles.logoContainer}>
+          <Image
+            source={require('../../../assets/General/Logo.png')}
+            style={styles.logoImage}
+            resizeMode="contain"
+          />
+          <View style={styles.logoTextContainer}>
+            <Text style={styles.logoAppName}>{settings.siteName}</Text>
+            <Text style={styles.logoRole}>CASHIER</Text>
           </View>
         </View>
+        <View style={styles.logoDivider} />
 
-        {/* Footer */}
-        <View style={styles.footer}>
-          <Text style={styles.footerText}>Logged in as: Cashier Anne</Text>
-          <Text style={styles.footerText}>Cashier ID: 1022101</Text>
+        {[
+          { name: 'Dashboard', icon: 'dashboard' },
+          { name: 'Transaction', icon: 'point-of-sale' },
+          { name: 'Player List', icon: 'people-alt' },
+          { name: 'Team Chats', icon: 'chat' },
+        ].map((tab) => (
+          <TouchableOpacity
+            key={tab.name}
+            style={[styles.tabButton, activeTab === tab.name && styles.activeTabButton]}
+            onPress={() => setActiveTab(tab.name)}
+          >
+            <Icon name={tab.icon as any} size={22} color={activeTab === tab.name ? "#fff" : "#B8C1B7"} style={styles.icon} />
+            <Text style={[activeTab === tab.name ? styles.activeTabText : styles.tabText]}>{tab.name}</Text>
+          </TouchableOpacity>
+        ))}
+
+        <View style={styles.logoutContainer}>
+          <Text style={styles.loggedInText}>Logged in as: {userName}</Text>
+          <Text style={styles.loggedInText}>Cashier ID: {userEmployeeId || '—'}</Text>
           <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
             <Text style={styles.logoutText}>LOG OUT</Text>
           </TouchableOpacity>
@@ -114,120 +263,9 @@ export default function CashierLayout() {
   );
 }
 
-/* ----------------------------- Sidebar Button ----------------------------- */
-const SidebarButton: React.FC<SidebarButtonProps> = ({
-  icon,
-  label,
-  active,
-  onPress,
-}) => (
-  <TouchableOpacity
-    onPress={onPress}
-    style={[styles.navButton, active && styles.navButtonActive]}
-  >
-    <Icon
-      name={icon as any}
-      size={22}
-      color={active ? "#FFFFFF" : "#DADDD8"}
-      style={{ marginRight: 10 }}
-    />
-    <Text style={[styles.navText, active && styles.navTextActive]}>
-      {label}
-    </Text>
-  </TouchableOpacity>
-);
+// Sidebar is rendered inline to match Admin/Dispatcher layout; individual button component removed.
 
-/* ----------------------------- Dashboard Tab ----------------------------- */
-const DashboardContent = () => {
-  const settings = useSettings();
-  const totalBays = settings.totalAvailableBays ?? 45;
-  return (
-  <ScrollView style={styles.scrollArea}>
-    <Text style={styles.title}>Dashboard</Text>
-
-    <View style={styles.welcomeCard}>
-      <Text style={styles.welcomeText}>Welcome back, Cashier!</Text>
-      <Text style={styles.dateText}>October 18, 2025 - 15:30 PM</Text>
-    </View>
-
-    {/* Quick Overview */}
-    <Text style={styles.sectionTitle}>Quick Overview</Text>
-    <View style={styles.quickOverview}>
-      <OverviewCard
-        title="Total Revenue (Today)"
-        value={`${useSettings().currencySymbol}100,000`}
-        subtitle="▲ 12.5% vs Last Period"
-        color="#2E7D32"
-      />
-      <OverviewCard
-        title="Active Players Today"
-        value="48"
-        subtitle="6 Bays Currently Playing"
-        color="#558B2F"
-      />
-      <OverviewCard
-        title="Staff on Duty Today"
-        value="20/30"
-        subtitle="5 Staff are Absent Today."
-        color="#C62828"
-      />
-      <OverviewCard
-        title="Next Tee Time"
-        value="10:30 AM"
-        subtitle="Group 3 Waiting in Queue"
-        color="#6D4C41"
-      />
-    </View>
-
-    {/* Real-Time Bay Overview */}
-    <Text style={styles.sectionTitle}>Real-Time Bay Overview</Text>
-    <View style={styles.bayContainer}>
-      {Array.from({ length: totalBays }).map((_, i) => {
-        const status = getBayStatus(i + 1);
-        return (
-          <View key={i} style={[styles.bayBox, { borderColor: status.color }]}>
-            <Text style={{ color: status.color }}>{i + 1}</Text>
-          </View>
-        );
-      })}
-    </View>
-
-    <View style={styles.legendContainer}>
-      <Legend color="#2E7D32" label="Available" />
-      <Legend color="#A3784E" label="Assigned" />
-      <Legend color="#BF930E" label="Open Time Session" />
-      <Legend color="#C62828" label="Maintenance" />
-    </View>
-  </ScrollView>
-  );
-};
-
-const getBayStatus = (num: number) => {
-  if ([4, 9, 12, 18, 32, 40].includes(num)) return { color: "#C62828" }; // Maintenance
-  if ([5, 13, 26, 34, 36].includes(num)) return { color: "#BF930E" }; // Open Session
-  if ([8, 21, 22, 35].includes(num)) return { color: "#A3784E" }; // Assigned
-  return { color: "#2E7D32" }; // Available
-};
-
-/* ----------------------------- Transaction Tab ----------------------------- */
-const TransactionContent = () => (
-  <ScrollView style={styles.scrollArea}>
-    <Text style={styles.title}>Player Transaction</Text>
-    <View style={styles.placeholderBox}>
-      <Text style={styles.placeholderText}>Transaction Page</Text>
-    </View>
-  </ScrollView>
-);
-
-/* ----------------------------- Player List Tab ----------------------------- */
-const PlayerListContent = () => (
-  <ScrollView style={styles.scrollArea}>
-    <Text style={styles.title}>Active Player List</Text>
-    <View style={styles.placeholderBox}>
-      <Text style={styles.placeholderText}>Player List Page</Text>
-    </View>
-  </ScrollView>
-);
+/* Inline tab contents removed — using separate files under Tabs/ */
 
 /* ----------------------------- Reusable Components ----------------------------- */
 const OverviewCard: React.FC<OverviewItem> = ({
@@ -243,49 +281,42 @@ const OverviewCard: React.FC<OverviewItem> = ({
   </View>
 );
 
-const Legend: React.FC<{ color: string; label: string }> = ({
-  color,
-  label,
-}) => (
-  <View style={styles.legendItem}>
-    <View style={[styles.legendDot, { backgroundColor: color }]} />
-    <Text style={styles.legendLabel}>{label}</Text>
-  </View>
-);
+// Legend is provided by the shared RealTimeBayOverview component and admin Legend.
 
 /* ----------------------------- Styles ----------------------------- */
 const styles = StyleSheet.create({
   container: { flexDirection: "row", flex: 1, backgroundColor: "#EDECE8" },
   sidebar: {
-    width: 240,
-    backgroundColor: "#2E372E",
+    width: 250,
+    backgroundColor: "#1E2B20",
     padding: 20,
     justifyContent: "space-between",
   },
-  logoTitle: {
-    color: "white",
-    fontSize: 20,
-    fontWeight: "bold",
-    marginBottom: 40,
-  },
-  navContainer: { flexGrow: 1 },
-  navButton: {
+  logoContainer: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
+  logoImage: { width: 60, height: 60, borderRadius: 8, marginRight: 10, backgroundColor: 'transparent', overflow: 'hidden' },
+  logoTextContainer: { flexDirection: 'column' },
+  logoAppName: { color: '#fff', fontWeight: '700', fontSize: 20 },
+  logoRole: { color: '#DADADA', fontSize: 15, marginTop: 2 },
+  logoDivider: { height: 1, backgroundColor: 'rgba(255,255,255,0.14)', marginVertical: 0, alignSelf: 'stretch' },
+  tabButton: {
     flexDirection: "row",
     alignItems: "center",
     paddingVertical: 14,
     paddingHorizontal: 10,
     borderRadius: 8,
-    marginBottom: 8,
+    marginVertical: 5,
   },
-  navButtonActive: { backgroundColor: "#4A5944" },
-  navText: { color: "#CFCFCF", fontSize: 16 },
-  navTextActive: { color: "white", fontWeight: "bold" },
+  activeTabButton: { backgroundColor: "#405C45" },
+  tabText: { color: "#DADADA", fontSize: 16 },
+  activeTabText: { color: "#fff", fontWeight: "600" },
+  icon: { marginRight: 10 },
   footer: {
     borderTopWidth: 1,
     borderTopColor: "#555",
     paddingTop: 10,
   },
-  footerText: { color: "#CFCFCF", fontSize: 12, marginBottom: 4 },
+  logoutContainer: { marginTop: 'auto', marginBottom: 10 },
+  loggedInText: { color: "#CFCFCF", fontSize: 12, marginBottom: 4 },
   logoutButton: {
     backgroundColor: "#555",
     padding: 10,

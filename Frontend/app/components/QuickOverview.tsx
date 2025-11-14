@@ -37,9 +37,37 @@ export default function QuickOverview({ overview, settings, currencySymbol = '$'
 
   return (
     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 20 }}>
-      <OverviewCard title="Total Revenue (Today)" value={overview ? `${currencySymbol}${overview.totalRevenueToday}` : '—'} subtitle="Compared to previous period" color="#2E7D32" />
+      <OverviewCard title="Total Revenue (Today)" value={overview ? `${currencySymbol}${overview.totalRevenueToday}` : '—'} subtitle="" color="#2E7D32" />
       <OverviewCard title="Available Bays" value={String(avail)} subtitle={`${avail} / ${total} available`} color="#558B2F" />
-      <OverviewCard title="Staff on Duty" value={overview ? String(overview.staffOnDuty) : '—'} subtitle="Total staff" color="#C62828" />
+      {/* Staff on Duty: prefer explicit numeric field (Dispatcher provides `staffOnDuty`), otherwise derive from attendance rows */}
+      <OverviewCard
+        title="Staff on Duty"
+        value={(() => {
+          try {
+            // Prefer explicit numeric counts matching Dispatcher overview shape
+            if (typeof overview?.staffOnDuty === 'number') return String(overview.staffOnDuty);
+            if (typeof overview?.presentCount === 'number') return String(overview.presentCount);
+            if (typeof overview?.staff_present === 'number') return String(overview.staff_present);
+
+            // look for attendance-like arrays in the overview payload as a fallback
+            const candidates = overview?.attendance ?? overview?.attendanceRows ?? overview?.attendance_rows ?? overview?.staffAttendance ?? overview?.attendance_list ?? overview?.staffRows ?? overview?.staff ?? overview?.staff_list ?? null;
+            const rows = Array.isArray(candidates) ? candidates : (Array.isArray(overview?.attendanceRows) ? overview?.attendanceRows : (Array.isArray(overview?.attendance) ? overview?.attendance : null));
+            if (Array.isArray(rows)) {
+              let present = 0;
+              for (const it of rows) {
+                const att = String(it?.attendanceStatus ?? it?.status ?? '').toLowerCase();
+                const hasClockIn = !!(it?.clock_in || it?.clockIn || it?.clockInRaw || it?.clock_in_raw || it?.clockInRaw);
+                const hasClockOut = !!(it?.clock_out || it?.clockOut || it?.clockOutRaw || it?.clock_out_raw || it?.clockOutRaw);
+                if ((hasClockIn && !hasClockOut) || att === 'present') present++;
+              }
+              return String(present);
+            }
+          } catch (e) { /* ignore */ }
+          return '—';
+        })()}
+        subtitle={'Total Staffs'}
+        color="#C62828"
+      />
       <OverviewCard title="Next Tee Time" value={(() => {
         if (!overview || !overview.nextTeeTime) return '—';
         if (overview.nextTeeTime === 'Bay Ready') return 'Bay Ready';

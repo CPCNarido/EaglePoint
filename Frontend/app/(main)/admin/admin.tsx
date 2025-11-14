@@ -20,6 +20,7 @@ import InfoPanel from './components/InfoPanel';
 import ConfirmModal from '../../components/ConfirmModal';
 import { clamp, getColorFromStatus, legendMatchesStatus } from '../utils/uiHelpers';
 import { enterFullScreen, exitFullScreen, reloadApp } from '../utils/fullscreen';
+import RealTimeBayOverview from '../../components/RealTimeBayOverview';
 
 
 type OverviewItem = { title: string; value: string; subtitle: string; color: string };
@@ -675,165 +676,11 @@ export default function AdminDashboard() {
                 <QuickOverview overview={overview} settings={settings} currencySymbol={settings.currencySymbol} />
               </View>
 
-              {/* Real-Time Bay Overview */}
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Text style={styles.sectionTitle}>Real-Time Bay Overview</Text>
-                <TouchableOpacity style={styles.clearButton} onPress={() => setLegendFilter([])}>
-                  <Text style={styles.clearButtonText}>Clear</Text>
-                </TouchableOpacity>
-              </View>
-                          {/* Unified legend: show the five primary legends up top. Maintenance is intentionally moved below the bay grid. */}
-                          {/* Legends moved to bottom per user preference */}
-              <View style={styles.bayContainer} onLayout={(e) => setBayContainerWidth(e.nativeEvent.layout.width)}>
-                {overview && overview.bays && overview.bays.length > 0 ? (
-                  // Render bay grid 1..N in numerical order, using overview data when available
-                    Array.from({ length: settings.totalAvailableBays ?? 45 }).map((_, i) => {
-                    const num = i + 1;
-                    const numStr = String(num);
-                    const b = overview.bays.find((x: any) => String(x.bay_number) === numStr || String(x.bay_id) === numStr);
-                    const original = b?.originalStatus ?? null;
-                    // When session legend is active, prefer session_type for matching
-                    const status = showSessionLegend ? (b?.session_type ?? inferSessionType(b)) : (b?.status ?? null);
-                    const isHighlighted = highlightedBays.includes(num);
-                    // legend-driven highlight
-                    const isLegendActive = legendMatchesStatus(legendFilter, status ?? null);
-                    const bayColor = getAdminBayColor(b);
-                    const bayBoxDynamic = isLegendActive ? { backgroundColor: bayColor, borderColor: bayColor } : { borderColor: bayColor };
-                    const bayTextBase = { color: bayColor };
-                    const animKey = `bay-${num}`;
-                    let anim = bayAnimMap.current[animKey];
-                    if (!anim) {
-                      anim = new Animated.Value(isLegendActive ? 1 : 0);
-                      bayAnimMap.current[animKey] = anim;
-                    }
-                    const handlePress = () => {
-                      // toggle select
-                      if (selectedBay === num) {
-                        setSelectedBay(null);
-                        setSelectedBayDetails(null);
-                      } else {
-                        // Build best-effort details from overview row
-                        const player = b?.player_name ?? b?.player ?? b?.playerName ?? b?.player_name_display ?? (b?.player?.nickname ?? null) ?? null;
-                        // compute ballsUsed and store raw; remaining will be computed live using `now`
-                        const ballsUsed = b?.total_balls ?? b?.balls_used ?? b?.bucket_count ?? b?.transactions_count ?? null;
-                        setSelectedBay(num);
-                        setSelectedBayDetails({ player: player ?? (b?.player || '—'), ballsUsed: ballsUsed ?? '—', raw: b });
-                      }
-                    };
-
-                    // compute simple column-based offset so InfoPanel doesn't clip at edges
-                    // Cap columns to at most 14 per row to match requested layout constraints
-                    const cols = bayContainerWidth ? Math.max(1, Math.min(14, Math.floor(bayContainerWidth / BAY_BOX_TOTAL))) : 4;
-                    const colIndex = (num - 1) % cols;
-                    let offsetX = 0;
-                    if (colIndex === 0) offsetX = 40; // leftmost column -> nudge right
-                    else if (colIndex === cols - 1) offsetX = -40; // rightmost column -> nudge left
-
-                    return (
-                      <TouchableOpacity key={b?.bay_id ?? `bay-${num}`} onPress={handlePress} activeOpacity={0.9} style={[
-                        styles.bayBox,
-                        bayBoxDynamic,
-                        { position: 'relative' },
-                        ...(isHighlighted ? [{ borderWidth: 3, shadowColor: '#00BFA5', shadowOpacity: 0.3 }] : []),
-                        ...(selectedBay === num ? [styles.selectedBayBox] : []),
-                      ]}>
-                        {/* animated fill overlay for legend highlights */}
-                        <Animated.View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: bayColor, borderRadius: 8, opacity: anim }} />
-                        <Text style={[styles.bayText, bayTextBase, isLegendActive ? { color: '#fff', fontWeight: '700' } : null]}>{num}</Text>
-                        {original === 'SpecialUse' && (
-                          <View style={[
-                            styles.reservedBadge,
-                            isLargeTablet ? styles.reservedBadgeLarge : isTablet ? styles.reservedBadgeTablet : null,
-                            // inline override to nudge the badge slightly left for visual alignment
-                            { right: adjustedBadgeRight, minWidth: badgeMinWidth, minHeight: badgeMinHeight },
-                          ]}>
-                            <Text style={[
-                              styles.reservedBadgeText,
-                              isLargeTablet ? styles.reservedBadgeTextLarge : isTablet ? styles.reservedBadgeTextTablet : null,
-                              // responsive font-size override to avoid disorientation on very large widths
-                              { fontSize: responsiveBadgeFontSize + badgeFontOffsetPx, fontWeight: isLargeTablet ? '800' : '700' },
-                            ]}>Reserved</Text>
-                          </View>
-                        )}
-
-                        {/* Info panel shown when this bay is selected (extracted to component) */}
-                        {selectedBay === num && selectedBayDetails && (
-                          <>
-                            {/* small caret indicator on the bay itself so user can see which bay opened the InfoPanel */}
-                            <View style={styles.selectedBayCaret} pointerEvents="none" />
-                            <InfoPanel num={num} details={selectedBayDetails} now={now} offsetX={offsetX} />
-                          </>
-                        )}
-                      </TouchableOpacity>
-                    );
-                  })
-                ) : (
-                  // fallback static grid up to N
-                  Array.from({ length: settings.totalAvailableBays ?? 45 }).map((_, i) => {
-                    const num = i + 1;
-                    const status = getBayStatus(num);
-                    const isHighlighted = highlightedBays.includes(num);
-                    // try to infer a status name from the color for the static fallback so legend filtering still works
-                    let statusName: string | null = null;
-                    if (status.color === getColorFromStatus('Available')) statusName = 'Available';
-                    else if (status.color === getColorFromStatus('Assigned') || status.color === getColorFromStatus('Occupied')) statusName = 'Assigned';
-                    else if (status.color === getColorFromStatus('Maintenance')) statusName = 'Maintenance';
-                    else statusName = null;
-                    const isLegendActive = legendMatchesStatus(legendFilter, statusName);
-                    const animKey = `bay-${num}`;
-                    let anim = bayAnimMap.current[animKey];
-                    if (!anim) {
-                      anim = new Animated.Value(isLegendActive ? 1 : 0);
-                      bayAnimMap.current[animKey] = anim;
-                    }
-                    const bayBoxDynamic = isLegendActive ? { backgroundColor: status.color, borderColor: status.color } : { borderColor: status.color };
-                    return (
-                      <View key={i} style={[styles.bayBox, bayBoxDynamic, { position: 'relative' }, ...(isHighlighted ? [{ borderWidth: 3, shadowColor: '#00BFA5', shadowOpacity: 0.3 }] : [])]}>
-                        <Animated.View pointerEvents="none" style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: status.color, borderRadius: 8, opacity: anim }} />
-                        <Text style={[styles.bayText, isLegendActive ? { color: '#fff', fontWeight: '700' } : { color: status.color }]}>{num}</Text>
-                      </View>
-                    );
-                  })
-                )}
-              </View>
-
-              {/* Legends placed at the bottom of the bay grid (user requested).
-                  Add a toggle beside the legends to switch between session-type coloring and assignment/status coloring.
-                  The toggle shows a clear label that switches between "Session Type" and "Assignment". */}
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 8 }}>
-                <View style={{ marginRight: 8, alignItems: 'flex-start' }}>
-                  <TouchableOpacity
-                    onPress={() => {
-                      // Toggle mode and reset any active legend filters
-                      setShowSessionLegend((s) => {
-                        const next = !s;
-                        try { setLegendFilter([]); } catch (e) { /* ignore */ }
-                        return next;
-                      });
-                    }}
-                    style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6, paddingHorizontal: 8, borderRadius: 6, backgroundColor: '#F4F4F2' }}
-                  >
-                    {MaterialIcons ? <MaterialIcons name={showSessionLegend ? 'visibility' : 'view-list'} size={18} color="#17321d" /> : <Text style={{ color: '#17321d' }}>{showSessionLegend ? 'Session Type' : 'Assignment'}</Text>}
-                    <Text style={{ marginLeft: 8, color: '#17321d', fontWeight: '700' }}>{showSessionLegend ? 'Session Type' : 'Assignment'}</Text>
-                  </TouchableOpacity>
-                </View>
-
-                <View style={[styles.legendContainer, { flex: 1, justifyContent: 'center' }]}>
-                  {showSessionLegend ? (
-                    // Session-type legends only
-                    <>
-                      <Legend color="#BF930E" label="Open Time" legendFilter={legendFilter} setLegendFilter={setLegendFilter} overview={overview} />
-                      <Legend color="#D18B3A" label="Timed Session" legendFilter={legendFilter} setLegendFilter={setLegendFilter} overview={overview} />
-                      <Legend color="#6A1B9A" label="Reserved" legendFilter={legendFilter} setLegendFilter={setLegendFilter} overview={overview} />
-                    </>
-                  ) : (
-                    // Assignment legends only
-                    <>
-                      <Legend color="#2E7D32" label="Available" legendFilter={legendFilter} setLegendFilter={setLegendFilter} overview={overview} />
-                      <Legend color="#A3784E" label="Assigned" legendFilter={legendFilter} setLegendFilter={setLegendFilter} overview={overview} />
-                    </>
-                  )}
-                </View>
+              {/* Real-Time Bay Overview (extracted to a reusable component) */}
+              <View>
+                {/* Use the shared component so other roles can reuse the bay overview */}
+                {/* @ts-ignore */}
+                <RealTimeBayOverview overview={overview} settings={settings} highlightedBays={highlightedBays} />
               </View>
 
             </View>

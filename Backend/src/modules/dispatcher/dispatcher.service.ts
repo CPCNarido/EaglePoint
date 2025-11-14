@@ -69,9 +69,8 @@ export class DispatcherService {
         dateBucket = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
       }
 
-      // Count attendance rows for today where staff clocked in and haven't clocked out yet (or clock_out is in the future)
-      const nowUtc = new Date();
-      staffOnDuty = await (this.prisma as any).attendance.count({ where: { date: dateBucket, clock_in: { not: null }, OR: [{ clock_out: null }, { clock_out: { gt: nowUtc } }] } });
+      // Count attendance rows for today where staff clocked in and haven't clocked out yet
+      staffOnDuty = await (this.prisma as any).attendance.count({ where: { date: dateBucket, clock_in: { not: null }, clock_out: null } });
       Logger.log(`Dispatcher overview computed staffOnDuty=${staffOnDuty} using attendance table for date=${dateBucket.toISOString()}`, 'DispatcherService');
     } catch (e) {
       // Fallback to total employees if attendance table isn't available or an error occurs
@@ -121,9 +120,8 @@ export class DispatcherService {
         dateBucket = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
       }
 
-      const nowUtc = new Date();
       const rows = await (this.prisma as any).attendance.findMany({
-        where: { date: dateBucket, clock_in: { not: null }, OR: [{ clock_out: null }, { clock_out: { gt: nowUtc } }] },
+        where: { date: dateBucket, clock_in: { not: null }, clock_out: null },
         include: { employee: true },
         orderBy: { clock_in: 'asc' },
       });
