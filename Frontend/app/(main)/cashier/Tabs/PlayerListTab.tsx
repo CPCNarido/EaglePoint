@@ -202,12 +202,6 @@ export default function ActivePlayerList({ userName }: { userName?: string }) {
             <Text style={styles.headerCell}>Status</Text>
           </View>
 
-          <View style={{ position: 'absolute', right: 12, top: 10 }}>
-            <TouchableOpacity onPress={() => fetchPlayers()}>
-              <Text style={{ color: '#2e7d32' }}>Refresh</Text>
-            </TouchableOpacity>
-          </View>
-
           <FlatList
             data={paginated}
             renderItem={renderItem}
