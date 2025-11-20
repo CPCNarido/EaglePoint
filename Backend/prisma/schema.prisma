@@ -39,7 +39,9 @@ model Player {
   player_id      Int             @id @default(autoincrement())
   nickname       String?
   receipt_number String?         @unique
-  start_time     DateTime
+  planned_duration_minutes Int?
+  session_type   SessionType?
+  start_time     DateTime?
   end_time       DateTime?
   price_per_hour Decimal         @db.Decimal(10, 2)
   created_by     Int

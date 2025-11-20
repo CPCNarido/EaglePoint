@@ -39,7 +39,9 @@ export class DispatcherService {
         originalStatus: b.status,
         player_name: playerName,
         // expose player start time so clients can compute elapsed stopwatch time across reloads
-        start_time: assignment?.player?.start_time ?? assignment?.assigned_time ?? null,
+        // Do NOT use assignment.assigned_time as a timer start. Timers should only
+        // be shown when Player.start_time is set (persisted on first BallTransaction).
+        start_time: assignment?.player?.start_time ?? null,
         player: assignment?.player ? { nickname: assignment.player.nickname, full_name: assignment.player.full_name, player_id: assignment.player.player_id, start_time: assignment.player.start_time } : null,
         end_time: endTime,
         total_balls: totalBalls,

@@ -234,11 +234,17 @@ export default function Login() {
           attemptedUrl: loginUrl,
         };
         await persistLastError(`Login failed: ${res.status}`, detail);
-        // classify error for the modal
-        if (res.status === 401 || res.status === 403) setErrorType('credentials');
-        else if (res.status >= 500) setErrorType('server');
-        else setErrorType('other');
-        setErrorMessage(bodyText || `Status ${res.status}`);
+        // classify error for the modal and set a safe message for credentials
+        if (res.status === 401 || res.status === 403) {
+          setErrorType('credentials');
+          setErrorMessage('Incorrect Username And password');
+        } else if (res.status >= 500) {
+          setErrorType('server');
+          setErrorMessage(bodyText || `Status ${res.status}`);
+        } else {
+          setErrorType('other');
+          setErrorMessage(bodyText || `Status ${res.status}`);
+        }
         setErrorDetails(detail);
         setErrorModalVisible(true);
         return;

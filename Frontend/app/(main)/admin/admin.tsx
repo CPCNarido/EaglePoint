@@ -231,6 +231,8 @@ export default function AdminDashboard() {
     // Helper to infer session_type when the backend doesn't provide it.
     const inferSessionType = (b: any) => {
       try {
+        // Prefer an explicit server-provided session_type when present
+        if (b?.session_type) return b.session_type;
         const original = String(b?.originalStatus ?? b?.status ?? '');
         if (original === 'SpecialUse') return 'Reserved';
         const start = b?.start_time ?? (b?.player && (b.player as any).start_time) ?? null;
@@ -634,12 +636,15 @@ export default function AdminDashboard() {
     try {
       if (showSessionLegend) {
         const original = String(b?.originalStatus ?? b?.status ?? '');
-        // If there's a start_time (player.start_time or top-level start_time), treat as Open/Stopwatch
-        const startStr = b?.start_time ?? (b?.player && (b.player as any).start_time) ?? null;
-        if (startStr) return '#BF930E'; // Open/Stopwatch (orange)
-        // Timed sessions have an end_time
-        const endStr = b?.end_time ?? b?.assignment_end_time ?? null;
-        if (endStr) return '#D18B3A'; // Timed (distinct brown/orange)
+        const stype = b?.session_type ?? inferSessionType(b);
+        if (stype === 'Open') return '#BF930E'; // Open/Stopwatch (orange)
+        if (stype === 'Timed') {
+          // Timed sessions should only appear as "timed/active" when the server
+          // reports the session as started (first bucket delivered + grace). If
+          // not started yet, show the Assigned color so dispatchers know it's been assigned but not running.
+          if (b?.session_started) return '#D18B3A';
+          return '#A3784E'; // Assigned-looking color for not-yet-started timed sessions
+        }
         if (original === 'SpecialUse') return '#6A1B9A'; // Reserved (purple)
         return '#2E7D32'; // Available green
       }

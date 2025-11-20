@@ -48,8 +48,33 @@ export default function ActivePlayerList({ userName }: { userName?: string }) {
       const data = await res.json();
       // API returns either an array or { rows, total }
       const list = Array.isArray(data) ? data : (data.rows || []);
-      // Exclude sessions that have already ended (end_time != null)
-      const activeOnly = (list || []).filter((s: any) => s.end_time == null);
+      // Prefer typed `session_type` + `session_started` from the server when
+      // available. Fallback to legacy end_time heuristics when those fields
+      // aren't present on the payload.
+      const activeOnly = (list || []).filter((s: any) => {
+        if (!s) return false;
+        const st = String(s.session_type ?? '').toLowerCase();
+        if (st === 'open') return true;
+        if (st === 'timed') {
+          // Timed sessions are active only after the server reports them started,
+          // or if the end_time is still in the future as a fallback.
+          if (s.session_started === true) return true;
+          if (s.end_time) {
+            try {
+              const et = new Date(s.end_time);
+              if (!isNaN(et.getTime())) return et.getTime() > Date.now();
+            } catch (e) { void e; }
+          }
+          return false;
+        }
+        // Fallback: include rows with null end_time or end_time in the future
+        if (s.end_time == null) return true;
+        try {
+          const et = new Date(s.end_time);
+          if (!isNaN(et.getTime())) return et.getTime() > Date.now();
+        } catch (e) { void e; }
+        return false;
+      });
       setRows(activeOnly as SessionRow[]);
     } catch (e: any) {
       setError(e?.message || 'Failed loading players');
@@ -66,15 +91,17 @@ export default function ActivePlayerList({ userName }: { userName?: string }) {
   }, []);
 
   const getStatus = (r: SessionRow) => {
-    // Determine assigned/unassigned based on session type and whether the
-    // session's timer/stopwatch has started (presence of start_time).
+    // Determine assigned/unassigned preferring the typed `session_type` from the DB.
     const isAssigned = (() => {
       const st = String((r.session_type ?? '')).toLowerCase();
-      // Open sessions are always considered assigned for the cashier view
+      const hasBay = (r.bay_no != null && String(r.bay_no).trim() !== '') || (r as any).bay_id != null;
+      // If a bay is present, consider the session assigned
+      if (hasBay) return true;
+      // Open sessions (DB says 'open') are considered assigned in cashier view
       if (st === 'open') return true;
-      // Timed sessions are assigned only after the countdown/stopwatch started
-      if (st === 'timed') return !!r.start_time;
-      // Fallback to bay presence
+      // Timed sessions are considered assigned only after they have started
+      if (st === 'timed') return !!(r as any).session_started;
+      // Fallback: treat presence of bay_no as assigned
       return !!r.bay_no;
     })();
     if (isAssigned) return 'Active';
@@ -90,9 +117,10 @@ export default function ActivePlayerList({ userName }: { userName?: string }) {
   const filtered = useMemo(() => {
     const q = (query || '').trim().toLowerCase();
     return rows.filter((r) => {
-      // Use the same assigned heuristic as getStatus
+      // Use the same assigned heuristic as getStatus (prefer DB session_type)
       const st = String((r.session_type ?? '')).toLowerCase();
-      const isAssigned = st === 'open' ? true : st === 'timed' ? !!r.start_time : !!r.bay_no;
+      const hasBay = (r.bay_no != null && String(r.bay_no).trim() !== '') || (r as any).bay_id != null;
+      const isAssigned = hasBay ? true : (st === 'open' ? true : st === 'timed' ? !!(r as any).session_started : !!r.bay_no);
       if (filter === 'Unassigned' && isAssigned) return false;
       if (filter === 'Assigned' && !isAssigned) return false;
       if (!q) return true;

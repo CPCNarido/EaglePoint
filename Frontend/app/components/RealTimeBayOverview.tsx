@@ -37,6 +37,8 @@ export default function RealTimeBayOverview({ overview, settings, highlightedBay
 
   const inferSessionType = (b: any) => {
     try {
+      // Prefer explicit session_type if provided by server
+      if (b?.session_type) return b.session_type;
       const original = String(b?.originalStatus ?? b?.status ?? '');
       if (original === 'SpecialUse') return 'Reserved';
       const start = b?.start_time ?? (b?.player && (b.player as any).start_time) ?? null;
@@ -52,10 +54,12 @@ export default function RealTimeBayOverview({ overview, settings, highlightedBay
     try {
       if (showSessionLegend) {
         const original = String(b?.originalStatus ?? b?.status ?? '');
-        const startStr = b?.start_time ?? (b?.player && (b.player as any).start_time) ?? null;
-        if (startStr) return '#BF930E';
-        const endStr = b?.end_time ?? b?.assignment_end_time ?? null;
-        if (endStr) return '#D18B3A';
+        const stype = b?.session_type ?? inferSessionType(b);
+        if (stype === 'Open') return '#BF930E';
+        if (stype === 'Timed') {
+          if (b?.session_started) return '#D18B3A';
+          return '#A3784E';
+        }
         if (original === 'SpecialUse') return '#6A1B9A';
         return '#2E7D32';
       }

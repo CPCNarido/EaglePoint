@@ -280,9 +280,24 @@ export default function BayAssignmentScreen({ userName, counts, assignedBays }: 
           const res = await fetchWithAuth(`${baseUrl}/api/admin/reports/sessions?limit=1000`, { method: 'GET' });
           if (res && res.ok) {
             const rows = await res.json();
-            // rows may be array of mapped sessions; select those with no bay_no and no end_time
-            const waiting = Array.isArray(rows) ? rows.filter((r: any) => !r.bay_no && !r.end_time) : [];
-            if (mounted) setPlayers(waiting.map((w: any) => ({ id: w.player_id, name: w.player_name ?? w.session_id, receipt: w.session_id, note: '' })));
+            // rows may be array of mapped sessions; prefer `session_type` from API and include
+            // timed sessions whose end_time is in the future.
+            const waiting = Array.isArray(rows) ? rows.filter((r: any) => {
+              const noBay = (r.bay_no == null && r.bay_id == null) || (!r.bay_no && !r.bay_id);
+              if (!noBay) return false;
+              const st = String(r.session_type ?? '').toLowerCase();
+              if (st === 'open') return true;
+              if (st === 'timed') {
+                // Prefer server `session_started` for timed sessions. If absent,
+                // fall back to end_time in the future to include planned sessions.
+                if (r.session_started === true) return true;
+                if (!r.end_time) return false;
+                try { const et = new Date(r.end_time); return !isNaN(et.getTime()) && et.getTime() > Date.now(); } catch (e) { return false; }
+              }
+              if (r.end_time == null) return true;
+              try { const et = new Date(r.end_time); return !isNaN(et.getTime()) && et.getTime() > Date.now(); } catch (e) { return false; }
+            }) : [];
+            if (mounted) setPlayers(waiting.map((w: any) => ({ id: w.player_id, name: w.player_name ?? w.session_id, receipt: w.session_id, note: '', plannedDuration: w.planned_duration_minutes ?? null })));
           }
         } catch (e) { /* ignore */ }
 
@@ -373,7 +388,6 @@ export default function BayAssignmentScreen({ userName, counts, assignedBays }: 
       {/* Main Section - no sidebar, full width */}
       <View style={styles.mainContent}>
         <DispatcherHeader title="Bay Assignment" subtitle={userName ? `Dispatcher ${userName}` : 'Dispatcher'} counts={counts} assignedBays={assignedBays} showBadges={true} />
-
         {/* Main Columns */}
         <View style={styles.columns}>
           {/* Left - Player Queue */}

@@ -271,9 +271,10 @@ export class AdminService {
     let totalMs = 0;
     for (const s of sessionsWithEnd) {
       try {
-        // s.end_time is filtered to be non-null, assert to satisfy TypeScript
-        totalMs +=
-          new Date(s.end_time!).getTime() - new Date(s.start_time).getTime();
+        // Only compute durations when both start_time and end_time are present
+        if (s.start_time && s.end_time) {
+          totalMs += new Date(s.end_time!).getTime() - new Date(s.start_time!).getTime();
+        }
       } catch (e) {
         void e;
       }
@@ -454,8 +455,22 @@ export class AdminService {
       // surface bay.note (used for reservation names) so the frontend can
       // display the reserved-for name even before a Player/Assignment exists.
       const playerName = assignment?.player?.nickname ?? assignment?.player?.full_name ?? b.note ?? null;
-      const endTime = assignment?.end_time ?? assignment?.player?.end_time ?? null;
-      const totalBalls = assignment?.transactions ? assignment.transactions.reduce((s: number, t: any) => s + (Number(t.bucket_count) || 0), 0) : null;
+        const endTime = assignment?.end_time ?? assignment?.player?.end_time ?? null;
+        const totalBalls = assignment?.transactions ? assignment.transactions.reduce((s: number, t: any) => s + (Number(t.bucket_count) || 0), 0) : null;
+        // Determine whether a timed session has actually started.
+        // Authoritative source: Player.start_time (persisted when first BallTransaction processed).
+        // Fallback: if start_time is not yet persisted, treat the session as started when
+        // the assignment has at least one bucket recorded in transactions (bucket_count sum >= 1).
+        let session_started = false;
+        try {
+          if (assignment?.player?.start_time) {
+            session_started = true;
+          } else {
+            const txs = assignment?.transactions ?? [];
+            const totalBalls = txs && txs.length ? txs.reduce((s: number, t: any) => s + (Number(t.bucket_count) || 0), 0) : 0;
+            session_started = totalBalls >= 1;
+          }
+        } catch (e) { void e; }
 
       return {
         bay_id: b.bay_id,
@@ -465,9 +480,16 @@ export class AdminService {
         // assignment-derived fields (optional)
         player_name: playerName,
         // expose start_time so clients can compute elapsed stopwatch time across reloads
-        start_time: assignment?.player?.start_time ?? assignment?.assigned_time ?? null,
+        // Do NOT fall back to assignment.assigned_time here — the assignment event
+        // should not start the session timer. The authoritative start_time is the
+        // persisted Player.start_time which is set when the first BallTransaction
+        // is created (delivered_time + grace). Returning assigned_time here would
+        // cause the UI to show a running timer immediately after assignment.
+        start_time: assignment?.player?.start_time ?? null,
         // expose typed session_type when available so clients can render session-type legends
         session_type: assignment?.session_type ?? null,
+        // indicate whether the timed session has actually started (first bucket + grace)
+        session_started: session_started,
         // If no live assignment but bay.note is present, expose a synthetic player object
         player: assignment?.player ? { nickname: assignment.player.nickname, full_name: assignment.player.full_name, player_id: assignment.player.player_id, start_time: assignment.player.start_time } : (b.note ? { nickname: b.note } : null),
         end_time: endTime,
@@ -486,12 +508,10 @@ export class AdminService {
     let revenue = 0;
     for (const p of playersToday) {
       try {
-        const start = p.start_time;
-        const end = p.end_time ?? now;
-        const hours = Math.max(
-          0,
-          (end.getTime() - start.getTime()) / (1000 * 60 * 60),
-        );
+        if (!p.start_time) continue;
+        const start = new Date(p.start_time);
+        const end = p.end_time ? new Date(p.end_time) : now;
+        const hours = Math.max(0, (end.getTime() - start.getTime()) / (1000 * 60 * 60));
         revenue += Number(p.price_per_hour) * hours;
       } catch (e) {
         void e;
@@ -543,7 +563,7 @@ export class AdminService {
   // Return recent sessions with assignment and aggregated info for frontend tables/charts
   async getRecentSessions(opts: { limit?: number; timeRange?: string; sessionType?: string; bay?: any; page?: number; perPage?: number } = {}) {
     const limit = Number(opts.limit ?? 200);
-    // apply optional filters: timeRange, sessionType, bay
+    // apply optional filters: , sessionType, bay
     let startDate: Date | undefined = undefined;
     if (opts && (opts as any).timeRange) {
       const tr = String((opts as any).timeRange || '').toLowerCase();
@@ -555,8 +575,15 @@ export class AdminService {
 
     const where: any = {};
     if (startDate) where.start_time = { gte: startDate };
-    if ((opts as any).sessionType && String((opts as any).sessionType).toLowerCase() === 'timed') where.end_time = { not: null };
-    if ((opts as any).sessionType && String((opts as any).sessionType).toLowerCase() === 'open') where.end_time = null;
+    // Prefer filtering by the typed `session_type` column when the caller supplies it.
+    // Fall back to the historical end_time-based filter if the DB doesn't have the column yet.
+    const requestedSessionType = (opts as any).sessionType ?? null;
+    let usedWhere: any = { ...where };
+    if (requestedSessionType) {
+      const st = String(requestedSessionType).trim();
+      // Build a where clause that prefers the session_type column (case-insensitive).
+      usedWhere = { ...where, session_type: { equals: st, mode: 'insensitive' } } as any;
+    }
     // bay filter: filter by assignment bay number or bay id
     const includeAssignments = {
       include: {
@@ -585,15 +612,36 @@ export class AdminService {
     const perPage = Number((opts as any).perPage ?? limit);
     const skip = page && page > 0 ? (page - 1) * perPage : 0;
 
-    const total = await this.prisma.player.count({ where }).catch(() => 0);
-
-    const players = await this.prisma.player.findMany({
-      where,
-      orderBy: { start_time: 'desc' },
-      take: perPage,
-      skip,
-      include: { assignments: includeAssignments },
-    });
+    // Attempt the query using the typed session_type filter first; if the DB lacks the column
+    // this may throw — in that case fall back to the legacy end_time-based filter.
+    let total = 0;
+    let players: any[] = [];
+    try {
+      total = await this.prisma.player.count({ where: usedWhere }).catch(() => 0);
+      players = await this.prisma.player.findMany({
+        where: usedWhere,
+        orderBy: { start_time: 'desc' },
+        take: perPage,
+        skip,
+        include: { assignments: includeAssignments },
+      });
+    } catch (e) {
+      // Fallback: translate requestedSessionType into the historical end_time-based filter
+      const fallbackWhere: any = { ...where };
+      if (requestedSessionType) {
+        const s2 = String(requestedSessionType).toLowerCase();
+        if (s2 === 'timed') fallbackWhere.end_time = { not: null };
+        if (s2 === 'open') fallbackWhere.end_time = null;
+      }
+      total = await this.prisma.player.count({ where: fallbackWhere }).catch(() => 0);
+      players = await this.prisma.player.findMany({
+        where: fallbackWhere,
+        orderBy: { start_time: 'desc' },
+        take: perPage,
+        skip,
+        include: { assignments: includeAssignments },
+      });
+    }
 
     // Map to a lean representation used by the frontend
     const mapped = players.map((p) => {
@@ -640,7 +688,21 @@ export class AdminService {
         price_per_hour: Number(p.price_per_hour ?? 0),
         total_buckets: totalBuckets,
         cashier_dispatcher: assignment?.dispatcher?.full_name ?? null,
-        session_type: p.end_time ? 'Timed' : 'Open',
+        // indicate whether a timed session has actually started
+        // Prefer persisted Player.start_time; otherwise treat session as started
+        // when the assignment has recorded at least one bucket (total_buckets >= 1).
+        session_started: (() => {
+          try {
+            if (p.start_time) return true;
+            const txs = assignment?.transactions ?? [];
+            const total = txs && txs.length ? txs.reduce((s: number, t: any) => s + (Number(t.bucket_count) || 0), 0) : 0;
+            return total >= 1;
+          } catch (e) { void e; }
+          return false;
+        })(),
+        // Prefer the typed `session_type` stored on the player when available; otherwise
+        // fall back to the historical end_time-derived value.
+        session_type: p.session_type ?? (p.end_time ? 'Timed' : 'Open'),
       };
     });
 
@@ -666,6 +728,7 @@ export class AdminService {
       labels.push(key.slice(5));
     }
     for (const p of players) {
+      if (!p.start_time) continue;
       const k = new Date(p.start_time).toISOString().slice(0, 10);
       if (map[k] !== undefined) map[k] = (map[k] || 0) + 1;
     }
@@ -722,7 +785,24 @@ export class AdminService {
       take: Number(last) || 10,
     });
 
-    return { ok: true, bay, overviewEntry, assignments };
+    // Enrich assignments with computed `session_started` flag.
+    // Prefer persisted Player.start_time; otherwise treat session as started
+    // when the assignment has recorded at least one bucket (total_buckets >= 1).
+    const enrichedAssignments = (assignments || []).map((a: any) => {
+      let session_started = false;
+      try {
+        if (a?.player?.start_time) {
+          session_started = true;
+        } else {
+          const txs = a.transactions ?? [];
+          const total = txs && txs.length ? txs.reduce((s: number, t: any) => s + (Number(t.bucket_count) || 0), 0) : 0;
+          session_started = total >= 1;
+        }
+      } catch (e) { void e; }
+      return { ...a, session_started };
+    });
+
+    return { ok: true, bay, overviewEntry, assignments: enrichedAssignments };
   }
 
   // Return basic staff list (id, full_name, username, role)
@@ -1657,7 +1737,11 @@ export class AdminService {
   const reserveNote = (bay && typeof bay.note === 'string') ? String(bay.note).trim() : '';
   const nickname = String(body?.nickname ?? body?.name ?? body?.full_name ?? reserveNote ?? '').trim() || null;
   const full_name = null; // not stored on Player (kept for compatibility variable but not persisted)
-    const start_time = new Date();
+    // Do not set start_time here — sessions created via dispatcher/admin or cashier
+    // should only be marked started after the ball handler delivers the first
+    // bucket and the configured grace period has elapsed. Leave start_time null
+    // so the UI and billing logic rely on the server-side computed flag.
+    const start_time = null;
   // If no end_time supplied, leave it null to represent an open session (schema now allows nullable end_time)
   const end_time = body?.end_time ? new Date(String(body.end_time)) : null;
 
@@ -1706,7 +1790,9 @@ export class AdminService {
     }
 
   // Create player record (player.end_time may be null for open sessions)
-  const player = await this.prisma.player.create({ data: { nickname: nickname ?? undefined, start_time, end_time: end_time ?? null, price_per_hour: pricePerHour ?? '0.00', created_by: createdBy } as any });
+  // include planned_duration_minutes when available (caller may supply planned_duration_minutes)
+  const plannedMinutes = body?.planned_duration_minutes != null ? Number(body.planned_duration_minutes) : null;
+  const player = await this.prisma.player.create({ data: { nickname: nickname ?? undefined, start_time, end_time: end_time ?? null, price_per_hour: pricePerHour ?? '0.00', planned_duration_minutes: plannedMinutes ?? undefined, creator: { connect: { employee_id: createdBy } } } as any });
 
     // Create assignment
     // Ensure we have a dispatcher id to attach to the assignment (fallback to createdBy if not supplied)
@@ -1743,8 +1829,184 @@ export class AdminService {
     } catch (e) { void e; }
 
   // Return a compact player object using the stored nickname (no full_name column exists)
-  const out = { ok: true, player: { player_id: player.player_id, nickname: player.nickname ?? null }, assignment_id: assignment.assignment_id };
+    const out = { ok: true, player: { player_id: player.player_id, nickname: player.nickname ?? null, session_type: assignment.session_type ?? null, session_started: false }, assignment_id: assignment.assignment_id };
     Logger.log(`AdminService.startSession created assignment=${assignment.assignment_id} player=${player.player_id}`, 'AdminService');
     return out;
+  }
+
+  // Create an unassigned player/session row (no bay assignment). This is intended for
+  // cashier flows where the Dispatcher will later assign a bay. The created Player will
+  // include start_time, optional end_time (for timed sessions), price_per_hour and created_by.
+  async createUnassignedSession(payload: any) {
+    const body = payload || {};
+    Logger.log(`AdminService.createUnassignedSession called payload=${JSON.stringify(body)}`, 'AdminService');
+
+    // Build player data
+    const nickname = String(body?.nickname ?? body?.name ?? body?.full_name ?? '').trim() || null;
+    // When creating an unassigned session from the cashier side we intentionally
+    // leave `start_time` null. The session will be populated once the first
+    // BallTransaction is created by the ball handler (with a 30s grace).
+    const start_time = null;
+    // If the cashier provided a planned duration, treat this as a Timed session
+    // and set a provisional end_time = start_time + planned_duration_minutes.
+    const plannedMinutesRaw = body?.planned_duration_minutes ?? null;
+    const plannedMinutes = plannedMinutesRaw != null ? Number(plannedMinutesRaw) : null;
+    // start_time is intentionally null for cashier-created rows. If the cashier
+    // provided a planned duration, compute a provisional end_time relative to
+    // now so the UI can show an expected end even before the session start is
+    // recorded (it will be populated once the ball handler delivers the first
+    // bucket and the grace period elapses).
+    const end_time = typeof plannedMinutes === 'number' && !Number.isNaN(plannedMinutes) && plannedMinutes > 0 ? new Date(Date.now() + plannedMinutes * 60000) : null;
+
+    // Determine creator: prefer provided dispatcherId, otherwise pick an existing Dispatcher or Admin account
+    let createdBy: number | undefined = undefined;
+    try {
+      if (body?.dispatcherId) {
+        const disp = await this.prisma.employee.findUnique({ where: { employee_id: Number(body.dispatcherId) as any } as any }).catch(() => null);
+        if (disp) createdBy = disp.employee_id;
+      }
+      if (!createdBy) {
+        const disp = await this.prisma.employee.findFirst({ where: { role: 'Dispatcher' } }).catch(() => null);
+        if (disp) createdBy = disp.employee_id;
+      }
+      if (!createdBy) {
+        const admin = await this.prisma.employee.findFirst({ where: { role: 'Admin' } }).catch(() => null);
+        if (admin) createdBy = admin.employee_id;
+      }
+    } catch (e) {
+      void e;
+    }
+
+    if (!createdBy) throw new BadRequestException('No dispatcher or admin account available to attribute created_by for new player');
+
+    // Determine price_per_hour: prefer explicit body value, otherwise fall back to pricing config
+    let pricePerHour: string | undefined = undefined;
+    try {
+      if (body?.price_per_hour !== undefined && body?.price_per_hour !== null) {
+        pricePerHour = String(body.price_per_hour);
+      } else {
+        const pricing = await (this.prisma as any).pricingConfig.findFirst().catch(() => null);
+        const isTimed = !!end_time; // if we computed an end_time treat as timed
+        if (!isTimed) {
+          pricePerHour = String(pricing?.open_time_rate ?? '0');
+        } else {
+          pricePerHour = String(pricing?.timed_session_rate ?? pricing?.open_time_rate ?? '0');
+        }
+      }
+    } catch (e) {
+      pricePerHour = '0.00';
+    }
+
+    // Create player record (store any planned duration if provided)
+    const receiptNumber = body?.receipt_number ?? body?.receipt ?? null;
+    // Determine session type string for Player.session_type: Timed when we have end_time, otherwise Open
+    const sessionTypeStr = end_time ? 'Timed' : 'Open';
+
+    // Prepare data object so we can retry without receipt_number on unique-constraint failures
+    const dataObj: any = {
+      nickname: nickname ?? undefined,
+      receipt_number: receiptNumber ?? undefined,
+      start_time,
+      end_time: end_time ?? null,
+      price_per_hour: pricePerHour ?? '0.00',
+      created_by: createdBy,
+      planned_duration_minutes: plannedMinutes ?? undefined,
+      session_type: sessionTypeStr ?? undefined,
+    };
+
+    // Attempt to create using Prisma client first. On unique-receipt errors, retry without it.
+    let player: any = null;
+    try {
+      // prefer connecting the required creator relation instead of passing raw scalar
+      if (dataObj && dataObj.created_by) {
+        const obj = { ...dataObj };
+        obj.creator = { connect: { employee_id: dataObj.created_by } };
+        delete obj.created_by;
+        player = await this.prisma.player.create({ data: obj } as any);
+      } else {
+        player = await this.prisma.player.create({ data: dataObj } as any);
+      }
+    } catch (err: any) {
+      // If there's a unique constraint violation on receipt_number, retry without it
+      if (err && err.code === 'P2002' && err.meta && Array.isArray(err.meta.target) && err.meta.target.includes('receipt_number')) {
+        try {
+          dataObj.receipt_number = undefined;
+          if (dataObj && dataObj.created_by) {
+            const obj2 = { ...dataObj };
+            obj2.creator = { connect: { employee_id: dataObj.created_by } };
+            delete obj2.created_by;
+            player = await this.prisma.player.create({ data: obj2 } as any);
+          } else {
+            player = await this.prisma.player.create({ data: dataObj } as any);
+          }
+        } catch (retryErr: any) {
+          // replace err with retryErr for downstream handling
+          err = retryErr;
+        }
+      }
+
+      // If Prisma fails here it's most likely because the database schema and
+      // Prisma client are out-of-sync (missing columns or relations). Surface a
+      // helpful error suggesting running migrations / generating the client.
+      if (!player) {
+        const msg = (err && err.message) ? String(err.message) : 'Failed creating Player record';
+        throw new BadRequestException(`${msg} - ensure Prisma migrations are applied and run 'npx prisma generate'`);
+      }
+    }
+
+    try {
+      await this.loggingService.writeLog(undefined as any, Role.Admin, `CreateUnassignedSession: player:${player.player_id}`, `player:${player.player_id}`);
+    } catch (e) { void e; }
+
+    return { ok: true, player: { player_id: player.player_id, nickname: player.nickname ?? null, planned_duration_minutes: plannedMinutes ?? null, session_type: sessionTypeStr ?? null, session_started: false } };
+  }
+
+  // Create a BallTransaction for the active assignment on the given bay.
+  // Payload may include: bucket_count (defaults to 1), delivered_time (ISO string).
+  async createBallTransactionForBay(bayNo: string, payload: any = {}, handlerId?: number) {
+    Logger.log(`createBallTransactionForBay called bay=${bayNo} handler=${handlerId} payload=${JSON.stringify(payload)}`, 'AdminService');
+    if (!bayNo) throw new BadRequestException('bayNo is required');
+    // find bay by number or id
+    let bay = await this.prisma.bay.findFirst({ where: { bay_number: String(bayNo) } }).catch(() => null);
+    if (!bay) {
+      const maybeId = Number(bayNo);
+      if (!Number.isNaN(maybeId)) {
+        bay = await this.prisma.bay.findUnique({ where: { bay_id: maybeId } as any }).catch(() => null);
+      }
+    }
+    if (!bay) {
+      Logger.warn(`createBallTransactionForBay: bay not found bay=${bayNo}`, 'AdminService');
+      throw new BadRequestException('Bay not found');
+    }
+
+    // find active assignment for this bay
+    const assignment = await this.prisma.bayAssignment.findFirst({ where: { bay_id: bay.bay_id, open_time: true }, orderBy: { assigned_time: 'desc' } }).catch(() => null);
+    if (!assignment) {
+      Logger.warn(`createBallTransactionForBay: no active assignment for bay_id=${bay.bay_id}`, 'AdminService');
+      throw new BadRequestException('No active assignment found for bay');
+    }
+
+    Logger.log(`createBallTransactionForBay: found assignment_id=${assignment.assignment_id} for bay_id=${bay.bay_id}`, 'AdminService');
+
+    const bucketCount = Number(payload?.bucket_count ?? 1) || 1;
+    const delivered = payload?.delivered_time ? new Date(String(payload.delivered_time)) : new Date();
+
+    const dataObj: any = { assignment: { connect: { assignment_id: assignment.assignment_id } }, bucket_count: bucketCount, delivered_time: delivered };
+    if (handlerId) {
+      // Prisma expects relation connect for required relation fields in the
+      // regular create input. Use nested connect to associate an existing
+      // Employee as the handler instead of trying to set the scalar field.
+      dataObj.handler = { connect: { employee_id: Number(handlerId) } };
+    }
+
+    try {
+      const created = await this.prisma.ballTransaction.create({ data: dataObj });
+      Logger.log(`createBallTransactionForBay: created tx_id=${created.transaction_id} assignment_id=${assignment.assignment_id}`, 'AdminService');
+      try { await this.loggingService.writeLog(handlerId ?? undefined, Role.Dispatcher as any, `BallTransaction:create`, `tx:${created.transaction_id}`); } catch (e) { void e; }
+      return { ok: true, transaction: created };
+    } catch (err: any) {
+      Logger.error('createBallTransactionForBay: failed creating transaction', err, 'AdminService');
+      throw err;
+    }
   }
 }

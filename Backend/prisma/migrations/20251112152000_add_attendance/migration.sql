@@ -31,10 +31,17 @@ BEGIN
   END IF;
 END$$;
 
--- Foreign key to Employee
-ALTER TABLE "Attendance"
-  ADD CONSTRAINT IF NOT EXISTS "attendance_employee_fkey"
-  FOREIGN KEY ("employee_id") REFERENCES "Employee" ("employee_id") ON DELETE CASCADE;
+-- Foreign key to Employee (add only if it does not already exist)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'attendance_employee_fkey'
+  ) THEN
+    ALTER TABLE "Attendance"
+      ADD CONSTRAINT "attendance_employee_fkey"
+      FOREIGN KEY ("employee_id") REFERENCES "Employee" ("employee_id") ON DELETE CASCADE;
+  END IF;
+END$$;
 
 -- Down (reverse) below as comments; Prisma will generate down if needed
 -- DROP TABLE IF EXISTS "Attendance";

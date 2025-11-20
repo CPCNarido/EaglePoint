@@ -36,7 +36,24 @@ export default function SessionControlTab({ userName, counts, assignedBays }: { 
   const r = await fetchWithAuth(`${baseUrl}/api/admin/reports/sessions?limit=1000`, { method: 'GET', headers });
       if (r && r.ok) {
         const rows = await r.json();
-        const active = Array.isArray(rows) ? rows.filter((s: any) => (s.bay_no || s.bay) && !s.end_time && !s.endTime) : [];
+        // Prefer typed `session_type` when present; treat timed sessions with a future
+        // end_time as active. Also accept bay indicators under multiple possible keys.
+        const active = Array.isArray(rows) ? rows.filter((s: any) => {
+          const hasBay = !!(s.bay_no || s.bay || s.bay_number || s.bayNo);
+          if (!hasBay) return false;
+          const st = String(s.session_type ?? '').toLowerCase();
+          if (st === 'open') return true;
+          if (st === 'timed') {
+            // Prefer server-provided `session_started`. If absent, fall back to
+            // end_time being in the future.
+            if (s.session_started === true) return true;
+            if (!s.end_time && !s.endTime) return false;
+            try { const et = new Date(s.end_time ?? s.endTime); return !isNaN(et.getTime()) && et.getTime() > Date.now(); } catch (e) { return false; }
+          }
+          // Fallback: include rows with null end_time or end_time in the future
+          if (s.end_time == null && s.endTime == null) return true;
+          try { const et = new Date(s.end_time ?? s.endTime); return !isNaN(et.getTime()) && et.getTime() > Date.now(); } catch (e) { return false; }
+        }) : [];
         // normalize objects to a simple shape for the UI
         const normalized = active.map((s: any, ix: number) => ({
           id: s.session_id ?? s.id ?? ix,

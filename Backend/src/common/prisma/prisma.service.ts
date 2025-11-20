@@ -68,6 +68,29 @@ export class PrismaService extends PrismaClient implements OnModuleInit {
           actorId = params.args.data.handler_id ?? undefined;
           related = `transaction:assignment:${params.args.data.assignment_id ?? ''}`;
           sessionType = undefined;
+          // Immediately persist Player.start_time = delivered_time + 30s when
+          // the first BallTransaction for an assignment is created. This is
+          // idempotent and avoids relying on in-process timers that can be
+          // lost on restart. We perform an updateMany guarded by
+          // start_time == null so concurrent transactions won't overwrite an
+          // already-populated start_time.
+          try {
+            const assignmentId = params.args.data.assignment_id;
+            if (assignmentId) {
+              // find assignment -> player
+              const asg = await (this as any).bayAssignment.findUnique({ where: { assignment_id: assignmentId }, select: { player_id: true } }).catch(() => null);
+              const playerId = asg?.player_id;
+              if (playerId) {
+                // Determine delivered_time: prefer provided data, fallback to now
+                const delivered = params.args.data.delivered_time ? new Date(params.args.data.delivered_time) : new Date();
+                const startAtMs = delivered.getTime() + 30000;
+                const startAt = new Date(startAtMs);
+
+                // Idempotent update: only set start_time when it's currently null
+                await (this as any).player.updateMany({ where: { player_id: playerId, start_time: null }, data: { start_time: startAt } }).catch(() => null);
+              }
+            }
+          } catch (e) { void e; }
         }
 
         if (actorId) {

@@ -614,6 +614,22 @@ export class AdminController {
     }
   }
 
+  // Create an unassigned player/session row (no bay). Intended for cashier flows
+  // where Dispatcher will later assign a bay. Body may include: nickname, end_time (ISO), price_per_hour, dispatcherId
+  @Post('sessions')
+  async createSession(@Body() body: any) {
+    try {
+      Logger.log(`admin.createSession called body=${JSON.stringify(body)}`, 'AdminController');
+      const res = await this.adminService.createUnassignedSession(body || {});
+      Logger.log(`admin.createSession result=${JSON.stringify(res)}`, 'AdminController');
+      return res;
+    } catch (e: any) {
+      if (e instanceof BadRequestException) throw e;
+      Logger.error('Failed creating session', e, 'AdminController');
+      throw new InternalServerErrorException(e?.message ?? 'Failed creating session');
+    }
+  }
+
   // Start a new session on a bay (timed if end_time provided, otherwise Open)
   @Post('bays/:bayNo/start')
   async startBaySession(@Param('bayNo') bayNo: string, @Body() body: any) {
@@ -643,6 +659,24 @@ export class AdminController {
       if (e instanceof BadRequestException) throw e;
       Logger.error('Failed to get bay debug', e, 'AdminController');
       throw new InternalServerErrorException(e?.message ?? 'Failed to get bay debug');
+    }
+  }
+
+  @UseGuards(AuthGuard)
+  @Post('bays/:bayNo/hand-over')
+  async handOver(@Param('bayNo') bayNo: string, @Body() body: any, @Req() req: Request & { user?: any }) {
+    try {
+      const handlerId = req?.user?.sub ? Number(req.user.sub) : undefined;
+      const payload = body || {};
+      Logger.log(`admin.handOver called bay=${bayNo} handler=${handlerId} payload=${JSON.stringify(payload)}`, 'AdminController');
+      const res = await this.adminService.createBallTransactionForBay(String(bayNo), payload, handlerId);
+      Logger.log(`admin.handOver result bay=${bayNo} handler=${handlerId} result=${JSON.stringify(res)}`, 'AdminController');
+      return res;
+    } catch (e: any) {
+      if (e instanceof BadRequestException) throw e;
+      Logger.error('Failed to hand over bucket', e, 'AdminController');
+      // Include error message in response for client diagnostics (non-sensitive)
+      throw new InternalServerErrorException(e?.message ?? 'Failed handing over bucket');
     }
   }
 }

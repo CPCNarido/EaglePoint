@@ -3,7 +3,7 @@ import { View, Text, Modal, Pressable, ScrollView } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import Toast from './Toast';
 
-type ErrorType = 'credentials'|'network'|'server'|'timeout'|'other'|'validation'|null;
+type ErrorType = 'credentials'|'network'|'server'|'timeout'|'other'|'validation'|'success'|null;
 
 export default function ErrorModal({
   visible,
@@ -44,9 +44,23 @@ export default function ErrorModal({
     }
   };
 
-  const title = errorType === 'credentials' ? 'Incorrect username or password' : (errorType === 'network' ? 'Internet connection problem' : (errorType === 'validation' ? 'Please check the form' : 'Error'));
-  const headerBg = errorType === 'credentials' ? '#FDECEA' : errorType === 'network' ? '#FFF4E5' : errorType === 'validation' ? '#F0F7FF' : '#F6F6F6';
-  const iconName = errorType === 'credentials' ? 'lock' : errorType === 'network' ? 'wifi-off' : errorType === 'validation' ? 'info-outline' : 'error-outline';
+  const title =
+    errorType === 'credentials' ? 'Incorrect username or password' :
+    errorType === 'network' ? 'Internet connection problem' :
+    errorType === 'validation' ? 'Please check the form' :
+    errorType === 'success' ? 'Success' : 'Error';
+
+  const headerBg =
+    errorType === 'credentials' ? '#FDECEA' :
+    errorType === 'network' ? '#FFF4E5' :
+    errorType === 'validation' ? '#F0F7FF' :
+    errorType === 'success' ? '#EAF6EE' : '#F6F6F6';
+
+  const iconName =
+    errorType === 'credentials' ? 'lock' :
+    errorType === 'network' ? 'wifi-off' :
+    errorType === 'validation' ? 'info-outline' :
+    errorType === 'success' ? 'check-circle' : 'error-outline';
 
   return (
     <>

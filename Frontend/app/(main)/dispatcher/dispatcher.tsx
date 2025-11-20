@@ -129,8 +129,9 @@ export default function DispatcherDashboard() {
               const bays = ov.bays;
               const unavailable = bays.filter((b: any) => {
                 const rawSession = b?.session;
+                // Prefer backend `session_type` when available. Fall back to legacy fields otherwise.
                 const sessionAction = rawSession && typeof rawSession === 'object' ? (rawSession.action || rawSession.status || rawSession.type || rawSession.session_type) : rawSession;
-                const statusCandidate = String(b?.status ?? b?.originalStatus ?? sessionAction ?? b?.session_type ?? b?.sessionType ?? b?.type ?? b?.bay_status ?? b?.action ?? '').trim();
+                const statusCandidate = String(b?.session_type ?? sessionAction ?? b?.status ?? b?.originalStatus ?? b?.sessionType ?? b?.type ?? b?.bay_status ?? b?.action ?? '').trim();
                 const statusLower = String(statusCandidate).toLowerCase();
                 const isReserved = legendMatchesStatus(['reserved'], statusCandidate) || !!(b?.reserved || b?.is_reserved || b?.reserved_for) || statusLower.includes('specialuse') || statusLower === 'specialuse';
                 const isSpecial = legendMatchesStatus(['reserved'], statusCandidate) || !!(b?.special_use || b?.specialUse || b?.is_special_use || b?.specialuse) || statusLower.includes('specialuse') || statusLower === 'specialuse';
@@ -216,7 +217,24 @@ export default function DispatcherDashboard() {
           if (r3 && r3.ok) {
             const rows = await r3.json();
             if (!mounted) return;
-            const waiting = Array.isArray(rows) ? rows.filter((r: any) => !r.bay_no && !r.end_time) : [];
+            // Consider a session "unassigned" when it has no bay number and no bay id, and it hasn't ended.
+            // Prefer the typed `session_type` from the API when present.
+            const waiting = Array.isArray(rows) ? rows.filter((r: any) => {
+              const noBay = (r.bay_no == null && r.bay_id == null);
+              if (!noBay) return false;
+              const st = String(r.session_type ?? '').toLowerCase();
+              if (st === 'open') return true;
+              if (st === 'timed') {
+                // If the server indicates the timed session has started (first bucket + grace), it's not waiting
+                if ((r as any).session_started) return false;
+                // Otherwise treat it as waiting while it has no end_time or end_time is in the future
+                if (!r.end_time) return true;
+                try { const et = new Date(r.end_time); return !isNaN(et.getTime()) && et.getTime() > Date.now(); } catch (e) { return false; }
+              }
+              // Fallback: treat rows with null end_time as unassigned
+              if (r.end_time == null) return true;
+              try { const et = new Date(r.end_time); return !isNaN(et.getTime()) && et.getTime() > Date.now(); } catch (e) { return false; }
+            }) : [];
             setGlobalWaitingQueue(waiting.length);
           }
         } catch {}
