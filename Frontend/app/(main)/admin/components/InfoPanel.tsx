@@ -34,9 +34,7 @@ export default function InfoPanel({ num, details, now, offsetX }: InfoPanelProps
           const mm = String(mins).padStart(2, '0');
           const ss = String(secs).padStart(2, '0');
           return `${mm}:${ss} mins`;
-        } catch (e) {
-          return '—';
-        }
+        } catch (e) { void e; return '—'; }
       };
 
       if (end) {
@@ -53,7 +51,7 @@ export default function InfoPanel({ num, details, now, offsetX }: InfoPanelProps
         if (elapsedMs <= 0) return 'Time: 0:00';
         return `Time: ${formatMsForDisplay(elapsedMs)}`;
       }
-    } catch (e) { void e; }
+    } catch (_e) { void _e; }
     return '—';
   };
 

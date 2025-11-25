@@ -12,7 +12,10 @@ describe('DispatcherService (staff on duty)', () => {
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [DispatcherService, { provide: PrismaService, useValue: mockPrisma }],
+      providers: [
+        DispatcherService,
+        { provide: PrismaService, useValue: mockPrisma },
+      ],
     }).compile();
 
     // bypass Nest's DI typing and inject service manually with mocked prisma
@@ -33,9 +36,15 @@ describe('DispatcherService (staff on duty)', () => {
         employee_id: 11,
         clock_in: new Date(now.getTime() - 3600 * 1000),
         clock_out: null,
-        date: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())),
+        date: new Date(
+          Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+        ),
         source: null,
-        employee: { employee_id: 11, full_name: 'Test User', username: 'testuser' },
+        employee: {
+          employee_id: 11,
+          full_name: 'Test User',
+          username: 'testuser',
+        },
       },
     ]);
 

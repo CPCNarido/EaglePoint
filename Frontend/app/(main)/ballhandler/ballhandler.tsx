@@ -24,7 +24,7 @@ export default function BallHandler() {
 
 	const performLogout = async () => {
 		await logoutAndClear();
-		try { router.replace('/'); } catch {};
+		try { router.replace('/'); } catch (_e) { void _e; };
 	};
 
 	const fetchOverview = useCallback(async () => {
@@ -38,7 +38,7 @@ export default function BallHandler() {
 				const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
 				const override = AsyncStorage ? await AsyncStorage.getItem('backendBaseUrlOverride') : null;
 				if (override) baseUrl = override;
-			} catch {}
+			} catch (_e) { void _e; }
 
 			const res = await fetchWithAuth(`${baseUrl}/api/dispatcher/overview`, { method: 'GET' });
 			if (!res.ok) {
@@ -47,7 +47,7 @@ export default function BallHandler() {
 			}
 			const data = await res.json();
 			setOverview(data);
-		} catch (e) {
+		} catch (e) { void e;
 			setOverview(null);
 		} finally {
 			isFetchingRef.current = false;
@@ -63,7 +63,7 @@ export default function BallHandler() {
 				const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
 				const override = AsyncStorage ? await AsyncStorage.getItem('backendBaseUrlOverride') : null;
 				if (override) baseUrl = override;
-			} catch {}
+			} catch (_e) { void _e; }
 
 			const url = `${baseUrl}/api/admin/bays/${bay.bay_number}/hand-over`;
 			// Diagnostic: log the URL and whether an auth token is present (do not log token value)
@@ -80,7 +80,7 @@ export default function BallHandler() {
 						authPresent = !!t;
 					}
 				}
-			} catch (e) {
+			} catch (e) { void e;
 				console.warn('Failed checking auth token presence', e);
 			}
 			console.warn(`handOver: POST ${url} authPresent=${authPresent}`);
@@ -110,7 +110,7 @@ export default function BallHandler() {
 				setModalVisible(true);
 				await fetchOverview();
 			}
-		} catch (e) {
+		} catch (e) { void e;
 			setModalType('other');
 			setModalMessage('Unexpected error');
 			setModalVisible(true);
@@ -129,7 +129,7 @@ export default function BallHandler() {
 					const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
 					const override = AsyncStorage ? await AsyncStorage.getItem('backendBaseUrlOverride') : null;
 					if (override) baseUrl = override;
-				} catch {}
+				} catch (_e) { void _e; }
 
 				let d: any = null;
 				try {

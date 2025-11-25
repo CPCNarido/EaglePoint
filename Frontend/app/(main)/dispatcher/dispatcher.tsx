@@ -78,7 +78,7 @@ export default function DispatcherDashboard() {
         try {
           const r = await fetchWithAuth(`${baseUrl}/api/admin/me`, { method: 'GET' });
           if (r.ok) data = await r.json();
-        } catch (e) {
+        } catch (e) { void e;
           // fallback to manual attempts below
         }
         if (!data) {
@@ -94,9 +94,9 @@ export default function DispatcherDashboard() {
         const empId = data?.employee_id ?? data?.employeeId ?? null;
         setUserName(name);
         setUserEmployeeId(empId != null ? String(empId) : '');
-      } catch (e) {
-        // ignore
-      }
+        } catch (e) { void e;
+          // ignore
+        }
     })();
   }, []);
 
@@ -202,7 +202,7 @@ export default function DispatcherDashboard() {
               }
               setGlobalServicemenTotal(presentTotal);
               setGlobalServicemenAvailable(available);
-            } catch (e) {
+            } catch (e) { void e;
               // fallback to previous heuristic (online flag)
               const busy = svc.filter((s:any) => !!s.online).length;
               setGlobalServicemenTotal(svc.length);
@@ -229,11 +229,11 @@ export default function DispatcherDashboard() {
                 if ((r as any).session_started) return false;
                 // Otherwise treat it as waiting while it has no end_time or end_time is in the future
                 if (!r.end_time) return true;
-                try { const et = new Date(r.end_time); return !isNaN(et.getTime()) && et.getTime() > Date.now(); } catch (e) { return false; }
+                try { const et = new Date(r.end_time); return !isNaN(et.getTime()) && et.getTime() > Date.now(); } catch (e) { void e; return false; }
               }
               // Fallback: treat rows with null end_time as unassigned
               if (r.end_time == null) return true;
-              try { const et = new Date(r.end_time); return !isNaN(et.getTime()) && et.getTime() > Date.now(); } catch (e) { return false; }
+              try { const et = new Date(r.end_time); return !isNaN(et.getTime()) && et.getTime() > Date.now(); } catch (e) { void e; return false; }
             }) : [];
             setGlobalWaitingQueue(waiting.length);
           }

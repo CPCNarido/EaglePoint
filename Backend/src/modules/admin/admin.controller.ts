@@ -29,7 +29,11 @@ import { extname } from 'path';
 
 @Controller('admin')
 export class AdminController {
-  constructor(private adminService: AdminService, private jwtService: JwtService, private chatService: ChatService) {}
+  constructor(
+    private adminService: AdminService,
+    private jwtService: JwtService,
+    private chatService: ChatService,
+  ) {}
 
   @Get('overview')
   async overview() {
@@ -54,16 +58,20 @@ export class AdminController {
   // Clock-in / Clock-out endpoint: requires auth (token) so we can attribute actor if needed
   @UseGuards(AuthGuard)
   @Post('attendance/clock')
-  async clockAttendance(@Body() body: any, @Req() req: Request & { user?: any }) {
+  async clockAttendance(
+    @Body() body: any,
+    @Req() req: Request & { user?: any },
+  ) {
     try {
       // allow employeeId in body; actor may be the same as token user
-      const actor = req?.user?.sub ? Number(req.user.sub) : undefined;
       const res = await this.adminService.clockAttendance(body || {});
       return res;
     } catch (e: any) {
       if (e instanceof BadRequestException) throw e;
       Logger.error('Failed to clock attendance', e, 'AdminController');
-      throw new InternalServerErrorException(e?.message ?? 'Failed to clock attendance');
+      throw new InternalServerErrorException(
+        e?.message ?? 'Failed to clock attendance',
+      );
     }
   }
 
@@ -73,12 +81,16 @@ export class AdminController {
   async getAttendance(@Query() query: any) {
     try {
       const date = query?.date ? String(query.date) : undefined;
-      const employeeId = query?.employeeId ? Number(query.employeeId) : undefined;
+      const employeeId = query?.employeeId
+        ? Number(query.employeeId)
+        : undefined;
       return await this.adminService.getAttendance({ date, employeeId });
     } catch (e: any) {
       if (e instanceof BadRequestException) throw e;
       Logger.error('Failed to get attendance', e, 'AdminController');
-      throw new InternalServerErrorException(e?.message ?? 'Failed getting attendance');
+      throw new InternalServerErrorException(
+        e?.message ?? 'Failed getting attendance',
+      );
     }
   }
 
@@ -87,15 +99,26 @@ export class AdminController {
   @Post('attendance/mark-absent')
   async markAbsent(@Body() body: any, @Req() req: Request & { user?: any }) {
     try {
-      const employeeIds = Array.isArray(body?.employeeIds) ? body.employeeIds.map((v: any) => Number(v)).filter((n: number) => Number.isFinite(n)) : [];
-      if (!employeeIds.length) throw new BadRequestException('employeeIds is required');
+      const employeeIds = Array.isArray(body?.employeeIds)
+        ? body.employeeIds
+            .map((v: any) => Number(v))
+            .filter((n: number) => Number.isFinite(n))
+        : [];
+      if (!employeeIds.length)
+        throw new BadRequestException('employeeIds is required');
       const date = body?.date ? String(body.date) : undefined;
       const adminId = req?.user?.sub ? Number(req.user.sub) : undefined;
-      return await this.adminService.markAbsentBatch(employeeIds, date, adminId);
+      return await this.adminService.markAbsentBatch(
+        employeeIds,
+        date,
+        adminId,
+      );
     } catch (e: any) {
       if (e instanceof BadRequestException) throw e;
       Logger.error('Failed to mark absent', e, 'AdminController');
-      throw new InternalServerErrorException(e?.message ?? 'Failed marking absent');
+      throw new InternalServerErrorException(
+        e?.message ?? 'Failed marking absent',
+      );
     }
   }
 
@@ -105,7 +128,9 @@ export class AdminController {
     try {
       return await this.adminService.listChats();
     } catch (e: any) {
-      throw new InternalServerErrorException(e?.message ?? 'Failed listing chats');
+      throw new InternalServerErrorException(
+        e?.message ?? 'Failed listing chats',
+      );
     }
   }
 
@@ -116,7 +141,9 @@ export class AdminController {
       return await this.adminService.getChatPreviews();
     } catch (e: any) {
       Logger.error('Failed to get chat previews', e, 'AdminController');
-      throw new InternalServerErrorException(e?.message ?? 'Failed getting chat previews');
+      throw new InternalServerErrorException(
+        e?.message ?? 'Failed getting chat previews',
+      );
     }
   }
 
@@ -129,32 +156,56 @@ export class AdminController {
       return await this.adminService.getChatMessages(chatId);
     } catch (e: any) {
       if (e instanceof BadRequestException) throw e;
-      throw new InternalServerErrorException(e?.message ?? 'Failed listing messages');
+      throw new InternalServerErrorException(
+        e?.message ?? 'Failed listing messages',
+      );
     }
   }
 
   // Persist a batch of buffered messages (sent by client when user exits a convo)
   @UseGuards(AuthGuard)
   @Post('chats/persist')
-  async persistBufferedChats(@Body() body: any, @Req() req: Request & { user?: any }) {
+  async persistBufferedChats(
+    @Body() body: any,
+    @Req() req: Request & { user?: any },
+  ) {
     try {
       const senderId = req?.user?.sub ? Number(req.user.sub) : undefined;
       const msgs = Array.isArray(body?.messages) ? body.messages : [];
       if (!msgs.length) throw new BadRequestException('messages is required');
-      Logger.log(`persistBufferedChats: received ${msgs.length} messages from sender=${senderId}`, 'AdminController');
-      try { Logger.log(`persistBufferedChats: sample tempIds=${msgs.slice(0,5).map((m:any)=>m?.tempId||m?.content?.slice(0,20)).join(',')}`, 'AdminController'); } catch {}
+      Logger.log(
+        `persistBufferedChats: received ${msgs.length} messages from sender=${senderId}`,
+        'AdminController',
+      );
+      try {
+        Logger.log(
+          `persistBufferedChats: sample tempIds=${msgs
+            .slice(0, 5)
+            .map((m: any) => m?.tempId || m?.content?.slice(0, 20))
+            .join(',')}`,
+          'AdminController',
+        );
+      } catch (_err) {
+        void _err;
+      }
       return await this.adminService.persistBufferedMessages(msgs, senderId);
     } catch (e: any) {
       if (e instanceof BadRequestException) throw e;
       Logger.error('Failed to persist buffered chats', e, 'AdminController');
-      throw new InternalServerErrorException(e?.message ?? 'Failed persisting buffered chats');
+      throw new InternalServerErrorException(
+        e?.message ?? 'Failed persisting buffered chats',
+      );
     }
   }
 
   // Post a message to a chat (admin)
   @UseGuards(AuthGuard)
   @Post('chats/:chatId/messages')
-  async postChatMessage(@Param('chatId') chatIdStr: string, @Body() body: any, @Req() req: Request & { user?: any }) {
+  async postChatMessage(
+    @Param('chatId') chatIdStr: string,
+    @Body() body: any,
+    @Req() req: Request & { user?: any },
+  ) {
     try {
       const chatId = Number(chatIdStr);
       if (Number.isNaN(chatId)) throw new BadRequestException('Invalid chatId');
@@ -164,7 +215,9 @@ export class AdminController {
       return await this.adminService.postChatMessage(chatId, content, senderId);
     } catch (e: any) {
       if (e instanceof BadRequestException) throw e;
-      throw new InternalServerErrorException(e?.message ?? 'Failed posting message');
+      throw new InternalServerErrorException(
+        e?.message ?? 'Failed posting message',
+      );
     }
   }
 
@@ -179,49 +232,75 @@ export class AdminController {
       return await this.adminService.broadcastMessage(content, senderId);
     } catch (e: any) {
       if (e instanceof BadRequestException) throw e;
-      throw new InternalServerErrorException(e?.message ?? 'Failed broadcasting message');
+      throw new InternalServerErrorException(
+        e?.message ?? 'Failed broadcasting message',
+      );
     }
-  } 
+  }
 
   // Send direct message to a specific employee (one-to-one)
   @UseGuards(AuthGuard)
   @Post('chats/direct/:employeeId/messages')
-  async postDirectMessage(@Param('employeeId') employeeIdStr: string, @Body() body: any, @Req() req: Request & { user?: any }) {
+  async postDirectMessage(
+    @Param('employeeId') employeeIdStr: string,
+    @Body() body: any,
+    @Req() req: Request & { user?: any },
+  ) {
     try {
       const employeeId = Number(employeeIdStr);
-      if (Number.isNaN(employeeId)) throw new BadRequestException('Invalid employeeId');
+      if (Number.isNaN(employeeId))
+        throw new BadRequestException('Invalid employeeId');
       const content = String(body?.content ?? '');
       if (!content) throw new BadRequestException('content is required');
       const senderId = req?.user?.sub ? Number(req.user.sub) : undefined;
-      return await this.adminService.postDirectMessage(employeeId, content, senderId);
+      return await this.adminService.postDirectMessage(
+        employeeId,
+        content,
+        senderId,
+      );
     } catch (e: any) {
       if (e instanceof BadRequestException) throw e;
-      throw new InternalServerErrorException(e?.message ?? 'Failed posting direct message');
+      throw new InternalServerErrorException(
+        e?.message ?? 'Failed posting direct message',
+      );
     }
   }
 
   // Get direct messages between authenticated user and target employee
   @UseGuards(AuthGuard)
   @Get('chats/direct/:employeeId/messages')
-  async getDirectMessages(@Param('employeeId') employeeIdStr: string, @Req() req: Request & { user?: any }) {
+  async getDirectMessages(
+    @Param('employeeId') employeeIdStr: string,
+    @Req() req: Request & { user?: any },
+  ) {
     try {
       const employeeId = Number(employeeIdStr);
-      if (Number.isNaN(employeeId)) throw new BadRequestException('Invalid employeeId');
+      if (Number.isNaN(employeeId))
+        throw new BadRequestException('Invalid employeeId');
       const senderId = req?.user?.sub ? Number(req.user.sub) : undefined;
       if (!senderId) throw new BadRequestException('senderId missing');
       return await this.adminService.getDirectMessages(employeeId, senderId);
     } catch (e: any) {
       if (e instanceof BadRequestException) throw e;
-      throw new InternalServerErrorException(e?.message ?? 'Failed getting direct messages');
+      throw new InternalServerErrorException(
+        e?.message ?? 'Failed getting direct messages',
+      );
     }
   }
 
   // SSE stream for chat events (connect with EventSource). Accepts ?token= for environments where
   // Authorization header can't be set (EventSource). Falls back to req.user when present.
   @Get('chats/stream')
-  async chatStream(@Req() req: Request & { user?: any }, @Res() res: any, @Query('token') token?: string) {
+  async chatStream(
+    @Req() req: Request & { user?: any },
+    @Res() res: any,
+    @Query('token') token?: string,
+  ) {
     try {
-      Logger.log(`chatStream: incoming stream ip=${(req as any)?.socket?.remoteAddress} tokenPresent=${!!token} userPresent=${!!req?.user}`, 'AdminController');
+      Logger.log(
+        `chatStream: incoming stream ip=${(req as any)?.socket?.remoteAddress} tokenPresent=${!!token} userPresent=${!!req?.user}`,
+        'AdminController',
+      );
       let userId = req?.user?.sub;
       if (!userId) {
         if (!token) {
@@ -229,22 +308,28 @@ export class AdminController {
           return;
         }
         try {
-          const payload = this.jwtService.verify<{ sub: number }>(String(token));
+          const payload = this.jwtService.verify<{ sub: number }>(
+            String(token),
+          );
           userId = payload?.sub;
         } catch (e) {
           res.status(401).send('invalid token');
           return;
         }
       }
-  // register SSE connection
-  this.chatService.subscribe(res as any, Number(userId));
-  // keep the handler open by returning a never-resolving promise so Nest
-  // doesn't automatically finish the response and trigger `finish`.
-  // This keeps the request handler active while the SSE connection is live.
-  return new Promise(() => {});
+      // register SSE connection
+      this.chatService.subscribe(res, Number(userId));
+      // keep the handler open by returning a never-resolving promise so Nest
+      // doesn't automatically finish the response and trigger `finish`.
+      // This keeps the request handler active while the SSE connection is live.
+      return new Promise(() => {});
     } catch (e: any) {
       Logger.error('Failed to open chat SSE stream', e, 'AdminController');
-      try { res.status(500).send('failed'); } catch {}
+      try {
+        res.status(500).send('failed');
+      } catch (_err) {
+        void _err;
+      }
     }
   }
 
@@ -312,14 +397,26 @@ export class AdminController {
   @Post('bays/:bayNo/override')
   async overrideBay(@Param('bayNo') bayNo: string, @Body() body: any) {
     try {
-      Logger.log(`admin.overrideBay called for bay=${bayNo} body=${JSON.stringify(body)}`, 'AdminController');
+      Logger.log(
+        `admin.overrideBay called for bay=${bayNo} body=${JSON.stringify(body)}`,
+        'AdminController',
+      );
       const { action, adminId } = body || {};
       // accept optional name fields for reservations: name, nickname, playerName
-      const reserveName = body?.name ?? body?.nickname ?? body?.playerName ?? null;
+      const reserveName =
+        body?.name ?? body?.nickname ?? body?.playerName ?? null;
       if (!action || typeof action !== 'string')
         throw new BadRequestException('Action is required');
-      const res = await this.adminService.overrideBay(bayNo, action, adminId, reserveName);
-      Logger.log(`admin.overrideBay result for bay=${bayNo} action=${action} result=${JSON.stringify(res)}`, 'AdminController');
+      const res = await this.adminService.overrideBay(
+        bayNo,
+        action,
+        adminId,
+        reserveName,
+      );
+      Logger.log(
+        `admin.overrideBay result for bay=${bayNo} action=${action} result=${JSON.stringify(res)}`,
+        'AdminController',
+      );
       return res;
     } catch (e: any) {
       if (e instanceof BadRequestException) throw e;
@@ -366,12 +463,14 @@ export class AdminController {
 
   // Debug: return current SSE clients snapshot (employeeId -> connections)
   @Get('debug/sse-snapshot')
-  async sseSnapshot() {
+  sseSnapshot() {
     try {
       return { ok: true, clients: this.chatService.getClientSnapshot() };
     } catch (e: any) {
       Logger.error('Failed to get SSE snapshot', e, 'AdminController');
-      throw new InternalServerErrorException(e?.message ?? 'Failed retrieving SSE snapshot');
+      throw new InternalServerErrorException(
+        e?.message ?? 'Failed retrieving SSE snapshot',
+      );
     }
   }
 
@@ -406,7 +505,10 @@ export class AdminController {
       }),
       fileFilter: (req, file, cb) => {
         if (!file.mimetype || !file.mimetype.startsWith('image/')) {
-          return cb(new BadRequestException('Only image files are allowed'), false);
+          return cb(
+            new BadRequestException('Only image files are allowed'),
+            false,
+          );
         }
         return cb(null, true);
       },
@@ -421,28 +523,36 @@ export class AdminController {
       const host = req.get('host') || `localhost:${process.env.PORT ?? 3000}`;
       const url = `${proto}://${host}/uploads/${file.filename}`;
 
-  // Persist the URL and also store the raw filesystem path to the uploaded file.
-  // The raw path can be useful for local dev and for workflows that want the
-  // actual file location. Note: storing absolute filesystem paths is
-  // environment-specific — production deployments should prefer an
-  // accessible HTTP URL (sealUrl).
-  const serverWebPath = `/uploads/${file.filename}`;
-  // Persist the repo-relative uploads path so the frontend can load via
-  // ../../../Backend/uploads/<filename> as requested (no absolute IP or FS path).
-  const serverRepoRelative = `../../../Backend/uploads/${file.filename}`;
-  // Log what will be persisted so operators can see the stored paths in logs
-  Logger.log(`Persisting seal paths -> web: ${serverWebPath}, repoRelative: ${serverRepoRelative}`, 'AdminController');
-  await this.adminService.updateSettings({ sealUrl: url, sealPath: serverRepoRelative });
+      // Persist the URL and also store the raw filesystem path to the uploaded file.
+      // The raw path can be useful for local dev and for workflows that want the
+      // actual file location. Note: storing absolute filesystem paths is
+      // environment-specific — production deployments should prefer an
+      // accessible HTTP URL (sealUrl).
+      const serverWebPath = `/uploads/${file.filename}`;
+      // Persist the repo-relative uploads path so the frontend can load via
+      // ../../../Backend/uploads/<filename> as requested (no absolute IP or FS path).
+      const serverRepoRelative = `../../../Backend/uploads/${file.filename}`;
+      // Log what will be persisted so operators can see the stored paths in logs
+      Logger.log(
+        `Persisting seal paths -> web: ${serverWebPath}, repoRelative: ${serverRepoRelative}`,
+        'AdminController',
+      );
+      await this.adminService.updateSettings({
+        sealUrl: url,
+        sealPath: serverRepoRelative,
+      });
 
-  // Return only the persisted repo-relative path so callers can immediately
-  // use the DB-stored value (e.g. frontend can read `path` and update
-  // its local settings preview). We intentionally omit the public URL to
-  // simplify the contract and avoid relying on host/protocol values.
-  return { ok: true, path: serverRepoRelative };
+      // Return only the persisted repo-relative path so callers can immediately
+      // use the DB-stored value (e.g. frontend can read `path` and update
+      // its local settings preview). We intentionally omit the public URL to
+      // simplify the contract and avoid relying on host/protocol values.
+      return { ok: true, path: serverRepoRelative };
     } catch (e: any) {
       Logger.error('Failed uploading seal', e, 'AdminController');
       if (e instanceof BadRequestException) throw e;
-      throw new InternalServerErrorException(e?.message ?? 'Failed uploading seal');
+      throw new InternalServerErrorException(
+        e?.message ?? 'Failed uploading seal',
+      );
     }
   }
 
@@ -450,7 +560,11 @@ export class AdminController {
   @Get('reports/summary')
   async reportsSummary(@Query() query: any) {
     try {
-      const opts = { timeRange: String(query?.timeRange ?? ''), sessionType: String(query?.sessionType ?? ''), bay: query?.bay };
+      const opts = {
+        timeRange: String(query?.timeRange ?? ''),
+        sessionType: String(query?.sessionType ?? ''),
+        bay: query?.bay,
+      };
       return await this.adminService.getReportsSummary(opts);
     } catch (e: any) {
       Logger.error('Failed to get reports summary', e, 'AdminController');
@@ -486,31 +600,52 @@ export class AdminController {
       const startDate = query?.startDate ? String(query.startDate) : undefined;
       const endDate = query?.endDate ? String(query.endDate) : undefined;
       const userId = query?.userId ? Number(query.userId) : undefined;
-      return await this.adminService.getAuditLogs({ limit, startDate, endDate, userId });
+      return await this.adminService.getAuditLogs({
+        limit,
+        startDate,
+        endDate,
+        userId,
+      });
     } catch (e: any) {
       Logger.error('Failed to get audit logs', e, 'AdminController');
-      throw new InternalServerErrorException(e && e.message ? e.message : 'Failed getting audit logs');
+      throw new InternalServerErrorException(
+        e && e.message ? e.message : 'Failed getting audit logs',
+      );
     }
   }
 
   // Update session/player details (player nickname and assigned serviceman)
   @UseGuards(AuthGuard)
   @Patch('reports/sessions/:id')
-  async patchSession(@Param('id') id: string, @Body() body: any, @Req() req: Request & { user?: any }) {
+  async patchSession(
+    @Param('id') id: string,
+    @Body() body: any,
+    @Req() req: Request & { user?: any },
+  ) {
     try {
       const adminId = req?.user?.sub ? Number(req.user.sub) : undefined;
-      return await this.adminService.updateSession(String(id), body || {}, adminId);
+      return await this.adminService.updateSession(
+        String(id),
+        body || {},
+        adminId,
+      );
     } catch (e: any) {
       if (e instanceof BadRequestException) throw e;
       Logger.error('Failed to patch session', e, 'AdminController');
-      throw new InternalServerErrorException(e?.message ?? 'Failed patching session');
+      throw new InternalServerErrorException(
+        e?.message ?? 'Failed patching session',
+      );
     }
   }
 
   // Patch attendance record (admin only)
   @UseGuards(AuthGuard)
   @Patch('attendance/:id')
-  async patchAttendance(@Param('id') idStr: string, @Body() body: any, @Req() req: Request & { user?: any }) {
+  async patchAttendance(
+    @Param('id') idStr: string,
+    @Body() body: any,
+    @Req() req: Request & { user?: any },
+  ) {
     try {
       const id = Number(idStr);
       if (Number.isNaN(id)) throw new BadRequestException('Invalid id');
@@ -519,46 +654,68 @@ export class AdminController {
     } catch (e: any) {
       if (e instanceof BadRequestException) throw e;
       Logger.error('Failed to patch attendance', e, 'AdminController');
-      throw new InternalServerErrorException(e?.message ?? 'Failed patching attendance');
+      throw new InternalServerErrorException(
+        e?.message ?? 'Failed patching attendance',
+      );
     }
   }
 
   // Export report (returns CSV text in body)
   @Post('reports/export')
-  async exportReport(@Body() body: any, @Res() res: any, @Query('file') file?: string, @Query('format') format?: string) {
+  async exportReport(
+    @Body() body: any,
+    @Res() res: any,
+    @Query('file') file?: string,
+    @Query('format') format?: string,
+  ) {
     try {
       const csv = await this.adminService.exportReport(body || {});
       const reportName = `report-${String(body?.reportType ?? 'report')}`;
 
       // If PDF requested and file-mode, generate a PDF server-side and stream it
-      if ((String(file) === '1' || String(file) === 'true') && String(format).toLowerCase() === 'pdf') {
+      if (
+        (String(file) === '1' || String(file) === 'true') &&
+        String(format).toLowerCase() === 'pdf'
+      ) {
         try {
           // lazy import PDFKit to avoid requiring it unless needed
-          // eslint-disable-next-line @typescript-eslint/no-var-requires
-          const PDFDocument = require('pdfkit');
+
+          const { default: PDFDocument } = await import('pdfkit');
           const doc = new PDFDocument({ autoFirstPage: false });
           const chunks: Buffer[] = [];
           // capture data
-          // @ts-ignore
+          // runtime event listener type may be loose here
           doc.on('data', (chunk) => chunks.push(chunk));
           // when finished, send the buffer
           doc.on('end', () => {
             try {
               const pdfBuf = Buffer.concat(chunks);
               res.setHeader('Content-Type', 'application/pdf');
-              res.setHeader('Content-Disposition', `attachment; filename="${reportName}.pdf"`);
+              res.setHeader(
+                'Content-Disposition',
+                `attachment; filename="${reportName}.pdf"`,
+              );
               res.send(pdfBuf);
             } catch (e) {
               Logger.error('Failed to send PDF buffer', e, 'AdminController');
-              try { res.status(500).send('failed generating pdf'); } catch {}
+              try {
+                res.status(500).send('failed generating pdf');
+              } catch (_err) {
+                void _err;
+              }
             }
           });
 
           // Build a simple PDF: title and CSV as preformatted text
           doc.addPage({ size: 'A4', margin: 40 });
-          doc.fontSize(18).text(String(body?.reportName ?? reportName), { underline: true });
+          doc
+            .fontSize(18)
+            .text(String(body?.reportName ?? reportName), { underline: true });
           doc.moveDown();
-          doc.fontSize(10).font('Courier').text(String(csv || ''), { lineBreak: true });
+          doc
+            .fontSize(10)
+            .font('Courier')
+            .text(String(csv || ''), { lineBreak: true });
           doc.end();
           return;
         } catch (e) {
@@ -571,7 +728,10 @@ export class AdminController {
       if (String(file) === '1' || String(file) === 'true') {
         try {
           res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-          res.setHeader('Content-Disposition', `attachment; filename="${reportName}.csv"`);
+          res.setHeader(
+            'Content-Disposition',
+            `attachment; filename="${reportName}.csv"`,
+          );
           res.send(csv);
           return;
         } catch (e) {
@@ -598,7 +758,9 @@ export class AdminController {
       return await this.adminService.getTimeSeries(opts);
     } catch (e: any) {
       Logger.error('Failed to get timeseries', e, 'AdminController');
-      throw new InternalServerErrorException(e && e.message ? e.message : 'Failed getting timeseries');
+      throw new InternalServerErrorException(
+        e && e.message ? e.message : 'Failed getting timeseries',
+      );
     }
   }
 
@@ -610,7 +772,9 @@ export class AdminController {
       return await this.adminService.getBayUsage(opts);
     } catch (e: any) {
       Logger.error('Failed to get bay usage', e, 'AdminController');
-      throw new InternalServerErrorException(e && e.message ? e.message : 'Failed getting bay usage');
+      throw new InternalServerErrorException(
+        e && e.message ? e.message : 'Failed getting bay usage',
+      );
     }
   }
 
@@ -619,14 +783,22 @@ export class AdminController {
   @Post('sessions')
   async createSession(@Body() body: any) {
     try {
-      Logger.log(`admin.createSession called body=${JSON.stringify(body)}`, 'AdminController');
+      Logger.log(
+        `admin.createSession called body=${JSON.stringify(body)}`,
+        'AdminController',
+      );
       const res = await this.adminService.createUnassignedSession(body || {});
-      Logger.log(`admin.createSession result=${JSON.stringify(res)}`, 'AdminController');
+      Logger.log(
+        `admin.createSession result=${JSON.stringify(res)}`,
+        'AdminController',
+      );
       return res;
     } catch (e: any) {
       if (e instanceof BadRequestException) throw e;
       Logger.error('Failed creating session', e, 'AdminController');
-      throw new InternalServerErrorException(e?.message ?? 'Failed creating session');
+      throw new InternalServerErrorException(
+        e?.message ?? 'Failed creating session',
+      );
     }
   }
 
@@ -634,15 +806,26 @@ export class AdminController {
   @Post('bays/:bayNo/start')
   async startBaySession(@Param('bayNo') bayNo: string, @Body() body: any) {
     try {
-      Logger.log(`admin.startBaySession called for bay=${bayNo} body=${JSON.stringify(body)}`, 'AdminController');
+      Logger.log(
+        `admin.startBaySession called for bay=${bayNo} body=${JSON.stringify(body)}`,
+        'AdminController',
+      );
       // body may contain: nickname, full_name, end_time (ISO), price_per_hour, servicemanId, dispatcherId
-      const res = await this.adminService.startSession(String(bayNo), body || {});
-      Logger.log(`admin.startBaySession result for bay=${bayNo} result=${JSON.stringify(res)}`, 'AdminController');
+      const res = await this.adminService.startSession(
+        String(bayNo),
+        body || {},
+      );
+      Logger.log(
+        `admin.startBaySession result for bay=${bayNo} result=${JSON.stringify(res)}`,
+        'AdminController',
+      );
       return res;
     } catch (e: any) {
       if (e instanceof BadRequestException) throw e;
       Logger.error('Failed to start session', e, 'AdminController');
-      throw new InternalServerErrorException(e?.message ?? 'Failed to start session');
+      throw new InternalServerErrorException(
+        e?.message ?? 'Failed to start session',
+      );
     }
   }
 
@@ -650,33 +833,60 @@ export class AdminController {
   @Get('debug/bay/:bayNo')
   async debugBay(@Param('bayNo') bayNo: string, @Query('last') last?: string) {
     try {
-      Logger.log(`admin.debugBay called for bay=${bayNo} last=${String(last ?? '')}`, 'AdminController');
+      Logger.log(
+        `admin.debugBay called for bay=${bayNo} last=${String(last ?? '')}`,
+        'AdminController',
+      );
       const n = last ? Number(last) : 10;
-      const res = await this.adminService.getBayDebug(String(bayNo), Number(n || 10));
-      Logger.log(`admin.debugBay result for bay=${bayNo} result=${JSON.stringify(res?.overviewEntry ?? { ok: false })}`, 'AdminController');
+      const res = await this.adminService.getBayDebug(
+        String(bayNo),
+        Number(n || 10),
+      );
+      Logger.log(
+        `admin.debugBay result for bay=${bayNo} result=${JSON.stringify(res?.overviewEntry ?? { ok: false })}`,
+        'AdminController',
+      );
       return res;
     } catch (e: any) {
       if (e instanceof BadRequestException) throw e;
       Logger.error('Failed to get bay debug', e, 'AdminController');
-      throw new InternalServerErrorException(e?.message ?? 'Failed to get bay debug');
+      throw new InternalServerErrorException(
+        e?.message ?? 'Failed to get bay debug',
+      );
     }
   }
 
   @UseGuards(AuthGuard)
   @Post('bays/:bayNo/hand-over')
-  async handOver(@Param('bayNo') bayNo: string, @Body() body: any, @Req() req: Request & { user?: any }) {
+  async handOver(
+    @Param('bayNo') bayNo: string,
+    @Body() body: any,
+    @Req() req: Request & { user?: any },
+  ) {
     try {
       const handlerId = req?.user?.sub ? Number(req.user.sub) : undefined;
       const payload = body || {};
-      Logger.log(`admin.handOver called bay=${bayNo} handler=${handlerId} payload=${JSON.stringify(payload)}`, 'AdminController');
-      const res = await this.adminService.createBallTransactionForBay(String(bayNo), payload, handlerId);
-      Logger.log(`admin.handOver result bay=${bayNo} handler=${handlerId} result=${JSON.stringify(res)}`, 'AdminController');
+      Logger.log(
+        `admin.handOver called bay=${bayNo} handler=${handlerId} payload=${JSON.stringify(payload)}`,
+        'AdminController',
+      );
+      const res = await this.adminService.createBallTransactionForBay(
+        String(bayNo),
+        payload,
+        handlerId,
+      );
+      Logger.log(
+        `admin.handOver result bay=${bayNo} handler=${handlerId} result=${JSON.stringify(res)}`,
+        'AdminController',
+      );
       return res;
     } catch (e: any) {
       if (e instanceof BadRequestException) throw e;
       Logger.error('Failed to hand over bucket', e, 'AdminController');
       // Include error message in response for client diagnostics (non-sensitive)
-      throw new InternalServerErrorException(e?.message ?? 'Failed handing over bucket');
+      throw new InternalServerErrorException(
+        e?.message ?? 'Failed handing over bucket',
+      );
     }
   }
 }

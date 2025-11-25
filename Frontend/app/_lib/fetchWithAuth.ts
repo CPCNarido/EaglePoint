@@ -1,4 +1,4 @@
-import { Platform } from 'react-native';
+// Platform import removed; not needed in this helper
 
 // Helper to call fetch and automatically attach Authorization header when an
 // access token is saved in localStorage (web) or AsyncStorage (native).
@@ -20,8 +20,7 @@ export async function fetchWithAuth(input: RequestInfo, init?: RequestInit) {
           return fetch(input, opts);
         }
       }
-    } catch (e) {
-      // ignore
+    } catch (_e) { void _e; // ignore
     }
 
     try {
@@ -35,8 +34,7 @@ export async function fetchWithAuth(input: RequestInfo, init?: RequestInit) {
           opts.headers = { ...(opts.headers || {}), Authorization: `Bearer ${t}` } as any;
         }
       }
-    } catch (e) {
-      // ignore
+    } catch (_e) { void _e; // ignore
     }
   }
 

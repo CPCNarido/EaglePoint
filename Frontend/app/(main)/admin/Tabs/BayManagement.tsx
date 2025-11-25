@@ -188,6 +188,7 @@ export default function BayManagement() {
   }, [search, filter, bays.length]);
 
   const paginatedBays = (displayedBays || []).slice((page - 1) * pageSize, page * pageSize);
+  void paginatedBays;
 
   // Cleanup timers
   useEffect(() => {
@@ -464,7 +465,7 @@ export default function BayManagement() {
                           }
                         } catch {}
                     }
-                  } catch (e) {
+                  } catch (e) { void e;
                     showError(e, 'Error performing override');
                   } finally {
                     setOverrideBusy(false);

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { View, Text, TouchableOpacity, ScrollView, Platform, StyleSheet, useWindowDimensions, Animated, Image, ImageBackground, AppState, Pressable, TextInput } from "react-native";
+import { View, Text, TouchableOpacity, ScrollView, Platform, StyleSheet, useWindowDimensions, Animated, Image, ImageBackground, AppState, Pressable } from "react-native";
 import { tw } from 'react-native-tailwindcss';
 import { useRouter } from "expo-router";
 import { useNavigation } from '@react-navigation/native';
@@ -10,20 +10,21 @@ import { buildNotification } from '../../lib/notification';
 import StaffManagement from "./Tabs/StaffManagement";
 import BayManagement from "./Tabs/BayManagement";
 import SystemSettings from "./Tabs/SystemSettingsTab";
+// Use the full Reports & Analytics tab implementation.
 import ReportsAndAnalytics from "./Tabs/ReportsAndAnalytics";
 import TeamChats from "./Tabs/TeamChats";
 import AuditLogs from "./Tabs/AuditLogs";
-import OverviewCard from '../../components/OverviewCard';
 import QuickOverview from '../../components/QuickOverview';
-import Legend from './components/Legend';
-import InfoPanel from './components/InfoPanel';
 import ConfirmModal from '../../components/ConfirmModal';
 import { clamp, getColorFromStatus, legendMatchesStatus } from '../utils/uiHelpers';
 import { enterFullScreen, exitFullScreen, reloadApp } from '../utils/fullscreen';
 import RealTimeBayOverview from '../../components/RealTimeBayOverview';
 
+// Mark imported helpers used to silence no-unused-vars where appropriate
+void reloadApp;
 
-type OverviewItem = { title: string; value: string; subtitle: string; color: string };
+
+// Removed unused type OverviewItem to avoid unused-type lint warnings
 
 export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState<string>("Dashboard");
@@ -39,7 +40,7 @@ export default function AdminDashboard() {
   const [logoutModalVisible, setLogoutModalVisible] = useState<boolean>(false);
 
   const performLogout = async () => {
-    try { setLogoutModalVisible(false); } catch {}
+    try { setLogoutModalVisible(false); } catch (_e) { void _e; }
   await logoutAndClear();
     router.replace('/');
   };
@@ -51,10 +52,15 @@ export default function AdminDashboard() {
     if ([8, 21, 22, 35].includes(num)) return { color: "#A3784E" }; // Assigned
     return { color: "#2E7D32" }; // Available
   };
+  void getBayStatus;
+
+  // Quietly reference some assigned-but-unused identifiers to silence lint warnings
+  
 
   // State from server
   const [overview, setOverview] = useState<any>(null);
   const [, setLoadingOverview] = useState(false);
+    void setLoadingOverview;
   // admin info
   const [adminName, setAdminName] = useState<string>('ADMIN');
   const [adminId, setAdminId] = useState<string>('');
@@ -66,18 +72,22 @@ export default function AdminDashboard() {
   // Selected bay for info popup
   const [selectedBay, setSelectedBay] = useState<number | null>(null);
   const [selectedBayDetails, setSelectedBayDetails] = useState<any>(null);
+  void setSelectedBay;
+  void selectedBayDetails;
   // width of the bay container to compute column-based offsets for InfoPanel
   const [bayContainerWidth, setBayContainerWidth] = useState<number>(0);
+    void bayContainerWidth; void setBayContainerWidth;
   const BAY_BOX_TOTAL = 45; // approximate bay width + horizontal margins (45 + 6)
+  void BAY_BOX_TOTAL;
   // Notifications for countdown alerts (10-minute warnings) and remaining-time map
-  const [notifications, setNotifications] = useState<Array<{ id: string; bay: number; message: string; when: number; threshold?: 't10' | 't5' | 't0' }>>([]);
+  const [notifications, setNotifications] = useState<{ id: string; bay: number; message: string; when: number; threshold?: 't10' | 't5' | 't0' }[]>([]);
   const [remainingMap, setRemainingMap] = useState<Record<number, number>>({});
   const notifiedRef = React.useRef<Record<number, Set<string>>>({});
 
   // (Testing helpers removed)
 
   const dismissNotification = (id: string) => {
-    try { setNotifications((prev) => (prev || []).filter((n) => n.id !== id)); } catch {}
+    try { setNotifications((prev) => (prev || []).filter((n) => n.id !== id)); } catch (_e) { void _e; }
   };
 
 
@@ -94,29 +104,27 @@ export default function AdminDashboard() {
   useEffect(() => {
     try {
       if ((notifications || []).length > 0 && !adminShowSavedNotification) {
-  setAdminShowSavedNotification(true);
-  // animate in
-  try { Animated.timing(notifAnimRef.current, { toValue: 1, duration: 220, useNativeDriver: Platform.OS !== 'web' }).start(); } catch {}
-        if (adminNotifTimer.current) { clearTimeout(adminNotifTimer.current as number); adminNotifTimer.current = null; }
-        adminNotifTimer.current = window.setTimeout(() => {
-          // animate out then remove first notification
-          try {
-            Animated.timing(notifAnimRef.current, { toValue: 0, duration: 300, useNativeDriver: Platform.OS !== 'web' }).start(() => {
-              setNotifications((prev) => (prev || []).slice(1));
-              setAdminShowSavedNotification(false);
-            });
-          } catch (e) {
-            // fallback immediate
-            setNotifications((prev) => (prev || []).slice(1));
-            setAdminShowSavedNotification(false);
-          }
-          adminNotifTimer.current = null;
-        }, ADMIN_NOTIF_DURATION_MS) as unknown as number;
+        setAdminShowSavedNotification(true);
+        try { Animated.timing(notifAnimRef.current, { toValue: 1, duration: 220, useNativeDriver: Platform.OS !== 'web' }).start(); } catch (_e) { void _e; }
+
+        // clear any existing timer and schedule a new one
+        try { if (adminNotifTimer.current) { clearTimeout(adminNotifTimer.current); adminNotifTimer.current = null; } } catch (_e) { void _e; }
+        try {
+          const id = window.setTimeout(() => {
+            try {
+              Animated.timing(notifAnimRef.current, { toValue: 0, duration: 300, useNativeDriver: Platform.OS !== 'web' }).start(() => {
+                try { setNotifications((prev) => (prev || []).slice(1)); } catch (_e) { void _e; }
+                try { setAdminShowSavedNotification(false); } catch (_e) { void _e; }
+              });
+            } catch (_e) {
+              try { setNotifications((prev) => (prev || []).slice(1)); } catch (_e) { void _e; }
+              try { setAdminShowSavedNotification(false); } catch (_e) { void _e; }
+            }
+          }, ADMIN_NOTIF_DURATION_MS);
+          adminNotifTimer.current = Number(id);
+        } catch (_e) { void _e; }
       }
-    } catch (e) {
-      // ignore
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    } catch (_e) { void _e; }
   }, [notifications]);
   // Prevent overlapping overview fetches
   const isFetchingRef = React.useRef(false);
@@ -131,9 +139,9 @@ export default function AdminDashboard() {
       lastInteractionRef.current = nowTs;
       if (!isFullscreen) {
         // best-effort entrance to fullscreen when user interacts
-        try { enterFullScreen(); } catch {}
+        try { enterFullScreen(); } catch (_e) { void _e; }
       }
-    } catch {}
+    } catch (_e) { void _e; }
   };
 
   // Keep a serialized snapshot of the last overview we saw so we can detect server-side changes.
@@ -162,7 +170,7 @@ export default function AdminDashboard() {
     } catch {}
 
     // Finally update overview state so UI refreshes the bay grid and derived maps
-    try { setOverview(newData); } catch {}
+    try { setOverview(newData); } catch (_e) { void _e; }
   };
 
   // Responsive helper: treat large screens/tablets specially
@@ -174,14 +182,18 @@ export default function AdminDashboard() {
   const badgeScale = clamp(width / 1200, 0.9, 1.3);
   const baseBadgeFont = isLargeTablet ? 14 : isTablet ? 12 : 10;
   const responsiveBadgeFontSize = Math.round(baseBadgeFont * badgeScale);
+  void responsiveBadgeFontSize;
+  void dismissNotification;
 
    const nudgeLeftPx = 8;
    const badgeFontOffsetPx = -4;
 
    const badgeMinWidth = 50;
    const badgeMinHeight = 15;
+  void badgeFontOffsetPx; void badgeMinWidth; void badgeMinHeight;
   const baseRight = isLargeTablet ? -18 : isTablet ? -12 : -8;
   const adjustedBadgeRight = baseRight + nudgeLeftPx; // less negative => moves left
+  void adjustedBadgeRight;
 
 
 
@@ -189,6 +201,7 @@ export default function AdminDashboard() {
   const [legendFilter, setLegendFilter] = useState<string[]>([]);
   // toggle between default legend and session-type legend
   const [showSessionLegend, setShowSessionLegend] = useState<boolean>(false);
+  void setLegendFilter;
 
   // Persist showSessionLegend across reloads using AsyncStorage
   useEffect(() => {
@@ -203,7 +216,7 @@ export default function AdminDashboard() {
         if (v !== null) {
           setShowSessionLegend(v === '1' || v === 'true');
         }
-      } catch (e) {
+      } catch (e) { void e;
         // ignore
       }
     })();
@@ -217,13 +230,14 @@ export default function AdminDashboard() {
         const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
         if (!AsyncStorage || !AsyncStorage.setItem) return;
         await AsyncStorage.setItem('admin:showSessionLegend', showSessionLegend ? '1' : '0');
-      } catch (e) {
+      } catch (e) { void e;
         // ignore
       }
     })();
   }, [showSessionLegend]);
   // Fullscreen state (toggle system UI + lock orientation)
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
+  void setIsFullscreen;
 
     // Animated values map for bay fill overlays. Keyed by `bay-{num}`.
     const bayAnimMap = React.useRef<Record<string, Animated.Value>>({});
@@ -241,7 +255,7 @@ export default function AdminDashboard() {
         if (hasPlayer && start && !end) return 'Open';
         if (end) return 'Timed';
         return null;
-      } catch (e) { return null; }
+      } catch (_e) { void _e; return null; }
     };
 
     // Animate bay overlay opacity when legendFilter or overview changes
@@ -280,7 +294,7 @@ export default function AdminDashboard() {
         if (!overview || !Array.isArray(overview.bays)) return;
         const nowTs = Date.now();
         const nextMap: Record<number, number> = {};
-        const newNotifs: Array<any> = [];
+        const newNotifs: any[] = [];
 
         for (const b of overview.bays) {
           const num = Number(b?.bay_number ?? b?.bay_id ?? NaN);
@@ -335,7 +349,7 @@ export default function AdminDashboard() {
 
         // update remaining map every tick
         setRemainingMap(nextMap);
-      } catch (e) { void e; }
+      } catch (_e) { void _e; }
     }, 1000);
     return () => clearInterval(iv);
   }, [overview]);
@@ -367,11 +381,11 @@ export default function AdminDashboard() {
         const dataJson = JSON.stringify(data);
         // If we've previously loaded an overview, treat a differing payload as a DB change and reload the app.
         if (prevOverviewJsonRef.current && prevOverviewJsonRef.current !== dataJson) {
-          try { applyOverviewUpdate(data); } catch {}
+          try { applyOverviewUpdate(data); } catch (_e) { void _e; }
           return;
         }
         prevOverviewJsonRef.current = dataJson;
-      } catch {}
+      } catch (_e) { void _e; }
       setOverview(data);
     } catch {
       setOverview(null);
@@ -394,14 +408,14 @@ export default function AdminDashboard() {
     // Debounce: wait 2s after an update event before reloading so DB writes have propagated
     let overviewUpdateTimer: any = null;
     const onOverviewUpdated = () => {
-      try { if (overviewUpdateTimer) clearTimeout(overviewUpdateTimer); } catch {}
+      try { if (overviewUpdateTimer) clearTimeout(overviewUpdateTimer); } catch (_e) { void _e; }
       overviewUpdateTimer = setTimeout(() => {
-        try { fetchOverview(); } catch {}
+        try { fetchOverview(); } catch (_e) { void _e; }
       }, 2000);
     };
     try {
       if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('overview:updated', onOverviewUpdated as EventListener);
-    } catch {}
+    } catch (_e) { void _e; }
 
     // fetch admin identity for sidebar
     const fetchAdmin = async () => {
@@ -420,7 +434,7 @@ export default function AdminDashboard() {
         try {
           const r = await fetchWithAuth(`${baseUrl}/api/admin/me`, { method: 'GET' });
           if (r.ok) d = await r.json();
-        } catch {}
+        } catch (_e) { void _e; }
         if (!d) {
           // Try bearer auth using saved access token (native clients)
           try {
@@ -454,10 +468,10 @@ export default function AdminDashboard() {
       clearInterval(interval);
       try {
         if (overviewUpdateTimer) clearTimeout(overviewUpdateTimer);
-      } catch {}
+      } catch (_e) { void _e; }
       try {
         if (typeof window !== 'undefined' && window.removeEventListener) window.removeEventListener('overview:updated', onOverviewUpdated as EventListener);
-      } catch {}
+      } catch (_e) { void _e; }
     };
   }, [fetchOverview]);
 
@@ -465,7 +479,7 @@ export default function AdminDashboard() {
   useEffect(() => {
     return () => {
       if (isFullscreen) {
-        try { exitFullScreen(); } catch {}
+        try { exitFullScreen(); } catch (_e) { void _e; }
       }
     };
   }, []);
@@ -482,7 +496,7 @@ export default function AdminDashboard() {
           const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
           const override = AsyncStorage ? await AsyncStorage.getItem('backendBaseUrlOverride') : null;
           if (override) baseUrl = override;
-        } catch {}
+        } catch (_e) { void _e; }
 
         // Only try SSE where EventSource exists (web or RN environment with polyfill)
         if (typeof EventSource !== 'undefined') {
@@ -491,14 +505,14 @@ export default function AdminDashboard() {
           let token: string | null = null;
           try {
             if (typeof window !== 'undefined' && window.localStorage) token = window.localStorage.getItem('authToken');
-          } catch {}
+          } catch (_e) { void _e; }
           if (!token) {
             try {
               // @ts-ignore
               const AsyncStorageModule = await import('@react-native-async-storage/async-storage').catch(() => null);
               const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
               if (AsyncStorage && AsyncStorage.getItem) token = await AsyncStorage.getItem('authToken');
-            } catch {}
+            } catch (_e) { void _e; }
           }
 
           const streamBase = baseUrl.replace(/\/$/, '');
@@ -515,19 +529,19 @@ export default function AdminDashboard() {
                   try {
                     const json = JSON.stringify(payload);
                     if (prevOverviewJsonRef.current && prevOverviewJsonRef.current !== json) {
-                      try { applyOverviewUpdate(payload); } catch {}
+                      try { applyOverviewUpdate(payload); } catch (_e) { void _e; }
                     } else {
                       setOverview(payload);
                       prevOverviewJsonRef.current = json;
                     }
-                  } catch {}
+                  } catch (_e) { void _e; }
                 })();
-              } catch {}
+              } catch (_e) { void _e; }
             };
             es.onerror = () => {
-              try { es.close(); } catch {}
+              try { es.close(); } catch (_e) { void _e; }
             };
-          } catch {}
+          } catch (_e) { void _e; }
         }
       } catch {}
     })();
@@ -544,7 +558,7 @@ export default function AdminDashboard() {
       if (parent && parent.setOptions) {
         parent.setOptions({ tabBarStyle: isFullscreen ? { display: 'none' } : undefined });
       }
-    } catch (e) {
+    } catch (e) { void e;
       // ignore if navigation parent isn't available
     }
   }, [isFullscreen, navigation]);
@@ -649,8 +663,9 @@ export default function AdminDashboard() {
         return '#2E7D32'; // Available green
       }
       return getColorFromStatus(String(b?.status ?? 'Available'));
-    } catch (e) { return '#2E7D32'; }
+    } catch (_e) { void _e; return '#2E7D32'; }
   };
+  void getAdminBayColor;
 
   const renderContent = () => {
     switch (activeTab) {
@@ -733,7 +748,7 @@ export default function AdminDashboard() {
         try { await settings.refresh(); } catch {}
         try { await fetchOverview(); } catch {}
       })();
-    } catch (e) {
+    } catch (e) { void e;
       // fallback to tab switch on error
       setActiveTab(name);
     }
@@ -832,15 +847,15 @@ export default function AdminDashboard() {
                     setNotifications((prev) => (prev || []).slice(1));
                     setAdminShowSavedNotification(false);
                   });
-                } catch (e) {
+                } catch (e) { void e;
                   setNotifications((prev) => (prev || []).slice(1));
                   setAdminShowSavedNotification(false);
                 }
               }, ADMIN_NOTIF_DURATION_MS) as unknown as number;
-            } catch (e) { /* ignore */ }
+            } catch (_e) { void _e; }
           }}
         >
-    <Animated.View style={[styles.notifBox, { opacity: notifAnimRef.current, transform: [{ translateY: notifAnimRef.current.interpolate({ inputRange: [0, 1], outputRange: [-8, 0] }) }] }] }>
+    <Animated.View style={[styles.notifBox, { opacity: notifAnimRef.current, transform: [{ translateY: notifAnimRef.current.interpolate({ inputRange: [0, 1], outputRange: [-8, 0] }) }] }]}>
             <TouchableOpacity
               style={styles.notifClose}
               onPress={() => {
@@ -852,7 +867,7 @@ export default function AdminDashboard() {
                     setNotifications((prev) => (prev || []).slice(1));
                     setAdminShowSavedNotification(false);
                   });
-                } catch (e) {
+                } catch (e) { void e;
                   setNotifications((prev) => (prev || []).slice(1));
                   setAdminShowSavedNotification(false);
                 }
@@ -907,7 +922,7 @@ export default function AdminDashboard() {
 (AdminDashboard as any).displayName = 'AdminDashboard';
 
 const styles = StyleSheet.create({
-  container: { flex: 1, flexDirection: "row", backgroundColor: "#F6F6F2" },
+  container: { flex: 1, flexDirection: "row", backgroundColor: "#F6F6F2"},
   sidebar: {
     width: 250,
     backgroundColor: "#1E2B20",
@@ -933,7 +948,7 @@ const styles = StyleSheet.create({
     height: 190,
     borderRadius: 12,
     marginBottom: 8,
-    marginTop:30,
+    marginTop:10,
     backgroundColor: 'transparent',
   },
   headerBannerOverlay: { flex: 1, justifyContent: 'space-between', padding: 16, alignItems: 'flex-start' },

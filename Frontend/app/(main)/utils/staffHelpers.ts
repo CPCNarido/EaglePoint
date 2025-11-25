@@ -10,9 +10,7 @@ export const isServicemanRole = (role: any): boolean => {
       s === 'servicemen' ||
       s.includes('serviceman')
     );
-  } catch (e) {
-    return false;
-  }
+  } catch (_e) { void _e; return false; }
 };
 
 export const isStaffActive = (item: any): boolean => {
@@ -24,9 +22,7 @@ export const isStaffActive = (item: any): boolean => {
     const st = String(item.status ?? '').toLowerCase();
     if (st === 'active') return true;
     return false;
-  } catch (e) {
-    return false;
-  }
+  } catch (_e) { void _e; return false; }
 };
 
 export const formatTimestamp = (ts: any): string => {
@@ -35,9 +31,7 @@ export const formatTimestamp = (ts: any): string => {
     const d = (ts instanceof Date) ? ts : new Date(String(ts));
     if (isNaN(d.getTime())) return String(ts);
     return d.toLocaleString();
-  } catch (e) {
-    return String(ts);
-  }
+  } catch (_e) { void _e; return String(ts); }
 };
 
   export const isBallHandlerRole = (role: any): boolean => {
@@ -45,9 +39,7 @@ export const formatTimestamp = (ts: any): string => {
     try {
       const s = String(role).toLowerCase().trim();
       return s === 'ballhandler' || s === 'ball handler' || s.includes('ballhandler') || s.includes('ball handler');
-    } catch (e) {
-      return false;
-    }
+    } catch (_e) { void _e; return false; }
   };
 
   export const isDispatcherRole = (role: any): boolean => {
@@ -55,9 +47,7 @@ export const formatTimestamp = (ts: any): string => {
     try {
       const s = String(role).toLowerCase().trim();
       return s === 'dispatcher' || s.includes('dispatcher');
-    } catch (e) {
-      return false;
-    }
+    } catch (_e) { void _e; return false; }
   };
 
   export const getRoleCategory = (role: any): string => {
@@ -66,7 +56,7 @@ export const formatTimestamp = (ts: any): string => {
       if (isBallHandlerRole(role)) return 'BallHandler';
       if (isDispatcherRole(role)) return 'Dispatcher';
       return 'Other';
-    } catch (e) { return 'Other'; }
+    } catch (_e) { void _e; return 'Other'; }
   };
 
 export default {

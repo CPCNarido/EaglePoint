@@ -5,26 +5,26 @@ export const reloadApp = async () => {
     if (typeof window !== 'undefined' && window.location && typeof (window.location as any).reload === 'function') {
       try { (window.location as any).reload(); return; } catch {}
     }
-  } catch {}
+  } catch (e) { void e; }
 
   try {
     // try common Expo reload mechanism if available
-    const Updates = (() => {
-      try { return require('expo-updates'); } catch { return null; }
-    })();
-    const upd = (Updates && (Updates as any).default) ? (Updates as any ).default : Updates;
+    // eslint-disable-next-line import/no-unresolved
+    const UpdatesModule = await import('expo-updates').catch(() => null);
+    const upd = (UpdatesModule && (UpdatesModule as any).default) ? (UpdatesModule as any).default : UpdatesModule;
     if (upd && typeof upd.reloadAsync === 'function') {
-      try { await upd.reloadAsync(); return; } catch {}
+      try { await upd.reloadAsync(); return; } catch (_e) { void _e; }
     }
-  } catch {}
+  } catch (e) { void e; }
 
-  try {
-    const RN = require('react-native');
-    const DevSettings = RN?.DevSettings ?? (RN as any)?.NativeModules?.DevSettings;
-    if (DevSettings && typeof DevSettings.reload === 'function') {
-      try { DevSettings.reload(); return; } catch {}
-    }
-  } catch {}
+    try {
+      const RNModule = await import('react-native').catch(() => null);
+      const RN: any = RNModule?.default ?? RNModule;
+      const DevSettings = RN?.DevSettings ?? (RN as any)?.NativeModules?.DevSettings;
+      if (DevSettings && typeof DevSettings.reload === 'function') {
+        try { DevSettings.reload(); return; } catch (_e) { void _e; }
+      }
+    } catch (_e) { void _e; }
 };
 
 export const enterFullScreen = async () => {
@@ -45,8 +45,8 @@ export const enterFullScreen = async () => {
     if (so && so.lockAsync && so.OrientationLock) {
       try { await so.lockAsync(so.OrientationLock.LANDSCAPE); } catch {}
     }
-  } catch (e) {
-    /* swallow - best-effort */
+  } catch (_e) {
+    void _e; /* swallow - best-effort */
   }
 };
 
@@ -68,8 +68,8 @@ export const exitFullScreen = async () => {
     if (so && so.lockAsync && so.OrientationLock) {
       try { await so.lockAsync(so.OrientationLock.DEFAULT); } catch {}
     }
-  } catch (e) {
-    /* swallow - best-effort */
+  } catch (_e) {
+    void _e; /* swallow - best-effort */
   }
 };
 

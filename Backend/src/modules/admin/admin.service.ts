@@ -9,28 +9,49 @@ import * as fs from 'fs';
 
 @Injectable()
 export class AdminService {
-  constructor(private prisma: PrismaService, private loggingService: LoggingService, private chatService: ChatService) {}
+  constructor(
+    private prisma: PrismaService,
+    private loggingService: LoggingService,
+    private chatService: ChatService,
+  ) {}
 
   // Return the public profile for a given employee id
   async getProfile(userId: number) {
     if (!userId) return null;
     const u = await this.prisma.employee.findUnique({
       where: { employee_id: userId },
-      select: { employee_id: true, full_name: true, username: true, role: true },
+      select: {
+        employee_id: true,
+        full_name: true,
+        username: true,
+        role: true,
+      },
     });
     if (!u) return null;
-    return { employee_id: u.employee_id, full_name: u.full_name, username: u.username, role: u.role };
+    return {
+      employee_id: u.employee_id,
+      full_name: u.full_name,
+      username: u.username,
+      role: u.role,
+    };
   }
 
   // Chat-related helpers
   async listChats() {
     // return simple room list
-    const rooms = await this.prisma.chatRoom.findMany({ select: { chat_id: true, name: true, is_group: true } });
-    return rooms.map((r: any) => ({ chat_id: r.chat_id, name: r.name, is_group: r.is_group }));
+    const rooms = await this.prisma.chatRoom.findMany({
+      select: { chat_id: true, name: true, is_group: true },
+    });
+    return rooms.map((r: any) => ({
+      chat_id: r.chat_id,
+      name: r.name,
+      is_group: r.is_group,
+    }));
   }
 
   async getChatMessages(chatId: number) {
-    if (!chatId && chatId !== 0) throw new BadRequestException('Invalid chat id');
+    if (!chatId && chatId !== 0)
+      throw new BadRequestException('Invalid chat id');
     const msgs = await this.prisma.chatMessage.findMany({
       where: { chat_id: chatId },
       include: { sender: true },
@@ -48,140 +69,300 @@ export class AdminService {
   }
 
   async postChatMessage(chatId: number, content: string, senderId?: number) {
-    if (!content || content.trim().length === 0) throw new BadRequestException('content is required');
+    if (!content || content.trim().length === 0)
+      throw new BadRequestException('content is required');
     if (!senderId) throw new BadRequestException('senderId is required');
     // ensure room exists (if chatId=0 is pseudo All Roles, try find/create)
     let roomId = chatId;
     if (chatId === 0) {
-      const existing = await this.prisma.chatRoom.findFirst({ where: { name: 'All Roles' } });
+      const existing = await this.prisma.chatRoom.findFirst({
+        where: { name: 'All Roles' },
+      });
       if (!existing) {
-        const created = await this.prisma.chatRoom.create({ data: { name: 'All Roles', is_group: true } });
+        const created = await this.prisma.chatRoom.create({
+          data: { name: 'All Roles', is_group: true },
+        });
         roomId = created.chat_id;
       } else roomId = existing.chat_id;
     }
 
-    const created = await this.prisma.chatMessage.create({ data: { chat_id: roomId, sender_id: senderId, content } });
+    const created = await this.prisma.chatMessage.create({
+      data: { chat_id: roomId, sender_id: senderId, content },
+    });
     // Resolve sender name for richer payloads sent to realtime transports
     let senderName: string | null = null;
     try {
-      const s = await this.prisma.employee.findUnique({ where: { employee_id: senderId } });
+      const s = await this.prisma.employee.findUnique({
+        where: { employee_id: senderId },
+      });
       senderName = s?.full_name ?? s?.username ?? null;
-    } catch (e) { void e; }
+    } catch (e) {
+      void e;
+    }
     // Optionally write a system log (best-effort)
     try {
-      await this.loggingService.writeLog(senderId ?? undefined, Role.Admin, `ChatMessage: chat:${roomId}`, `msg:${created.message_id}`);
-    } catch (e) { void e; }
+      await this.loggingService.writeLog(
+        senderId ?? undefined,
+        Role.Admin,
+        `ChatMessage: chat:${roomId}`,
+        `msg:${created.message_id}`,
+      );
+    } catch (e) {
+      void e;
+    }
     // Broadcast to connected clients (best-effort) with sender_name included
-    const notifyPayload = { message_id: created.message_id, chat_id: created.chat_id, sender_id: created.sender_id, sender_name: senderName, content: created.content, sent_at: created.sent_at };
-    try { await this.chatService.notifyNewMessage(notifyPayload); } catch (e) { void e; }
-  return notifyPayload;
+    const notifyPayload = {
+      message_id: created.message_id,
+      chat_id: created.chat_id,
+      sender_id: created.sender_id,
+      sender_name: senderName,
+      content: created.content,
+      sent_at: created.sent_at,
+    };
+    try {
+      await this.chatService.notifyNewMessage(notifyPayload);
+    } catch (e) {
+      void e;
+    }
+    return notifyPayload;
   }
 
   async broadcastMessage(content: string, senderId?: number) {
-    if (!content || content.trim().length === 0) throw new BadRequestException('content is required');
+    if (!content || content.trim().length === 0)
+      throw new BadRequestException('content is required');
     if (!senderId) throw new BadRequestException('senderId is required');
     // find or create an 'All Roles' room and post a message
-    let room = await this.prisma.chatRoom.findFirst({ where: { name: 'All Roles' } });
+    let room = await this.prisma.chatRoom.findFirst({
+      where: { name: 'All Roles' },
+    });
     if (!room) {
-      room = await this.prisma.chatRoom.create({ data: { name: 'All Roles', is_group: true } });
+      room = await this.prisma.chatRoom.create({
+        data: { name: 'All Roles', is_group: true },
+      });
     }
-  const created = await this.prisma.chatMessage.create({ data: { chat_id: room.chat_id, sender_id: senderId, content } });
-  try { await this.loggingService.writeLog(senderId ?? undefined, Role.Admin, `Broadcast: ${content?.slice(0, 80)}`, `broadcast:${created.message_id}`); } catch (e) { void e; }
-  try { await this.chatService.notifyNewMessage(created); } catch (e) { void e; }
-  return { ok: true, message_id: created.message_id, chat_id: room.chat_id, sender_id: created.sender_id };
+    const created = await this.prisma.chatMessage.create({
+      data: { chat_id: room.chat_id, sender_id: senderId, content },
+    });
+    try {
+      await this.loggingService.writeLog(
+        senderId ?? undefined,
+        Role.Admin,
+        `Broadcast: ${content?.slice(0, 80)}`,
+        `broadcast:${created.message_id}`,
+      );
+    } catch (e) {
+      void e;
+    }
+    try {
+      await this.chatService.notifyNewMessage(created);
+    } catch (e) {
+      void e;
+    }
+    return {
+      ok: true,
+      message_id: created.message_id,
+      chat_id: room.chat_id,
+      sender_id: created.sender_id,
+    };
   }
 
   // One-to-one direct message: find existing private chat (is_group = false) between the two
   // participants or create one, then post the message.
-  async postDirectMessage(targetEmployeeId: number, content: string, senderId?: number) {
-    if (!targetEmployeeId) throw new BadRequestException('targetEmployeeId is required');
-    if (!content || content.trim().length === 0) throw new BadRequestException('content is required');
+  async postDirectMessage(
+    targetEmployeeId: number,
+    content: string,
+    senderId?: number,
+  ) {
+    if (!targetEmployeeId)
+      throw new BadRequestException('targetEmployeeId is required');
+    if (!content || content.trim().length === 0)
+      throw new BadRequestException('content is required');
     if (!senderId) throw new BadRequestException('senderId is required');
 
     // ensure both employees exist
     const [a, b] = await Promise.all([
       this.prisma.employee.findUnique({ where: { employee_id: senderId } }),
-      this.prisma.employee.findUnique({ where: { employee_id: targetEmployeeId } }),
+      this.prisma.employee.findUnique({
+        where: { employee_id: targetEmployeeId },
+      }),
     ]);
     if (!a || !b) throw new BadRequestException('Employee not found');
 
     // Search for existing private chat (is_group=false) that has both participants
-    const candidateRooms = await this.prisma.chatRoom.findMany({ where: { is_group: false }, include: { participants: true } });
+    const candidateRooms = await this.prisma.chatRoom.findMany({
+      where: { is_group: false },
+      include: { participants: true },
+    });
     let room = candidateRooms.find((r: any) => {
-      const parts = (r.participants || []).map((p: any) => Number(p.employee_id));
-      return parts.length === 2 && parts.includes(senderId) && parts.includes(targetEmployeeId);
+      const parts = (r.participants || []).map((p: any) =>
+        Number(p.employee_id),
+      );
+      return (
+        parts.length === 2 &&
+        parts.includes(senderId) &&
+        parts.includes(targetEmployeeId)
+      );
     });
 
     if (!room) {
       // create a private chat room and add participants
-      const createdRoom = await this.prisma.chatRoom.create({ data: { name: null, is_group: false } });
-      await this.prisma.chatParticipant.createMany({ data: [{ chat_id: createdRoom.chat_id, employee_id: senderId }, { chat_id: createdRoom.chat_id, employee_id: targetEmployeeId }] });
-      const newRoom = await this.prisma.chatRoom.findUnique({ where: { chat_id: createdRoom.chat_id }, include: { participants: true } });
+      const createdRoom = await this.prisma.chatRoom.create({
+        data: { name: null, is_group: false },
+      });
+      await this.prisma.chatParticipant.createMany({
+        data: [
+          { chat_id: createdRoom.chat_id, employee_id: senderId },
+          { chat_id: createdRoom.chat_id, employee_id: targetEmployeeId },
+        ],
+      });
+      const newRoom = await this.prisma.chatRoom.findUnique({
+        where: { chat_id: createdRoom.chat_id },
+        include: { participants: true },
+      });
       if (!newRoom) throw new BadRequestException('Failed creating chat room');
       room = newRoom as any;
     }
 
     if (!room) throw new BadRequestException('Failed creating/find chat room');
 
-  const created = await this.prisma.chatMessage.create({ data: { chat_id: room.chat_id, sender_id: senderId, content } });
-  // Resolve sender name to include in real-time notifications
-  let senderName: string | null = null;
-  try {
-    const s = await this.prisma.employee.findUnique({ where: { employee_id: senderId } });
-    senderName = s?.full_name ?? s?.username ?? null;
-  } catch (e) { void e; }
-  try { await this.loggingService.writeLog(senderId ?? undefined, Role.Admin, `DirectMessage: ${content?.slice(0, 80)}`, `dm:${created.message_id}`); } catch (e) { void e; }
-  const notifyPayload = { message_id: created.message_id, chat_id: room.chat_id, sender_id: created.sender_id, sender_name: senderName, content: created.content, sent_at: created.sent_at };
-  try { await this.chatService.notifyNewMessage(notifyPayload); } catch (e) { void e; }
-  return notifyPayload;
+    const created = await this.prisma.chatMessage.create({
+      data: { chat_id: room.chat_id, sender_id: senderId, content },
+    });
+    // Resolve sender name to include in real-time notifications
+    let senderName: string | null = null;
+    try {
+      const s = await this.prisma.employee.findUnique({
+        where: { employee_id: senderId },
+      });
+      senderName = s?.full_name ?? s?.username ?? null;
+    } catch (e) {
+      void e;
+    }
+    try {
+      await this.loggingService.writeLog(
+        senderId ?? undefined,
+        Role.Admin,
+        `DirectMessage: ${content?.slice(0, 80)}`,
+        `dm:${created.message_id}`,
+      );
+    } catch (e) {
+      void e;
+    }
+    const notifyPayload = {
+      message_id: created.message_id,
+      chat_id: room.chat_id,
+      sender_id: created.sender_id,
+      sender_name: senderName,
+      content: created.content,
+      sent_at: created.sent_at,
+    };
+    try {
+      await this.chatService.notifyNewMessage(notifyPayload);
+    } catch (e) {
+      void e;
+    }
+    return notifyPayload;
   }
 
   async getDirectMessages(targetEmployeeId: number, senderId: number) {
-    if (!targetEmployeeId) throw new BadRequestException('targetEmployeeId is required');
+    if (!targetEmployeeId)
+      throw new BadRequestException('targetEmployeeId is required');
     if (!senderId) throw new BadRequestException('senderId is required');
 
-    const candidateRooms = await this.prisma.chatRoom.findMany({ where: { is_group: false }, include: { participants: true } });
+    const candidateRooms = await this.prisma.chatRoom.findMany({
+      where: { is_group: false },
+      include: { participants: true },
+    });
     const room = candidateRooms.find((r: any) => {
-      const parts = (r.participants || []).map((p: any) => Number(p.employee_id));
-      return parts.length === 2 && parts.includes(senderId) && parts.includes(targetEmployeeId);
+      const parts = (r.participants || []).map((p: any) =>
+        Number(p.employee_id),
+      );
+      return (
+        parts.length === 2 &&
+        parts.includes(senderId) &&
+        parts.includes(targetEmployeeId)
+      );
     });
     if (!room) return [];
-    const msgs = await this.prisma.chatMessage.findMany({ where: { chat_id: room.chat_id }, include: { sender: true }, orderBy: { sent_at: 'asc' } });
-  return msgs.map((m: any) => ({ message_id: m.message_id, chat_id: m.chat_id, sender_id: m.sender_id ?? m.sender?.employee_id ?? null, sender_name: m.sender?.full_name ?? m.sender?.username ?? null, content: m.content, sent_at: m.sent_at }));
+    const msgs = await this.prisma.chatMessage.findMany({
+      where: { chat_id: room.chat_id },
+      include: { sender: true },
+      orderBy: { sent_at: 'asc' },
+    });
+    return msgs.map((m: any) => ({
+      message_id: m.message_id,
+      chat_id: m.chat_id,
+      sender_id: m.sender_id ?? m.sender?.employee_id ?? null,
+      sender_name: m.sender?.full_name ?? m.sender?.username ?? null,
+      content: m.content,
+      sent_at: m.sent_at,
+    }));
   }
 
   // Return lightweight previews for roster: last message involving each staff member (sender or recipient)
   async getChatPreviews() {
     // load staff (exclude serviceman to match frontend filter)
-    const staff = await this.prisma.employee.findMany({ select: { employee_id: true, full_name: true, role: true } });
+    const staff = await this.prisma.employee.findMany({
+      select: { employee_id: true, full_name: true, role: true },
+    });
     const ids = staff.map((s) => s.employee_id);
     if (!ids.length) return [];
 
     // fetch recent messages where staff were sender or recipient
     const msgs = await this.prisma.chatMessage.findMany({
-      where: { OR: [{ sender_id: { in: ids } }, { recipient_id: { in: ids } }] },
+      where: {
+        OR: [{ sender_id: { in: ids } }, { recipient_id: { in: ids } }],
+      },
       orderBy: { sent_at: 'desc' },
       take: 1000,
       include: { sender: true },
     });
 
-    const map: Record<number, { content: string; sent_at: Date | string | null }> = {};
+    const map: Record<
+      number,
+      { content: string; sent_at: Date | string | null }
+    > = {};
     for (const m of msgs) {
       // determine which staff this message should be associated with: prefer sender if sender is a staff member, otherwise recipient
-      const sid = ids.includes(m.sender_id) ? m.sender_id : (ids.includes(m.recipient_id ?? -1) ? m.recipient_id : null);
+      const sid = ids.includes(m.sender_id)
+        ? m.sender_id
+        : ids.includes(m.recipient_id ?? -1)
+          ? m.recipient_id
+          : null;
       if (!sid) continue;
-      if (!map[sid]) map[sid] = { content: String(m.content ?? ''), sent_at: m.sent_at ?? null };
+      if (!map[sid])
+        map[sid] = {
+          content: String(m.content ?? ''),
+          sent_at: m.sent_at ?? null,
+        };
     }
 
     // build output combining staff metadata and preview
-    const out: any[] = staff.map((s) => ({ employee_id: s.employee_id, full_name: s.full_name, role: s.role, preview: map[s.employee_id]?.content ?? null, preview_at: map[s.employee_id]?.sent_at ?? null }));
+    const out: any[] = staff.map((s) => ({
+      employee_id: s.employee_id,
+      full_name: s.full_name,
+      role: s.role,
+      preview: map[s.employee_id]?.content ?? null,
+      preview_at: map[s.employee_id]?.sent_at ?? null,
+    }));
 
     // Also include group chat previews (e.g. All Roles). Find group chat rooms and attach their latest message preview
     try {
-      const groups = await this.prisma.chatRoom.findMany({ where: { is_group: true }, select: { chat_id: true, name: true } });
+      const groups = await this.prisma.chatRoom.findMany({
+        where: { is_group: true },
+        select: { chat_id: true, name: true },
+      });
       for (const g of groups) {
-        const m = await this.prisma.chatMessage.findFirst({ where: { chat_id: g.chat_id }, orderBy: { sent_at: 'desc' } });
-        out.push({ chat_id: g.chat_id, name: g.name ?? null, preview: m ? String(m.content ?? '') : null, preview_at: m?.sent_at ?? null });
+        const m = await this.prisma.chatMessage.findFirst({
+          where: { chat_id: g.chat_id },
+          orderBy: { sent_at: 'desc' },
+        });
+        out.push({
+          chat_id: g.chat_id,
+          name: g.name ?? null,
+          preview: m ? String(m.content ?? '') : null,
+          preview_at: m?.sent_at ?? null,
+        });
       }
     } catch (e) {
       // best-effort; if group chat lookup fails, ignore
@@ -198,60 +379,108 @@ export class AdminService {
    * using the existing postChatMessage/postDirectMessage helpers so notifications are dispatched.
    */
   async persistBufferedMessages(messages: Array<any>, senderId?: number) {
-    if (!Array.isArray(messages) || messages.length === 0) throw new BadRequestException('messages is required');
+    if (!Array.isArray(messages) || messages.length === 0)
+      throw new BadRequestException('messages is required');
     if (!senderId) throw new BadRequestException('senderId is required');
-    Logger.log(`persistBufferedMessages: persisting ${messages.length} items for sender=${senderId}`, 'AdminService');
+    Logger.log(
+      `persistBufferedMessages: persisting ${messages.length} items for sender=${senderId}`,
+      'AdminService',
+    );
     const results: any[] = [];
     for (const m of messages) {
       try {
         const content = String(m?.content ?? '').trim();
-        if (!content) { results.push({ ok: false, error: 'empty content', tempId: m?.tempId ?? null }); continue; }
-        if (m?.chat_id || (m?.chat_id === 0)) {
+        if (!content) {
+          results.push({
+            ok: false,
+            error: 'empty content',
+            tempId: m?.tempId ?? null,
+          });
+          continue;
+        }
+        if (m?.chat_id || m?.chat_id === 0) {
           const chatId = Number(m.chat_id);
-          Logger.log(`persistBufferedMessages: posting chat message chat_id=${chatId} tempId=${m?.tempId ?? 'none'} sender=${senderId}`, 'AdminService');
+          Logger.log(
+            `persistBufferedMessages: posting chat message chat_id=${chatId} tempId=${m?.tempId ?? 'none'} sender=${senderId}`,
+            'AdminService',
+          );
           const res = await this.postChatMessage(chatId, content, senderId);
           results.push({ ok: true, message: res, tempId: m?.tempId ?? null });
         } else if (m?.employeeId || m?.employee_id) {
           const emp = Number(m.employeeId ?? m.employee_id);
-          Logger.log(`persistBufferedMessages: posting direct message to employee=${emp} tempId=${m?.tempId ?? 'none'} sender=${senderId}`, 'AdminService');
+          Logger.log(
+            `persistBufferedMessages: posting direct message to employee=${emp} tempId=${m?.tempId ?? 'none'} sender=${senderId}`,
+            'AdminService',
+          );
           const res = await this.postDirectMessage(emp, content, senderId);
           results.push({ ok: true, message: res, tempId: m?.tempId ?? null });
         } else {
           // if no recipient specified, fail the item
-          Logger.log(`persistBufferedMessages: item missing recipient tempId=${m?.tempId ?? 'none'}`, 'AdminService');
-          results.push({ ok: false, error: 'no recipient', tempId: m?.tempId ?? null });
+          Logger.log(
+            `persistBufferedMessages: item missing recipient tempId=${m?.tempId ?? 'none'}`,
+            'AdminService',
+          );
+          results.push({
+            ok: false,
+            error: 'no recipient',
+            tempId: m?.tempId ?? null,
+          });
         }
       } catch (e: any) {
-        Logger.error(`persistBufferedMessages: failed item tempId=${m?.tempId ?? 'none'} error=${e?.message ?? String(e)}`, 'AdminService');
-        results.push({ ok: false, error: e?.message ?? String(e), tempId: m?.tempId ?? null });
+        Logger.error(
+          `persistBufferedMessages: failed item tempId=${m?.tempId ?? 'none'} error=${e?.message ?? String(e)}`,
+          'AdminService',
+        );
+        results.push({
+          ok: false,
+          error: e?.message ?? String(e),
+          tempId: m?.tempId ?? null,
+        });
       }
     }
-    Logger.log(`persistBufferedMessages: completed, results=${results.length}`, 'AdminService');
+    Logger.log(
+      `persistBufferedMessages: completed, results=${results.length}`,
+      'AdminService',
+    );
     return results;
   }
 
-
-
   // Basic reports summary — returns aggregate metrics used by Reports & Analytics UI
-  async getReportsSummary(opts: { timeRange?: string; sessionType?: string; bay?: any } = {}) {
+  async getReportsSummary(
+    opts: { timeRange?: string; sessionType?: string; bay?: any } = {},
+  ) {
     const now = new Date();
     // determine startDate based on timeRange
     let startDate = new Date(0);
     const tr = String(opts.timeRange ?? '').toLowerCase();
     if (!tr || tr === '' || tr.includes('last 10')) {
       // last 10 days
-      startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 9);
+      startDate = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate() - 9,
+      );
     } else if (tr.includes('month')) {
-      startDate = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
+      startDate = new Date(
+        now.getFullYear(),
+        now.getMonth() - 1,
+        now.getDate(),
+      );
     } else if (tr.includes('year')) {
-      startDate = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
+      startDate = new Date(
+        now.getFullYear() - 1,
+        now.getMonth(),
+        now.getDate(),
+      );
     } else {
       // default: start of today
       startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     }
 
-  // total sessions (players created) within range
-  const totalSessions = await this.prisma.player.count({ where: { start_time: { gte: startDate, lte: now } } });
+    // total sessions (players created) within range
+    const totalSessions = await this.prisma.player.count({
+      where: { start_time: { gte: startDate, lte: now } },
+    });
 
     // total buckets dispensed (sum of ballTransaction.bucket_count)
     const buckets = await this.prisma.ballTransaction
@@ -273,7 +502,8 @@ export class AdminService {
       try {
         // Only compute durations when both start_time and end_time are present
         if (s.start_time && s.end_time) {
-          totalMs += new Date(s.end_time!).getTime() - new Date(s.start_time!).getTime();
+          totalMs +=
+            new Date(s.end_time).getTime() - new Date(s.start_time).getTime();
         }
       } catch (e) {
         void e;
@@ -283,11 +513,13 @@ export class AdminService {
       ? Math.round(totalMs / sessionsWithEnd.length)
       : 0;
 
-  // total play duration (hours for all completed sessions)
-  const totalHours = Math.round((totalMs / (1000 * 60 * 60)) * 100) / 100;
+    // total play duration (hours for all completed sessions)
+    const totalHours = Math.round((totalMs / (1000 * 60 * 60)) * 100) / 100;
 
-  // bay utilization rate: occupied bays / total bays (current snapshot)
-  const bays = await this.prisma.bay.findMany({ select: { bay_id: true, status: true } });
+    // bay utilization rate: occupied bays / total bays (current snapshot)
+    const bays = await this.prisma.bay.findMany({
+      select: { bay_id: true, status: true },
+    });
     const totalBays = bays.length;
     const occupied = bays.filter(
       (b) => String(b.status) !== 'Available',
@@ -382,7 +614,9 @@ export class AdminService {
     }
     if (reportType === 'overview') {
       // produce a small CSV with key summary metrics
-      const summary = await this.getReportsSummary({ timeRange: String(payload.timeRange ?? '') });
+      const summary = await this.getReportsSummary({
+        timeRange: String(payload.timeRange ?? ''),
+      });
       const cols = ['metric', 'value'];
       const outRows = [cols.join(',')];
       outRows.push(`totalSessions,${summary.totalSessions}`);
@@ -454,23 +688,41 @@ export class AdminService {
       // If there is an open assignment, prefer that player's nickname. Otherwise
       // surface bay.note (used for reservation names) so the frontend can
       // display the reserved-for name even before a Player/Assignment exists.
-      const playerName = assignment?.player?.nickname ?? assignment?.player?.full_name ?? b.note ?? null;
-        const endTime = assignment?.end_time ?? assignment?.player?.end_time ?? null;
-        const totalBalls = assignment?.transactions ? assignment.transactions.reduce((s: number, t: any) => s + (Number(t.bucket_count) || 0), 0) : null;
-        // Determine whether a timed session has actually started.
-        // Authoritative source: Player.start_time (persisted when first BallTransaction processed).
-        // Fallback: if start_time is not yet persisted, treat the session as started when
-        // the assignment has at least one bucket recorded in transactions (bucket_count sum >= 1).
-        let session_started = false;
-        try {
-          if (assignment?.player?.start_time) {
-            session_started = true;
-          } else {
-            const txs = assignment?.transactions ?? [];
-            const totalBalls = txs && txs.length ? txs.reduce((s: number, t: any) => s + (Number(t.bucket_count) || 0), 0) : 0;
-            session_started = totalBalls >= 1;
-          }
-        } catch (e) { void e; }
+      const playerName =
+        assignment?.player?.nickname ??
+        assignment?.player?.full_name ??
+        b.note ??
+        null;
+      const endTime =
+        assignment?.end_time ?? assignment?.player?.end_time ?? null;
+      const totalBalls = assignment?.transactions
+        ? assignment.transactions.reduce(
+            (s: number, t: any) => s + (Number(t.bucket_count) || 0),
+            0,
+          )
+        : null;
+      // Determine whether a timed session has actually started.
+      // Authoritative source: Player.start_time (persisted when first BallTransaction processed).
+      // Fallback: if start_time is not yet persisted, treat the session as started when
+      // the assignment has at least one bucket recorded in transactions (bucket_count sum >= 1).
+      let session_started = false;
+      try {
+        if (assignment?.player?.start_time) {
+          session_started = true;
+        } else {
+          const txs = assignment?.transactions ?? [];
+          const totalBalls =
+            txs && txs.length
+              ? txs.reduce(
+                  (s: number, t: any) => s + (Number(t.bucket_count) || 0),
+                  0,
+                )
+              : 0;
+          session_started = totalBalls >= 1;
+        }
+      } catch (e) {
+        void e;
+      }
 
       return {
         bay_id: b.bay_id,
@@ -491,12 +743,23 @@ export class AdminService {
         // indicate whether the timed session has actually started (first bucket + grace)
         session_started: session_started,
         // If no live assignment but bay.note is present, expose a synthetic player object
-        player: assignment?.player ? { nickname: assignment.player.nickname, full_name: assignment.player.full_name, player_id: assignment.player.player_id, start_time: assignment.player.start_time } : (b.note ? { nickname: b.note } : null),
+        player: assignment?.player
+          ? {
+              nickname: assignment.player.nickname,
+              full_name: assignment.player.full_name,
+              player_id: assignment.player.player_id,
+              start_time: assignment.player.start_time,
+            }
+          : b.note
+            ? { nickname: b.note }
+            : null,
         end_time: endTime,
         assignment_end_time: assignment?.end_time ?? null,
         total_balls: totalBalls,
         bucket_count: totalBalls,
-        transactions_count: assignment?.transactions ? assignment.transactions.length : 0,
+        transactions_count: assignment?.transactions
+          ? assignment.transactions.length
+          : 0,
       };
     });
 
@@ -511,7 +774,10 @@ export class AdminService {
         if (!p.start_time) continue;
         const start = new Date(p.start_time);
         const end = p.end_time ? new Date(p.end_time) : now;
-        const hours = Math.max(0, (end.getTime() - start.getTime()) / (1000 * 60 * 60));
+        const hours = Math.max(
+          0,
+          (end.getTime() - start.getTime()) / (1000 * 60 * 60),
+        );
         revenue += Number(p.price_per_hour) * hours;
       } catch (e) {
         void e;
@@ -561,16 +827,40 @@ export class AdminService {
   }
 
   // Return recent sessions with assignment and aggregated info for frontend tables/charts
-  async getRecentSessions(opts: { limit?: number; timeRange?: string; sessionType?: string; bay?: any; page?: number; perPage?: number } = {}) {
+  async getRecentSessions(
+    opts: {
+      limit?: number;
+      timeRange?: string;
+      sessionType?: string;
+      bay?: any;
+      page?: number;
+      perPage?: number;
+    } = {},
+  ) {
     const limit = Number(opts.limit ?? 200);
     // apply optional filters: , sessionType, bay
     let startDate: Date | undefined = undefined;
     if (opts && (opts as any).timeRange) {
       const tr = String((opts as any).timeRange || '').toLowerCase();
       const now = new Date();
-      if (tr.includes('last 10') || tr === '') startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 9);
-      else if (tr.includes('month')) startDate = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
-      else if (tr.includes('year')) startDate = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
+      if (tr.includes('last 10') || tr === '')
+        startDate = new Date(
+          now.getFullYear(),
+          now.getMonth(),
+          now.getDate() - 9,
+        );
+      else if (tr.includes('month'))
+        startDate = new Date(
+          now.getFullYear(),
+          now.getMonth() - 1,
+          now.getDate(),
+        );
+      else if (tr.includes('year'))
+        startDate = new Date(
+          now.getFullYear() - 1,
+          now.getMonth(),
+          now.getDate(),
+        );
     }
 
     const where: any = {};
@@ -582,7 +872,10 @@ export class AdminService {
     if (requestedSessionType) {
       const st = String(requestedSessionType).trim();
       // Build a where clause that prefers the session_type column (case-insensitive).
-      usedWhere = { ...where, session_type: { equals: st, mode: 'insensitive' } } as any;
+      usedWhere = {
+        ...where,
+        session_type: { equals: st, mode: 'insensitive' },
+      };
     }
     // bay filter: filter by assignment bay number or bay id
     const includeAssignments = {
@@ -600,11 +893,17 @@ export class AdminService {
       // attempt to find bay id by number
       const bayVal = (opts as any).bay;
       try {
-        const bayRow = await this.prisma.bay.findFirst({ where: { OR: [{ bay_number: String(bayVal) }, { bay_id: Number(bayVal) }] } });
+        const bayRow = await this.prisma.bay.findFirst({
+          where: {
+            OR: [{ bay_number: String(bayVal) }, { bay_id: Number(bayVal) }],
+          },
+        });
         if (bayRow) {
           where.assignments = { some: { bay_id: bayRow.bay_id } };
         }
-      } catch (e) { void e; }
+      } catch (e) {
+        void e;
+      }
     }
 
     // support pagination
@@ -617,7 +916,9 @@ export class AdminService {
     let total = 0;
     let players: any[] = [];
     try {
-      total = await this.prisma.player.count({ where: usedWhere }).catch(() => 0);
+      total = await this.prisma.player
+        .count({ where: usedWhere })
+        .catch(() => 0);
       players = await this.prisma.player.findMany({
         where: usedWhere,
         orderBy: { start_time: 'desc' },
@@ -633,7 +934,9 @@ export class AdminService {
         if (s2 === 'timed') fallbackWhere.end_time = { not: null };
         if (s2 === 'open') fallbackWhere.end_time = null;
       }
-      total = await this.prisma.player.count({ where: fallbackWhere }).catch(() => 0);
+      total = await this.prisma.player
+        .count({ where: fallbackWhere })
+        .catch(() => 0);
       players = await this.prisma.player.findMany({
         where: fallbackWhere,
         orderBy: { start_time: 'desc' },
@@ -695,9 +998,17 @@ export class AdminService {
           try {
             if (p.start_time) return true;
             const txs = assignment?.transactions ?? [];
-            const total = txs && txs.length ? txs.reduce((s: number, t: any) => s + (Number(t.bucket_count) || 0), 0) : 0;
+            const total =
+              txs && txs.length
+                ? txs.reduce(
+                    (s: number, t: any) => s + (Number(t.bucket_count) || 0),
+                    0,
+                  )
+                : 0;
             return total >= 1;
-          } catch (e) { void e; }
+          } catch (e) {
+            void e;
+          }
           return false;
         })(),
         // Prefer the typed `session_type` stored on the player when available; otherwise
@@ -715,11 +1026,29 @@ export class AdminService {
     const now = new Date();
     let startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const tr = String(opts.timeRange ?? '').toLowerCase();
-    if (!tr || tr.includes('last 10')) startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 9);
-    else if (tr.includes('month')) startDate = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
-    else if (tr.includes('year')) startDate = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
+    if (!tr || tr.includes('last 10'))
+      startDate = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate() - 9,
+      );
+    else if (tr.includes('month'))
+      startDate = new Date(
+        now.getFullYear(),
+        now.getMonth() - 1,
+        now.getDate(),
+      );
+    else if (tr.includes('year'))
+      startDate = new Date(
+        now.getFullYear() - 1,
+        now.getMonth(),
+        now.getDate(),
+      );
 
-    const players = await this.prisma.player.findMany({ where: { start_time: { gte: startDate, lte: now } }, select: { start_time: true } });
+    const players = await this.prisma.player.findMany({
+      where: { start_time: { gte: startDate, lte: now } },
+      select: { start_time: true },
+    });
     const map: Record<string, number> = {};
     const labels: string[] = [];
     for (let d = new Date(startDate); d <= now; d.setDate(d.getDate() + 1)) {
@@ -741,18 +1070,39 @@ export class AdminService {
     const now = new Date();
     let startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const tr = String(opts.timeRange ?? '').toLowerCase();
-    if (!tr || tr.includes('last 10')) startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 9);
-    else if (tr.includes('month')) startDate = new Date(now.getFullYear(), now.getMonth() - 1, now.getDate());
-    else if (tr.includes('year')) startDate = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
+    if (!tr || tr.includes('last 10'))
+      startDate = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate() - 9,
+      );
+    else if (tr.includes('month'))
+      startDate = new Date(
+        now.getFullYear(),
+        now.getMonth() - 1,
+        now.getDate(),
+      );
+    else if (tr.includes('year'))
+      startDate = new Date(
+        now.getFullYear() - 1,
+        now.getMonth(),
+        now.getDate(),
+      );
 
-    const sessions = await this.getRecentSessions({ limit: 1000, timeRange: opts.timeRange });
+    const sessions = await this.getRecentSessions({
+      limit: 1000,
+      timeRange: opts.timeRange,
+    });
     const usage: Record<string, number> = {};
-    const rows = Array.isArray(sessions) ? sessions : (sessions as any).rows || [];
+    const rows = Array.isArray(sessions) ? sessions : sessions.rows || [];
     for (const s of rows) {
       if (!s.bay_no) continue;
-      usage[String(s.bay_no)] = (usage[String(s.bay_no)] || 0) + (Number(s.duration_minutes) || 0);
+      usage[String(s.bay_no)] =
+        (usage[String(s.bay_no)] || 0) + (Number(s.duration_minutes) || 0);
     }
-    const entries = Object.entries(usage).sort((a, b) => b[1] - a[1]).slice(0, 10);
+    const entries = Object.entries(usage)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10);
     return { entries };
   }
 
@@ -760,11 +1110,15 @@ export class AdminService {
   async getBayDebug(bayNo: string, last: number = 10) {
     if (!bayNo) throw new BadRequestException('bayNo is required');
     // find bay by bay_number or id
-    let bay = await this.prisma.bay.findFirst({ where: { bay_number: String(bayNo) } });
+    let bay = await this.prisma.bay.findFirst({
+      where: { bay_number: String(bayNo) },
+    });
     if (!bay) {
       const maybeId = Number(bayNo);
       if (!Number.isNaN(maybeId)) {
-        bay = await this.prisma.bay.findUnique({ where: { bay_id: maybeId } as any });
+        bay = await this.prisma.bay.findUnique({
+          where: { bay_id: maybeId } as any,
+        });
       }
     }
     if (!bay) throw new BadRequestException('Bay not found');
@@ -773,14 +1127,24 @@ export class AdminService {
     let overviewEntry: any = null;
     try {
       const full = await this.getOverview();
-      overviewEntry = (full?.bays || []).find((b: any) => Number(b.bay_id) === Number(bay.bay_id) || String(b.bay_number) === String(bay.bay_number)) ?? null;
+      overviewEntry =
+        (full?.bays || []).find(
+          (b: any) =>
+            Number(b.bay_id) === Number(bay.bay_id) ||
+            String(b.bay_number) === String(bay.bay_number),
+        ) ?? null;
     } catch (e) {
       overviewEntry = null;
     }
 
     const assignments = await this.prisma.bayAssignment.findMany({
       where: { bay_id: bay.bay_id },
-      include: { player: true, dispatcher: true, serviceman: true, transactions: true },
+      include: {
+        player: true,
+        dispatcher: true,
+        serviceman: true,
+        transactions: true,
+      },
       orderBy: { assigned_time: 'desc' },
       take: Number(last) || 10,
     });
@@ -795,10 +1159,18 @@ export class AdminService {
           session_started = true;
         } else {
           const txs = a.transactions ?? [];
-          const total = txs && txs.length ? txs.reduce((s: number, t: any) => s + (Number(t.bucket_count) || 0), 0) : 0;
+          const total =
+            txs && txs.length
+              ? txs.reduce(
+                  (s: number, t: any) => s + (Number(t.bucket_count) || 0),
+                  0,
+                )
+              : 0;
           session_started = total >= 1;
         }
-      } catch (e) { void e; }
+      } catch (e) {
+        void e;
+      }
       return { ...a, session_started };
     });
 
@@ -827,10 +1199,14 @@ export class AdminService {
         const recentThreshold = new Date(Date.now() - 5 * 60 * 1000); // 5 minutes
         try {
           const recentMsgs = await this.prisma.chatMessage.findMany({
-            where: { sender_id: { in: ids }, sent_at: { gte: recentThreshold } },
+            where: {
+              sender_id: { in: ids },
+              sent_at: { gte: recentThreshold },
+            },
             select: { sender_id: true },
           });
-          for (const m of recentMsgs) if (m.sender_id) onlineSet.add(m.sender_id);
+          for (const m of recentMsgs)
+            if (m.sender_id) onlineSet.add(m.sender_id);
         } catch (e) {
           // best-effort; ignore errors querying messages
           void e;
@@ -877,8 +1253,12 @@ export class AdminService {
       const site = await (this.prisma as any).siteConfig.findFirst();
       const tz = site?.timezone ?? 'UTC';
       // Use Intl.DateTimeFormat to get a YYYY-MM-DD string in the target timezone
-      const dateStr = new Intl.DateTimeFormat('en-CA', { timeZone: String(tz) }).format(ts);
-      const parts = String(dateStr).split('-').map((p) => Number(p));
+      const dateStr = new Intl.DateTimeFormat('en-CA', {
+        timeZone: String(tz),
+      }).format(ts);
+      const parts = String(dateStr)
+        .split('-')
+        .map((p) => Number(p));
       if (parts.length === 3 && parts.every((n) => Number.isFinite(n))) {
         const [y, m, d] = parts;
         return new Date(Date.UTC(y, m - 1, d));
@@ -890,7 +1270,9 @@ export class AdminService {
     // fallback: server-local date bucket
     const dateOnly = new Date(ts);
     dateOnly.setHours(0, 0, 0, 0);
-    return new Date(Date.UTC(dateOnly.getFullYear(), dateOnly.getMonth(), dateOnly.getDate()));
+    return new Date(
+      Date.UTC(dateOnly.getFullYear(), dateOnly.getMonth(), dateOnly.getDate()),
+    );
   }
 
   /**
@@ -898,27 +1280,52 @@ export class AdminService {
    * Body: { employeeId: number, type: 'in'|'out', timestamp?: ISOString, source?: string }
    * Behavior: upsert today's Attendance row for the employee and set clock_in or clock_out.
    */
-  async clockAttendance(payload: { employeeId?: number; type?: string; timestamp?: string; source?: string }) {
+  async clockAttendance(payload: {
+    employeeId?: number;
+    type?: string;
+    timestamp?: string;
+    source?: string;
+  }) {
     const employeeId = Number(payload?.employeeId ?? 0);
     const type = String(payload?.type ?? '').toLowerCase();
-    if (!employeeId || !['in', 'out'].includes(type)) throw new BadRequestException('employeeId and type (in|out) are required');
-    const ts = payload?.timestamp ? new Date(String(payload.timestamp)) : new Date();
+    if (!employeeId || !['in', 'out'].includes(type))
+      throw new BadRequestException(
+        'employeeId and type (in|out) are required',
+      );
+    const ts = payload?.timestamp
+      ? new Date(String(payload.timestamp))
+      : new Date();
     if (isNaN(ts.getTime())) throw new BadRequestException('Invalid timestamp');
 
-  // Normalize date bucket to configured site timezone (returns UTC-midnight for that local date)
-  const dateOnly = await this.bucketDateForTimestamp(ts);
+    // Normalize date bucket to configured site timezone (returns UTC-midnight for that local date)
+    const dateOnly = await this.bucketDateForTimestamp(ts);
 
     // Try to find existing attendance for this employee/date
     let rec: any = null;
     try {
-      rec = await this.prisma.attendance.findUnique({ where: { employee_id_date: { employee_id: employeeId, date: dateOnly } as any } }).catch(() => null);
+      rec = await this.prisma.attendance
+        .findUnique({
+          where: {
+            employee_id_date: {
+              employee_id: employeeId,
+              date: dateOnly,
+            } as any,
+          },
+        })
+        .catch(() => null);
     } catch (e) {
       // ignore and continue
       rec = null;
     }
 
     if (!rec) {
-      rec = await this.prisma.attendance.create({ data: { employee_id: employeeId, date: dateOnly, source: payload?.source ?? null } });
+      rec = await this.prisma.attendance.create({
+        data: {
+          employee_id: employeeId,
+          date: dateOnly,
+          source: payload?.source ?? null,
+        },
+      });
     }
 
     const updates: any = {};
@@ -929,11 +1336,23 @@ export class AdminService {
     }
 
     if (Object.keys(updates).length > 0) {
-      rec = await this.prisma.attendance.update({ where: { attendance_id: rec.attendance_id }, data: updates });
+      rec = await this.prisma.attendance.update({
+        where: { attendance_id: rec.attendance_id },
+        data: updates,
+      });
     }
 
     // Best-effort logging
-    try { await this.loggingService.writeLog(employeeId, Role.Dispatcher as any, `Clock:${type}`, `attendance:${rec.attendance_id}`); } catch (e) { void e; }
+    try {
+      await this.loggingService.writeLog(
+        employeeId,
+        Role.Dispatcher as any,
+        `Clock:${type}`,
+        `attendance:${rec.attendance_id}`,
+      );
+    } catch (e) {
+      void e;
+    }
 
     return rec;
   }
@@ -948,11 +1367,17 @@ export class AdminService {
     if (opts.date) {
       // Interpret the provided date in site timezone and normalize to the same bucket used when punching
       const parsed = new Date(String(opts.date));
-      if (isNaN(parsed.getTime())) throw new BadRequestException('Invalid date');
+      if (isNaN(parsed.getTime()))
+        throw new BadRequestException('Invalid date');
       where.date = await this.bucketDateForTimestamp(parsed);
     }
 
-    const rows = await this.prisma.attendance.findMany({ where, include: { employee: true }, orderBy: { date: 'desc' }, take: 1000 });
+    const rows = await this.prisma.attendance.findMany({
+      where,
+      include: { employee: true },
+      orderBy: { date: 'desc' },
+      take: 1000,
+    });
     return rows.map((r: any) => ({
       attendance_id: r.attendance_id,
       employee_id: r.employee_id,
@@ -971,15 +1396,30 @@ export class AdminService {
   async patchAttendance(id: number, body: any, adminId?: number) {
     if (!id) throw new BadRequestException('Invalid id');
     const data: any = {};
-    if (body.clock_in !== undefined) data.clock_in = body.clock_in ? new Date(String(body.clock_in)) : null;
-    if (body.clock_out !== undefined) data.clock_out = body.clock_out ? new Date(String(body.clock_out)) : null;
+    if (body.clock_in !== undefined)
+      data.clock_in = body.clock_in ? new Date(String(body.clock_in)) : null;
+    if (body.clock_out !== undefined)
+      data.clock_out = body.clock_out ? new Date(String(body.clock_out)) : null;
     if (body.notes !== undefined) data.notes = body.notes ?? null;
     if (body.source !== undefined) data.source = body.source ?? null;
 
-    if (Object.keys(data).length === 0) throw new BadRequestException('No updatable fields provided');
+    if (Object.keys(data).length === 0)
+      throw new BadRequestException('No updatable fields provided');
 
-    const updated = await this.prisma.attendance.update({ where: { attendance_id: id }, data });
-    try { await this.loggingService.writeLog(adminId ?? undefined, Role.Admin, `PatchAttendance:${id}`, `attendance:${id}`); } catch (e) { void e; }
+    const updated = await this.prisma.attendance.update({
+      where: { attendance_id: id },
+      data,
+    });
+    try {
+      await this.loggingService.writeLog(
+        adminId ?? undefined,
+        Role.Admin,
+        `PatchAttendance:${id}`,
+        `attendance:${id}`,
+      );
+    } catch (e) {
+      void e;
+    }
     return updated;
   }
 
@@ -988,8 +1428,13 @@ export class AdminService {
    * Behavior: upsert an Attendance row for each employee/date and set source/notes to indicate absent.
    * Returns an array of per-employee result objects.
    */
-  async markAbsentBatch(employeeIds: number[], date?: string, adminId?: number) {
-    if (!employeeIds || !Array.isArray(employeeIds) || employeeIds.length === 0) throw new BadRequestException('employeeIds is required');
+  async markAbsentBatch(
+    employeeIds: number[],
+    date?: string,
+    adminId?: number,
+  ) {
+    if (!employeeIds || !Array.isArray(employeeIds) || employeeIds.length === 0)
+      throw new BadRequestException('employeeIds is required');
     const ts = date ? new Date(String(date)) : new Date();
     if (isNaN(ts.getTime())) throw new BadRequestException('Invalid date');
     const dateOnly = await this.bucketDateForTimestamp(ts);
@@ -998,36 +1443,77 @@ export class AdminService {
     for (const rawId of employeeIds) {
       const employeeId = Number(rawId);
       if (!employeeId) {
-        results.push({ employeeId: rawId, ok: false, error: 'invalid employeeId' });
+        results.push({
+          employeeId: rawId,
+          ok: false,
+          error: 'invalid employeeId',
+        });
         continue;
       }
       try {
         let rec: any = null;
         try {
-          rec = await this.prisma.attendance.findUnique({ where: { employee_id_date: { employee_id: employeeId, date: dateOnly } as any } }).catch(() => null);
+          rec = await this.prisma.attendance
+            .findUnique({
+              where: {
+                employee_id_date: {
+                  employee_id: employeeId,
+                  date: dateOnly,
+                } as any,
+              },
+            })
+            .catch(() => null);
         } catch (e) {
           rec = null;
         }
         if (!rec) {
-          rec = await this.prisma.attendance.create({ data: { employee_id: employeeId, date: dateOnly, source: 'absent', notes: 'Marked absent' } });
+          rec = await this.prisma.attendance.create({
+            data: {
+              employee_id: employeeId,
+              date: dateOnly,
+              source: 'absent',
+              notes: 'Marked absent',
+            },
+          });
         } else {
-          rec = await this.prisma.attendance.update({ where: { attendance_id: rec.attendance_id }, data: { source: 'absent', notes: 'Marked absent' } });
+          rec = await this.prisma.attendance.update({
+            where: { attendance_id: rec.attendance_id },
+            data: { source: 'absent', notes: 'Marked absent' },
+          });
         }
-        results.push({ employeeId, ok: true, attendance_id: rec.attendance_id });
+        results.push({
+          employeeId,
+          ok: true,
+          attendance_id: rec.attendance_id,
+        });
       } catch (e: any) {
         results.push({ employeeId, ok: false, error: e?.message ?? String(e) });
       }
     }
 
     try {
-      await this.loggingService.writeLog(adminId ?? undefined, Role.Admin, `MarkAbsentBatch`, `count:${employeeIds.length}`);
-    } catch (e) { void e; }
+      await this.loggingService.writeLog(
+        adminId ?? undefined,
+        Role.Admin,
+        `MarkAbsentBatch`,
+        `count:${employeeIds.length}`,
+      );
+    } catch (e) {
+      void e;
+    }
 
     return results;
   }
 
   // Return recent system logs (audit entries)
-  async getAuditLogs(opts: { limit?: number; startDate?: string; endDate?: string; userId?: number } = {}) {
+  async getAuditLogs(
+    opts: {
+      limit?: number;
+      startDate?: string;
+      endDate?: string;
+      userId?: number;
+    } = {},
+  ) {
     const limit = Number(opts.limit ?? 200);
     const where: any = {};
     if (opts.userId) where.employee_id = Number(opts.userId);
@@ -1153,8 +1639,13 @@ export class AdminService {
     // 2) Nullify serviceman references on BayAssignment (nullable FK)
     try {
       await this.prisma.$transaction([
-        this.prisma.servicemanQueue.deleteMany({ where: { serviceman_id: id } }),
-        this.prisma.bayAssignment.updateMany({ where: { serviceman_id: id }, data: { serviceman_id: null } }),
+        this.prisma.servicemanQueue.deleteMany({
+          where: { serviceman_id: id },
+        }),
+        this.prisma.bayAssignment.updateMany({
+          where: { serviceman_id: id },
+          data: { serviceman_id: null },
+        }),
       ]);
     } catch (e) {
       // ignore best-effort cleanup errors — we'll attempt delete and surface meaningful errors below
@@ -1167,7 +1658,9 @@ export class AdminService {
       // Surface a clearer message when foreign key constraints remain.
       if (e && e.code === 'P2003') {
         const constraint = e.meta?.constraint ?? 'unknown_constraint';
-        throw new BadRequestException(`Cannot delete employee; dependent records exist (constraint: ${constraint}). Reassign or remove related records before retrying.`);
+        throw new BadRequestException(
+          `Cannot delete employee; dependent records exist (constraint: ${constraint}). Reassign or remove related records before retrying.`,
+        );
       }
       throw e;
     }
@@ -1223,10 +1716,25 @@ export class AdminService {
           const exists = bays.find((x) => String(x.bay_number) === target);
           if (!exists) {
             try {
-              await this.prisma.bay.update({ where: { bay_id: b.bay_id }, data: { bay_number: target } });
-              actions.push({ type: 'promote', bay_id: b.bay_id, from: b.bay_number, to: target });
+              await this.prisma.bay.update({
+                where: { bay_id: b.bay_id },
+                data: { bay_number: target },
+              });
+              actions.push({
+                type: 'promote',
+                bay_id: b.bay_id,
+                from: b.bay_number,
+                to: target,
+              });
             } catch (e) {
-              actions.push({ type: 'promote', bay_id: b.bay_id, from: b.bay_number, to: target, ok: false, error: (e && e.message) || e });
+              actions.push({
+                type: 'promote',
+                bay_id: b.bay_id,
+                from: b.bay_number,
+                to: target,
+                ok: false,
+                error: (e && e.message) || e,
+              });
             }
           }
         }
@@ -1255,12 +1763,23 @@ export class AdminService {
         if (list.length === 0) {
           // create missing
           try {
-            const created = await this.prisma.bay.create({ data: { bay_number: key, status: 'Available' } });
-            actions.push({ type: 'create', bay_number: key, createdId: created.bay_id });
+            const created = await this.prisma.bay.create({
+              data: { bay_number: key, status: 'Available' },
+            });
+            actions.push({
+              type: 'create',
+              bay_number: key,
+              createdId: created.bay_id,
+            });
             // add to map to reflect current state
             numericMap.set(key, [{ ...created }]);
           } catch (e) {
-            actions.push({ type: 'create', bay_number: key, ok: false, error: (e && e.message) || e });
+            actions.push({
+              type: 'create',
+              bay_number: key,
+              ok: false,
+              error: (e && e.message) || e,
+            });
           }
         } else if (list.length > 1) {
           // deduplicate: keep one, attempt to delete extras that are safe (no assignments, status Available)
@@ -1271,38 +1790,98 @@ export class AdminService {
           numericMap.set(key, [keeper]);
           for (const ex of extras) {
             try {
-              const asgCount = await this.prisma.bayAssignment.count({ where: { bay_id: ex.bay_id } });
+              const asgCount = await this.prisma.bayAssignment.count({
+                where: { bay_id: ex.bay_id },
+              });
               if (asgCount === 0 && String(ex.status) === 'Available') {
                 await this.prisma.bay.delete({ where: { bay_id: ex.bay_id } });
-                actions.push({ type: 'delete-extra-duplicate', bay_id: ex.bay_id, bay_number: ex.bay_number });
+                actions.push({
+                  type: 'delete-extra-duplicate',
+                  bay_id: ex.bay_id,
+                  bay_number: ex.bay_number,
+                });
               } else if (force) {
                 // Force delete: remove dependent transactions, assignments, then bay
                 try {
-                  const assignments = await this.prisma.bayAssignment.findMany({ where: { bay_id: ex.bay_id }, select: { assignment_id: true } });
-                  const assignmentIds = assignments.map((a: any) => a.assignment_id);
+                  const assignments = await this.prisma.bayAssignment.findMany({
+                    where: { bay_id: ex.bay_id },
+                    select: { assignment_id: true },
+                  });
+                  const assignmentIds = assignments.map(
+                    (a: any) => a.assignment_id,
+                  );
                   if (assignmentIds.length) {
-                    await this.prisma.ballTransaction.deleteMany({ where: { assignment_id: { in: assignmentIds } } });
+                    await this.prisma.ballTransaction.deleteMany({
+                      where: { assignment_id: { in: assignmentIds } },
+                    });
                     // Best-effort log each deleted transaction set
                     try {
-                      const adminActor = await this.prisma.employee.findFirst({ where: { role: 'Admin' } });
-                      await this.loggingService.writeLog(adminActor?.employee_id, adminActor?.role as any, `ForceDeleteTransactions`, `bay:${ex.bay_id}`, undefined, 'Unknown');
-                    } catch (e) { void e; }
+                      const adminActor = await this.prisma.employee.findFirst({
+                        where: { role: 'Admin' },
+                      });
+                      await this.loggingService.writeLog(
+                        adminActor?.employee_id,
+                        adminActor?.role as any,
+                        `ForceDeleteTransactions`,
+                        `bay:${ex.bay_id}`,
+                        undefined,
+                        'Unknown',
+                      );
+                    } catch (e) {
+                      void e;
+                    }
                   }
-                  await this.prisma.bayAssignment.deleteMany({ where: { bay_id: ex.bay_id } });
+                  await this.prisma.bayAssignment.deleteMany({
+                    where: { bay_id: ex.bay_id },
+                  });
                   try {
-                    const adminActor = await this.prisma.employee.findFirst({ where: { role: 'Admin' } });
-                    await this.loggingService.writeLog(adminActor?.employee_id, adminActor?.role as any, `ForceDeleteAssignments`, `bay:${ex.bay_id}`, undefined, 'Unknown');
-                  } catch (e) { void e; }
-                  await this.prisma.bay.delete({ where: { bay_id: ex.bay_id } });
-                  actions.push({ type: 'force-delete-extra-duplicate', bay_id: ex.bay_id, bay_number: ex.bay_number, deletedAssignments: assignmentIds.length });
+                    const adminActor = await this.prisma.employee.findFirst({
+                      where: { role: 'Admin' },
+                    });
+                    await this.loggingService.writeLog(
+                      adminActor?.employee_id,
+                      adminActor?.role as any,
+                      `ForceDeleteAssignments`,
+                      `bay:${ex.bay_id}`,
+                      undefined,
+                      'Unknown',
+                    );
+                  } catch (e) {
+                    void e;
+                  }
+                  await this.prisma.bay.delete({
+                    where: { bay_id: ex.bay_id },
+                  });
+                  actions.push({
+                    type: 'force-delete-extra-duplicate',
+                    bay_id: ex.bay_id,
+                    bay_number: ex.bay_number,
+                    deletedAssignments: assignmentIds.length,
+                  });
                 } catch (innerErr) {
-                  blocked.push({ reason: 'duplicate-force-delete-error', bay_id: ex.bay_id, bay_number: ex.bay_number, error: (innerErr && innerErr.message) || innerErr });
+                  blocked.push({
+                    reason: 'duplicate-force-delete-error',
+                    bay_id: ex.bay_id,
+                    bay_number: ex.bay_number,
+                    error: (innerErr && innerErr.message) || innerErr,
+                  });
                 }
               } else {
-                blocked.push({ reason: 'duplicate-not-deletable', bay_id: ex.bay_id, bay_number: ex.bay_number, assignments: asgCount, status: ex.status });
+                blocked.push({
+                  reason: 'duplicate-not-deletable',
+                  bay_id: ex.bay_id,
+                  bay_number: ex.bay_number,
+                  assignments: asgCount,
+                  status: ex.status,
+                });
               }
             } catch (e) {
-              blocked.push({ reason: 'duplicate-delete-error', bay_id: ex.bay_id, bay_number: ex.bay_number, error: (e && e.message) || e });
+              blocked.push({
+                reason: 'duplicate-delete-error',
+                bay_id: ex.bay_id,
+                bay_number: ex.bay_number,
+                error: (e && e.message) || e,
+              });
             }
           }
         }
@@ -1323,41 +1902,101 @@ export class AdminService {
 
       for (const c of toCheck) {
         try {
-          const asgCount = await this.prisma.bayAssignment.count({ where: { bay_id: c.bay_id } });
+          const asgCount = await this.prisma.bayAssignment.count({
+            where: { bay_id: c.bay_id },
+          });
           if (asgCount === 0 && String(c.status) === 'Available') {
             await this.prisma.bay.delete({ where: { bay_id: c.bay_id } });
-            actions.push({ type: 'delete-out-of-range', bay_id: c.bay_id, bay_number: c.bay_number });
+            actions.push({
+              type: 'delete-out-of-range',
+              bay_id: c.bay_id,
+              bay_number: c.bay_number,
+            });
           } else if (force) {
             try {
-              const assignments = await this.prisma.bayAssignment.findMany({ where: { bay_id: c.bay_id }, select: { assignment_id: true } });
-              const assignmentIds = assignments.map((a: any) => a.assignment_id);
+              const assignments = await this.prisma.bayAssignment.findMany({
+                where: { bay_id: c.bay_id },
+                select: { assignment_id: true },
+              });
+              const assignmentIds = assignments.map(
+                (a: any) => a.assignment_id,
+              );
               if (assignmentIds.length) {
-                await this.prisma.ballTransaction.deleteMany({ where: { assignment_id: { in: assignmentIds } } });
+                await this.prisma.ballTransaction.deleteMany({
+                  where: { assignment_id: { in: assignmentIds } },
+                });
                 try {
-                  const adminActor = await this.prisma.employee.findFirst({ where: { role: 'Admin' } });
-                  await this.loggingService.writeLog(adminActor?.employee_id, adminActor?.role as any, `ForceDeleteTransactions`, `bay:${c.bay_id}`, undefined, 'Unknown');
-                } catch (e) { void e; }
+                  const adminActor = await this.prisma.employee.findFirst({
+                    where: { role: 'Admin' },
+                  });
+                  await this.loggingService.writeLog(
+                    adminActor?.employee_id,
+                    adminActor?.role as any,
+                    `ForceDeleteTransactions`,
+                    `bay:${c.bay_id}`,
+                    undefined,
+                    'Unknown',
+                  );
+                } catch (e) {
+                  void e;
+                }
               }
-              await this.prisma.bayAssignment.deleteMany({ where: { bay_id: c.bay_id } });
+              await this.prisma.bayAssignment.deleteMany({
+                where: { bay_id: c.bay_id },
+              });
               try {
-                const adminActor = await this.prisma.employee.findFirst({ where: { role: 'Admin' } });
-                await this.loggingService.writeLog(adminActor?.employee_id, adminActor?.role as any, `ForceDeleteAssignments`, `bay:${c.bay_id}`, undefined, 'Unknown');
-              } catch (e) { void e; }
+                const adminActor = await this.prisma.employee.findFirst({
+                  where: { role: 'Admin' },
+                });
+                await this.loggingService.writeLog(
+                  adminActor?.employee_id,
+                  adminActor?.role as any,
+                  `ForceDeleteAssignments`,
+                  `bay:${c.bay_id}`,
+                  undefined,
+                  'Unknown',
+                );
+              } catch (e) {
+                void e;
+              }
               await this.prisma.bay.delete({ where: { bay_id: c.bay_id } });
-              actions.push({ type: 'force-delete-out-of-range', bay_id: c.bay_id, bay_number: c.bay_number, deletedAssignments: assignmentIds.length });
+              actions.push({
+                type: 'force-delete-out-of-range',
+                bay_id: c.bay_id,
+                bay_number: c.bay_number,
+                deletedAssignments: assignmentIds.length,
+              });
             } catch (innerErr) {
-              blocked.push({ reason: 'out-of-range-force-delete-error', bay_id: c.bay_id, bay_number: c.bay_number, error: (innerErr && innerErr.message) || innerErr });
+              blocked.push({
+                reason: 'out-of-range-force-delete-error',
+                bay_id: c.bay_id,
+                bay_number: c.bay_number,
+                error: (innerErr && innerErr.message) || innerErr,
+              });
             }
           } else {
-            blocked.push({ reason: 'out-of-range-not-deletable', bay_id: c.bay_id, bay_number: c.bay_number, assignments: asgCount, status: c.status });
+            blocked.push({
+              reason: 'out-of-range-not-deletable',
+              bay_id: c.bay_id,
+              bay_number: c.bay_number,
+              assignments: asgCount,
+              status: c.status,
+            });
           }
         } catch (e) {
-          blocked.push({ reason: 'out-of-range-delete-error', bay_id: c.bay_id, bay_number: c.bay_number, error: (e && e.message) || e });
+          blocked.push({
+            reason: 'out-of-range-delete-error',
+            bay_id: c.bay_id,
+            bay_number: c.bay_number,
+            error: (e && e.message) || e,
+          });
         }
       }
 
       // Final verification: count numericMap keys that are 1..total
-      const finalBays = await this.prisma.bay.findMany({ orderBy: { bay_id: 'asc' } });
+      const finalBays = await this.prisma.bay.findMany({
+        orderBy: { bay_id: 'asc' },
+      });
       const finalNumeric = finalBays.filter((b) => {
         const n = normalize(b.bay_number);
         if (!n) return false;
@@ -1418,81 +2057,163 @@ export class AdminService {
 
   // Update multiple settings. Payload is a map of key->value strings.
   async updateSettings(payload: Record<string, any>) {
-    if (!payload || typeof payload !== 'object') throw new BadRequestException('Invalid payload');
+    if (!payload || typeof payload !== 'object')
+      throw new BadRequestException('Invalid payload');
 
-  const siteKeys = ['siteName', 'currencySymbol', 'enableReservations', 'sealPath'];
+    const siteKeys = [
+      'siteName',
+      'currencySymbol',
+      'enableReservations',
+      'sealPath',
+    ];
     const pricingKeys = ['timedSessionRate', 'openTimeRate'];
-    const operationalKeys = ['totalAvailableBays', 'standardTeeIntervalMinutes', 'ballBucketWarningThreshold'];
+    const operationalKeys = [
+      'totalAvailableBays',
+      'standardTeeIntervalMinutes',
+      'ballBucketWarningThreshold',
+    ];
 
     try {
       // Site config
-      const hasSiteKeys = Object.keys(payload).some((k) => siteKeys.includes(k));
+      const hasSiteKeys = Object.keys(payload).some((k) =>
+        siteKeys.includes(k),
+      );
       if (hasSiteKeys) {
         const site = await (this.prisma as any).siteConfig.findFirst();
         const siteData: any = {};
-        if (payload.siteName !== undefined) siteData.site_name = String(payload.siteName ?? '');
-        if (payload.currencySymbol !== undefined) siteData.currency_symbol = String(payload.currencySymbol ?? '');
-        if (payload.enableReservations !== undefined) siteData.enable_reservations = payload.enableReservations === true || String(payload.enableReservations) === 'true';
-        if (payload.sealPath !== undefined) siteData.seal_path = String(payload.sealPath ?? '');
-        if (site) await (this.prisma as any).siteConfig.update({ where: { site_id: site.site_id }, data: siteData });
+        if (payload.siteName !== undefined)
+          siteData.site_name = String(payload.siteName ?? '');
+        if (payload.currencySymbol !== undefined)
+          siteData.currency_symbol = String(payload.currencySymbol ?? '');
+        if (payload.enableReservations !== undefined)
+          siteData.enable_reservations =
+            payload.enableReservations === true ||
+            String(payload.enableReservations) === 'true';
+        if (payload.sealPath !== undefined)
+          siteData.seal_path = String(payload.sealPath ?? '');
+        if (site)
+          await (this.prisma as any).siteConfig.update({
+            where: { site_id: site.site_id },
+            data: siteData,
+          });
         else await (this.prisma as any).siteConfig.create({ data: siteData });
       }
 
       // Pricing config
-      const hasPricingKeys = Object.keys(payload).some((k) => pricingKeys.includes(k));
+      const hasPricingKeys = Object.keys(payload).some((k) =>
+        pricingKeys.includes(k),
+      );
       if (hasPricingKeys) {
         const pricing = await (this.prisma as any).pricingConfig.findFirst();
         const pricingData: any = {};
-        if (payload.timedSessionRate !== undefined) pricingData.timed_session_rate = String(payload.timedSessionRate ?? '0');
-        if (payload.openTimeRate !== undefined) pricingData.open_time_rate = String(payload.openTimeRate ?? '0');
-        if (pricing) await (this.prisma as any).pricingConfig.update({ where: { pricing_id: pricing.pricing_id }, data: pricingData });
-        else await (this.prisma as any).pricingConfig.create({ data: pricingData });
+        if (payload.timedSessionRate !== undefined)
+          pricingData.timed_session_rate = String(
+            payload.timedSessionRate ?? '0',
+          );
+        if (payload.openTimeRate !== undefined)
+          pricingData.open_time_rate = String(payload.openTimeRate ?? '0');
+        if (pricing)
+          await (this.prisma as any).pricingConfig.update({
+            where: { pricing_id: pricing.pricing_id },
+            data: pricingData,
+          });
+        else
+          await (this.prisma as any).pricingConfig.create({
+            data: pricingData,
+          });
       }
 
       // Operational config
       let syncSummary: any = null;
-      const hasOperationalKeys = Object.keys(payload).some((k) => operationalKeys.includes(k));
+      const hasOperationalKeys = Object.keys(payload).some((k) =>
+        operationalKeys.includes(k),
+      );
       if (hasOperationalKeys) {
         const ops = await (this.prisma as any).operationalConfig.findFirst();
         const opsData: any = {};
-        if (payload.totalAvailableBays !== undefined) opsData.total_available_bays = Number(payload.totalAvailableBays ?? 0);
-        if (payload.standardTeeIntervalMinutes !== undefined) opsData.standard_tee_interval_minutes = Number(payload.standardTeeIntervalMinutes ?? 0);
-        if (payload.ballBucketWarningThreshold !== undefined) opsData.ball_bucket_warning_threshold = Number(payload.ballBucketWarningThreshold ?? 0);
-        if (ops) await (this.prisma as any).operationalConfig.update({ where: { operational_id: ops.operational_id }, data: opsData });
-        else await (this.prisma as any).operationalConfig.create({ data: opsData });
+        if (payload.totalAvailableBays !== undefined)
+          opsData.total_available_bays = Number(
+            payload.totalAvailableBays ?? 0,
+          );
+        if (payload.standardTeeIntervalMinutes !== undefined)
+          opsData.standard_tee_interval_minutes = Number(
+            payload.standardTeeIntervalMinutes ?? 0,
+          );
+        if (payload.ballBucketWarningThreshold !== undefined)
+          opsData.ball_bucket_warning_threshold = Number(
+            payload.ballBucketWarningThreshold ?? 0,
+          );
+        if (ops)
+          await (this.prisma as any).operationalConfig.update({
+            where: { operational_id: ops.operational_id },
+            data: opsData,
+          });
+        else
+          await (this.prisma as any).operationalConfig.create({
+            data: opsData,
+          });
 
         // After persisting OperationalConfig, attempt a best-effort sync. Honor destructive force only if explicitly confirmed.
         try {
-          const finalOps = await (this.prisma as any).operationalConfig.findFirst();
+          const finalOps = await (
+            this.prisma as any
+          ).operationalConfig.findFirst();
           const desired = Number(finalOps?.total_available_bays ?? 0);
           if (Number.isFinite(desired) && desired > 0) {
-            const forceRequested = payload.force === true || String(payload.force) === 'true';
-            const confirmed = String(payload.force_confirmation ?? '').trim() === 'I UNDERSTAND';
+            const forceRequested =
+              payload.force === true || String(payload.force) === 'true';
+            const confirmed =
+              String(payload.force_confirmation ?? '').trim() ===
+              'I UNDERSTAND';
             const forceFlag = forceRequested && confirmed;
             try {
               syncSummary = await this.syncBaysToTotal(desired, forceFlag);
-            } catch (e) { syncSummary = { ok: false, error: String(e) }; }
+            } catch (e) {
+              syncSummary = { ok: false, error: String(e) };
+            }
           }
-        } catch (e) { void e; }
+        } catch (e) {
+          void e;
+        }
       }
 
       // Persist remaining keys into the SystemSetting key/value store
-      const keys = Object.keys(payload).filter((k) => !siteKeys.includes(k) && !pricingKeys.includes(k) && !operationalKeys.includes(k));
+      const keys = Object.keys(payload).filter(
+        (k) =>
+          !siteKeys.includes(k) &&
+          !pricingKeys.includes(k) &&
+          !operationalKeys.includes(k),
+      );
       for (const key of keys) {
         const value = String(payload[key] ?? '');
-        await (this.prisma as any).systemSetting.upsert({ where: { key }, create: { key, value }, update: { value } });
+        await (this.prisma as any).systemSetting.upsert({
+          where: { key },
+          create: { key, value },
+          update: { value },
+        });
       }
 
       // Best-effort logging for settings update
       try {
-        const adminActor = await this.prisma.employee.findFirst({ where: { role: 'Admin' } });
-        await this.loggingService.writeLog(adminActor?.employee_id, adminActor?.role as any, `UpdateSettings: ${Object.keys(payload).join(',')}`, 'settings');
-      } catch (e) { void e; }
+        const adminActor = await this.prisma.employee.findFirst({
+          where: { role: 'Admin' },
+        });
+        await this.loggingService.writeLog(
+          adminActor?.employee_id,
+          adminActor?.role as any,
+          `UpdateSettings: ${Object.keys(payload).join(',')}`,
+          'settings',
+        );
+      } catch (e) {
+        void e;
+      }
 
       return { ok: true, syncSummary };
     } catch (e) {
       void e;
-      throw new BadRequestException('Failed to persist typed settings - has migrations been applied?');
+      throw new BadRequestException(
+        'Failed to persist typed settings - has migrations been applied?',
+      );
     }
   }
 
@@ -1504,7 +2225,12 @@ export class AdminService {
    *
    * adminId (optional) may be provided to record who performed the override.
    */
-  async overrideBay(bayNo: string, action: string, adminId?: number, reserveName?: string) {
+  async overrideBay(
+    bayNo: string,
+    action: string,
+    adminId?: number,
+    reserveName?: string,
+  ) {
     if (!bayNo) throw new BadRequestException('bayNo is required');
     if (!action) throw new BadRequestException('action is required');
 
@@ -1517,7 +2243,9 @@ export class AdminService {
       const maybeId = Number(bayNo);
       if (!Number.isNaN(maybeId)) {
         try {
-          bay = await this.prisma.bay.findUnique({ where: { bay_id: maybeId } as any });
+          bay = await this.prisma.bay.findUnique({
+            where: { bay_id: maybeId } as any,
+          });
         } catch (e) {
           void e;
         }
@@ -1535,8 +2263,8 @@ export class AdminService {
       action,
     };
 
-  // accept either 'end session' or short 'end' from various clients
-  if (a.includes('end') || a.includes('end session')) {
+    // accept either 'end session' or short 'end' from various clients
+    if (a.includes('end') || a.includes('end session')) {
       // close any open assignments for this bay (handle possible DB inconsistency with multiple open rows)
       const openAssignments = await this.prisma.bayAssignment.findMany({
         where: { bay_id: bay.bay_id, open_time: true },
@@ -1545,36 +2273,67 @@ export class AdminService {
 
       if (openAssignments && openAssignments.length > 0) {
         const ids = openAssignments.map((r) => r.assignment_id);
-        const playerIds = openAssignments.map((r) => r.player_id).filter((p) => p !== null && p !== undefined);
+        const playerIds = openAssignments
+          .map((r) => r.player_id)
+          .filter((p) => p !== null && p !== undefined);
         // set open_time=false and end_time=now for all open assignments
         await this.prisma.bayAssignment.updateMany({
           where: { assignment_id: { in: ids } },
-          data: { open_time: false, end_time: new Date(), session_type: 'Timed' },
+          data: {
+            open_time: false,
+            end_time: new Date(),
+            session_type: 'Timed',
+          },
         });
 
         // update Player.end_time for associated players so recorded time is persisted
         if (playerIds && playerIds.length > 0) {
           try {
-            await this.prisma.player.updateMany({ where: { player_id: { in: playerIds } }, data: { end_time: new Date() } });
+            await this.prisma.player.updateMany({
+              where: { player_id: { in: playerIds } },
+              data: { end_time: new Date() },
+            });
           } catch (e) {
             // best-effort: log and continue
-            try { await this.loggingService.writeLog(undefined as any, Role.Admin, `FailedUpdatePlayerEndTime: players:${playerIds.join(',')}`, `bay:${bay.bay_id}`); } catch {};
+            try {
+              await this.loggingService.writeLog(
+                undefined as any,
+                Role.Admin,
+                `FailedUpdatePlayerEndTime: players:${playerIds.join(',')}`,
+                `bay:${bay.bay_id}`,
+              );
+            } catch (_err) {
+              void _err;
+            }
           }
         }
 
         // mark bay available
-        await this.prisma.bay.update({ where: { bay_id: bay.bay_id }, data: { status: 'Available' } });
+        await this.prisma.bay.update({
+          where: { bay_id: bay.bay_id },
+          data: { status: 'Available' },
+        });
 
         result.assignment_ids = ids;
         result.message = `Closed ${ids.length} active session(s)`;
 
         // log the session ends
         try {
-          await this.loggingService.writeLog(adminId ?? undefined, Role.Admin, `EndSession: assignments:${ids.join(',')}`, `bay:${bay.bay_id}`);
-        } catch (e) { void e; }
+          await this.loggingService.writeLog(
+            adminId ?? undefined,
+            Role.Admin,
+            `EndSession: assignments:${ids.join(',')}`,
+            `bay:${bay.bay_id}`,
+          );
+        } catch (e) {
+          void e;
+        }
       } else {
         // nothing to end — still mark bay available
-        await this.prisma.bay.update({ where: { bay_id: bay.bay_id }, data: { status: 'Available' } });
+        await this.prisma.bay.update({
+          where: { bay_id: bay.bay_id },
+          data: { status: 'Available' },
+        });
         result.message = 'No active session; bay marked available';
       }
     } else if (a.includes('maintenance')) {
@@ -1595,7 +2354,8 @@ export class AdminService {
         updated_at: new Date(),
         updated_by: adminId ?? undefined,
       };
-      if (reserveName && String(reserveName).trim().length > 0) data.note = String(reserveName).trim();
+      if (reserveName && String(reserveName).trim().length > 0)
+        data.note = String(reserveName).trim();
       await this.prisma.bay.update({ where: { bay_id: bay.bay_id }, data });
       result.message = 'Bay reserved';
     } else {
@@ -1605,7 +2365,12 @@ export class AdminService {
     // create a system log entry if we have an admin id
     try {
       if (adminId) {
-        await this.loggingService.writeLog(adminId, Role.Admin, `Override: ${action}`, `bay:${bay.bay_id}`);
+        await this.loggingService.writeLog(
+          adminId,
+          Role.Admin,
+          `Override: ${action}`,
+          `bay:${bay.bay_id}`,
+        );
       }
     } catch (e) {
       void e;
@@ -1617,14 +2382,19 @@ export class AdminService {
       const ops = await (this.prisma as any).operationalConfig.findFirst();
       const desired = Number(ops?.total_available_bays ?? 0);
       if (Number.isFinite(desired) && desired > 0) {
+        try {
+          syncSummary = await this.syncBaysToTotal(desired, false);
           try {
-            syncSummary = await this.syncBaysToTotal(desired, false);
-            try {
-              await this.loggingService.writeLog(undefined as any, Role.Admin, `SyncBaysToTotal: ${desired}`, `sync:${desired}`);
-            } catch (e) {
-              void e;
-            }
+            await this.loggingService.writeLog(
+              undefined as any,
+              Role.Admin,
+              `SyncBaysToTotal: ${desired}`,
+              `sync:${desired}`,
+            );
           } catch (e) {
+            void e;
+          }
+        } catch (e) {
           syncSummary = { ok: false, error: String(e) };
         }
       }
@@ -1650,18 +2420,24 @@ export class AdminService {
       const m = /^P(\d+)$/i.exec(String(id));
       if (m) {
         const pid = Number(m[1]);
-        player = await this.prisma.player.findUnique({ where: { player_id: pid } as any }).catch(() => null);
+        player = await this.prisma.player
+          .findUnique({ where: { player_id: pid } as any })
+          .catch(() => null);
       }
       if (!player) {
         // try numeric id
         const n = Number(id);
         if (!Number.isNaN(n)) {
-          player = await this.prisma.player.findUnique({ where: { player_id: n } as any }).catch(() => null);
+          player = await this.prisma.player
+            .findUnique({ where: { player_id: n } as any })
+            .catch(() => null);
         }
       }
       if (!player) {
         // try receipt_number match
-        player = await this.prisma.player.findFirst({ where: { receipt_number: String(id) } }).catch(() => null);
+        player = await this.prisma.player
+          .findFirst({ where: { receipt_number: String(id) } })
+          .catch(() => null);
       }
     } catch (e) {
       void e;
@@ -1675,7 +2451,10 @@ export class AdminService {
     }
     if (Object.keys(updates).length > 0) {
       try {
-        await this.prisma.player.update({ where: { player_id: player.player_id }, data: updates });
+        await this.prisma.player.update({
+          where: { player_id: player.player_id },
+          data: updates,
+        });
       } catch (e: any) {
         Logger.error('Failed updating player', e, 'AdminService');
         throw new BadRequestException('Failed updating player');
@@ -1687,24 +2466,45 @@ export class AdminService {
     if (svcId !== undefined && svcId !== null) {
       try {
         // find active assignment for this player
-        const assignment = await this.prisma.bayAssignment.findFirst({ where: { player_id: player.player_id, open_time: true } }).catch(() => null);
-        if (!assignment) throw new BadRequestException('Active assignment not found for player');
+        const assignment = await this.prisma.bayAssignment
+          .findFirst({
+            where: { player_id: player.player_id, open_time: true },
+          })
+          .catch(() => null);
+        if (!assignment)
+          throw new BadRequestException(
+            'Active assignment not found for player',
+          );
         // If svcId is falsy, nullify serviceman; else connect
         const data: any = {};
         if (!svcId) data.serviceman_id = null;
         else data.serviceman = { connect: { employee_id: Number(svcId) } };
         // Use update to set serviceman relation
-        await this.prisma.bayAssignment.update({ where: { assignment_id: assignment.assignment_id }, data });
+        await this.prisma.bayAssignment.update({
+          where: { assignment_id: assignment.assignment_id },
+          data,
+        });
       } catch (e: any) {
-        Logger.error('Failed updating assignment serviceman', e, 'AdminService');
+        Logger.error(
+          'Failed updating assignment serviceman',
+          e,
+          'AdminService',
+        );
         throw new BadRequestException('Failed updating serviceman assignment');
       }
     }
 
     // Best-effort logging
     try {
-      await this.loggingService.writeLog(adminId ?? undefined, Role.Admin, `UpdateSession: player:${player.player_id}`, `player:${player.player_id}`);
-    } catch (e) { void e; }
+      await this.loggingService.writeLog(
+        adminId ?? undefined,
+        Role.Admin,
+        `UpdateSession: player:${player.player_id}`,
+        `player:${player.player_id}`,
+      );
+    } catch (e) {
+      void e;
+    }
 
     return { ok: true };
   }
@@ -1713,58 +2513,83 @@ export class AdminService {
   async startSession(bayNo: string, payload: any) {
     if (!bayNo) throw new BadRequestException('bayNo is required');
     const body = payload || {};
-    Logger.log(`AdminService.startSession called for bay=${bayNo} payload=${JSON.stringify(body)}`, 'AdminService');
+    Logger.log(
+      `AdminService.startSession called for bay=${bayNo} payload=${JSON.stringify(body)}`,
+      'AdminService',
+    );
 
     // find bay by bay_number or id
-    let bay = await this.prisma.bay.findFirst({ where: { bay_number: String(bayNo) } });
+    let bay = await this.prisma.bay.findFirst({
+      where: { bay_number: String(bayNo) },
+    });
     if (!bay) {
       const maybeId = Number(bayNo);
       if (!Number.isNaN(maybeId)) {
-        bay = await this.prisma.bay.findUnique({ where: { bay_id: maybeId } as any });
+        bay = await this.prisma.bay.findUnique({
+          where: { bay_id: maybeId } as any,
+        });
       }
     }
     if (!bay) throw new BadRequestException('Bay not found');
 
     // ensure bay is not already occupied (open assignment)
-    const existing = await this.prisma.bayAssignment.findFirst({ where: { bay_id: bay.bay_id, open_time: true } });
-    if (existing) throw new BadRequestException('Bay already has an active session');
+    const existing = await this.prisma.bayAssignment.findFirst({
+      where: { bay_id: bay.bay_id, open_time: true },
+    });
+    if (existing)
+      throw new BadRequestException('Bay already has an active session');
 
-  // Build player data
-  // Backwards-compat: some callers send `full_name` but the Player model only stores `nickname`.
-  // Normalize by preferring explicit nickname, falling back to full_name when present.
-  // If caller didn't provide a name but the bay has a reservation note (bay.note),
-  // use that as the player nickname so reserved names persist into the created Player.
-  const reserveNote = (bay && typeof bay.note === 'string') ? String(bay.note).trim() : '';
-  const nickname = String(body?.nickname ?? body?.name ?? body?.full_name ?? reserveNote ?? '').trim() || null;
-  const full_name = null; // not stored on Player (kept for compatibility variable but not persisted)
+    // Build player data
+    // Backwards-compat: some callers send `full_name` but the Player model only stores `nickname`.
+    // Normalize by preferring explicit nickname, falling back to full_name when present.
+    // If caller didn't provide a name but the bay has a reservation note (bay.note),
+    // use that as the player nickname so reserved names persist into the created Player.
+    const reserveNote =
+      bay && typeof bay.note === 'string' ? String(bay.note).trim() : '';
+    const nickname =
+      String(
+        body?.nickname ?? body?.name ?? body?.full_name ?? reserveNote ?? '',
+      ).trim() || null;
+    const full_name = null; // not stored on Player (kept for compatibility variable but not persisted)
     // Do not set start_time here — sessions created via dispatcher/admin or cashier
     // should only be marked started after the ball handler delivers the first
     // bucket and the configured grace period has elapsed. Leave start_time null
     // so the UI and billing logic rely on the server-side computed flag.
     const start_time = null;
-  // If no end_time supplied, leave it null to represent an open session (schema now allows nullable end_time)
-  const end_time = body?.end_time ? new Date(String(body.end_time)) : null;
+    // If no end_time supplied, leave it null to represent an open session (schema now allows nullable end_time)
+    const end_time = body?.end_time ? new Date(String(body.end_time)) : null;
 
     // Determine creator: prefer provided dispatcherId, otherwise pick an existing Dispatcher or Admin account
     let createdBy: number | undefined = undefined;
     try {
       if (body?.dispatcherId) {
-        const disp = await this.prisma.employee.findUnique({ where: { employee_id: Number(body.dispatcherId) as any } as any }).catch(() => null);
+        const disp = await this.prisma.employee
+          .findUnique({
+            where: { employee_id: Number(body.dispatcherId) as any } as any,
+          })
+          .catch(() => null);
         if (disp) createdBy = disp.employee_id;
       }
       if (!createdBy) {
-        const disp = await this.prisma.employee.findFirst({ where: { role: 'Dispatcher' } }).catch(() => null);
+        const disp = await this.prisma.employee
+          .findFirst({ where: { role: 'Dispatcher' } })
+          .catch(() => null);
         if (disp) createdBy = disp.employee_id;
       }
       if (!createdBy) {
-        const admin = await this.prisma.employee.findFirst({ where: { role: 'Admin' } }).catch(() => null);
+        const admin = await this.prisma.employee
+          .findFirst({ where: { role: 'Admin' } })
+          .catch(() => null);
         if (admin) createdBy = admin.employee_id;
       }
     } catch (e) {
       void e;
     }
 
-    if (!createdBy) throw new BadRequestException('No dispatcher or admin account available to attribute created_by for new player');
+    if (!createdBy)
+      throw new BadRequestException(
+        'No dispatcher or admin account available to attribute created_by for new player',
+      );
 
     // Determine price_per_hour: prefer explicit body value, otherwise fall back to pricing config
     // For open sessions (no end_time) we store zero price to avoid pricing open play
@@ -1773,14 +2598,18 @@ export class AdminService {
       if (body?.price_per_hour !== undefined && body?.price_per_hour !== null) {
         pricePerHour = String(body.price_per_hour);
       } else {
-        const pricing = await (this.prisma as any).pricingConfig.findFirst().catch(() => null);
+        const pricing = await (this.prisma as any).pricingConfig
+          .findFirst()
+          .catch(() => null);
         const isTimed = Boolean(body?.end_time);
         if (!isTimed) {
           // open sessions are not priced
           pricePerHour = '0.00';
         } else if (pricing) {
           // pricing fields are Decimal; stringify safely
-          pricePerHour = String(pricing.timed_session_rate ?? pricing.open_time_rate ?? '0');
+          pricePerHour = String(
+            pricing.timed_session_rate ?? pricing.open_time_rate ?? '0',
+          );
         } else {
           pricePerHour = '0.00';
         }
@@ -1789,10 +2618,22 @@ export class AdminService {
       pricePerHour = '0.00';
     }
 
-  // Create player record (player.end_time may be null for open sessions)
-  // include planned_duration_minutes when available (caller may supply planned_duration_minutes)
-  const plannedMinutes = body?.planned_duration_minutes != null ? Number(body.planned_duration_minutes) : null;
-  const player = await this.prisma.player.create({ data: { nickname: nickname ?? undefined, start_time, end_time: end_time ?? null, price_per_hour: pricePerHour ?? '0.00', planned_duration_minutes: plannedMinutes ?? undefined, creator: { connect: { employee_id: createdBy } } } as any });
+    // Create player record (player.end_time may be null for open sessions)
+    // include planned_duration_minutes when available (caller may supply planned_duration_minutes)
+    const plannedMinutes =
+      body?.planned_duration_minutes != null
+        ? Number(body.planned_duration_minutes)
+        : null;
+    const player = await this.prisma.player.create({
+      data: {
+        nickname: nickname ?? undefined,
+        start_time,
+        end_time: end_time ?? null,
+        price_per_hour: pricePerHour ?? '0.00',
+        planned_duration_minutes: plannedMinutes ?? undefined,
+        creator: { connect: { employee_id: createdBy } },
+      } as any,
+    });
 
     // Create assignment
     // Ensure we have a dispatcher id to attach to the assignment (fallback to createdBy if not supplied)
@@ -1814,23 +2655,52 @@ export class AdminService {
       bay: { connect: { bay_id: bay.bay_id } },
       dispatcher: { connect: { employee_id: assignmentDispatcherId } },
     } as any;
-    if (body?.servicemanId) assignmentData.serviceman = { connect: { employee_id: body.servicemanId } };
+    if (body?.servicemanId)
+      assignmentData.serviceman = {
+        connect: { employee_id: body.servicemanId },
+      };
 
-    const assignment = await this.prisma.bayAssignment.create({ data: assignmentData });
+    const assignment = await this.prisma.bayAssignment.create({
+      data: assignmentData,
+    });
 
     // mark bay occupied
     try {
-      await this.prisma.bay.update({ where: { bay_id: bay.bay_id }, data: { status: 'Occupied' } });
-    } catch (e) { void e; }
+      await this.prisma.bay.update({
+        where: { bay_id: bay.bay_id },
+        data: { status: 'Occupied' },
+      });
+    } catch (e) {
+      void e;
+    }
 
     // best-effort logging
     try {
-      await this.loggingService.writeLog(undefined as any, Role.Admin, `StartSession: assignment:${assignment.assignment_id}`, `bay:${bay.bay_id}`);
-    } catch (e) { void e; }
+      await this.loggingService.writeLog(
+        undefined as any,
+        Role.Admin,
+        `StartSession: assignment:${assignment.assignment_id}`,
+        `bay:${bay.bay_id}`,
+      );
+    } catch (e) {
+      void e;
+    }
 
-  // Return a compact player object using the stored nickname (no full_name column exists)
-    const out = { ok: true, player: { player_id: player.player_id, nickname: player.nickname ?? null, session_type: assignment.session_type ?? null, session_started: false }, assignment_id: assignment.assignment_id };
-    Logger.log(`AdminService.startSession created assignment=${assignment.assignment_id} player=${player.player_id}`, 'AdminService');
+    // Return a compact player object using the stored nickname (no full_name column exists)
+    const out = {
+      ok: true,
+      player: {
+        player_id: player.player_id,
+        nickname: player.nickname ?? null,
+        session_type: assignment.session_type ?? null,
+        session_started: false,
+      },
+      assignment_id: assignment.assignment_id,
+    };
+    Logger.log(
+      `AdminService.startSession created assignment=${assignment.assignment_id} player=${player.player_id}`,
+      'AdminService',
+    );
     return out;
   }
 
@@ -1839,10 +2709,15 @@ export class AdminService {
   // include start_time, optional end_time (for timed sessions), price_per_hour and created_by.
   async createUnassignedSession(payload: any) {
     const body = payload || {};
-    Logger.log(`AdminService.createUnassignedSession called payload=${JSON.stringify(body)}`, 'AdminService');
+    Logger.log(
+      `AdminService.createUnassignedSession called payload=${JSON.stringify(body)}`,
+      'AdminService',
+    );
 
     // Build player data
-    const nickname = String(body?.nickname ?? body?.name ?? body?.full_name ?? '').trim() || null;
+    const nickname =
+      String(body?.nickname ?? body?.name ?? body?.full_name ?? '').trim() ||
+      null;
     // When creating an unassigned session from the cashier side we intentionally
     // leave `start_time` null. The session will be populated once the first
     // BallTransaction is created by the ball handler (with a 30s grace).
@@ -1850,34 +2725,51 @@ export class AdminService {
     // If the cashier provided a planned duration, treat this as a Timed session
     // and set a provisional end_time = start_time + planned_duration_minutes.
     const plannedMinutesRaw = body?.planned_duration_minutes ?? null;
-    const plannedMinutes = plannedMinutesRaw != null ? Number(plannedMinutesRaw) : null;
+    const plannedMinutes =
+      plannedMinutesRaw != null ? Number(plannedMinutesRaw) : null;
     // start_time is intentionally null for cashier-created rows. If the cashier
     // provided a planned duration, compute a provisional end_time relative to
     // now so the UI can show an expected end even before the session start is
     // recorded (it will be populated once the ball handler delivers the first
     // bucket and the grace period elapses).
-    const end_time = typeof plannedMinutes === 'number' && !Number.isNaN(plannedMinutes) && plannedMinutes > 0 ? new Date(Date.now() + plannedMinutes * 60000) : null;
+    const end_time =
+      typeof plannedMinutes === 'number' &&
+      !Number.isNaN(plannedMinutes) &&
+      plannedMinutes > 0
+        ? new Date(Date.now() + plannedMinutes * 60000)
+        : null;
 
     // Determine creator: prefer provided dispatcherId, otherwise pick an existing Dispatcher or Admin account
     let createdBy: number | undefined = undefined;
     try {
       if (body?.dispatcherId) {
-        const disp = await this.prisma.employee.findUnique({ where: { employee_id: Number(body.dispatcherId) as any } as any }).catch(() => null);
+        const disp = await this.prisma.employee
+          .findUnique({
+            where: { employee_id: Number(body.dispatcherId) as any } as any,
+          })
+          .catch(() => null);
         if (disp) createdBy = disp.employee_id;
       }
       if (!createdBy) {
-        const disp = await this.prisma.employee.findFirst({ where: { role: 'Dispatcher' } }).catch(() => null);
+        const disp = await this.prisma.employee
+          .findFirst({ where: { role: 'Dispatcher' } })
+          .catch(() => null);
         if (disp) createdBy = disp.employee_id;
       }
       if (!createdBy) {
-        const admin = await this.prisma.employee.findFirst({ where: { role: 'Admin' } }).catch(() => null);
+        const admin = await this.prisma.employee
+          .findFirst({ where: { role: 'Admin' } })
+          .catch(() => null);
         if (admin) createdBy = admin.employee_id;
       }
     } catch (e) {
       void e;
     }
 
-    if (!createdBy) throw new BadRequestException('No dispatcher or admin account available to attribute created_by for new player');
+    if (!createdBy)
+      throw new BadRequestException(
+        'No dispatcher or admin account available to attribute created_by for new player',
+      );
 
     // Determine price_per_hour: prefer explicit body value, otherwise fall back to pricing config
     let pricePerHour: string | undefined = undefined;
@@ -1885,12 +2777,16 @@ export class AdminService {
       if (body?.price_per_hour !== undefined && body?.price_per_hour !== null) {
         pricePerHour = String(body.price_per_hour);
       } else {
-        const pricing = await (this.prisma as any).pricingConfig.findFirst().catch(() => null);
+        const pricing = await (this.prisma as any).pricingConfig
+          .findFirst()
+          .catch(() => null);
         const isTimed = !!end_time; // if we computed an end_time treat as timed
         if (!isTimed) {
           pricePerHour = String(pricing?.open_time_rate ?? '0');
         } else {
-          pricePerHour = String(pricing?.timed_session_rate ?? pricing?.open_time_rate ?? '0');
+          pricePerHour = String(
+            pricing?.timed_session_rate ?? pricing?.open_time_rate ?? '0',
+          );
         }
       }
     } catch (e) {
@@ -1928,7 +2824,14 @@ export class AdminService {
       }
     } catch (err: any) {
       // If there's a unique constraint violation on receipt_number, retry without it
-      if (err && err.code === 'P2002' && err.meta && Array.isArray(err.meta.target) && err.meta.target.includes('receipt_number')) {
+      let finalErr: any = err;
+      if (
+        err &&
+        err.code === 'P2002' &&
+        err.meta &&
+        Array.isArray(err.meta.target) &&
+        err.meta.target.includes('receipt_number')
+      ) {
         try {
           dataObj.receipt_number = undefined;
           if (dataObj && dataObj.created_by) {
@@ -1940,8 +2843,8 @@ export class AdminService {
             player = await this.prisma.player.create({ data: dataObj } as any);
           }
         } catch (retryErr: any) {
-          // replace err with retryErr for downstream handling
-          err = retryErr;
+          // store final error for downstream handling
+          finalErr = retryErr;
         }
       }
 
@@ -1949,49 +2852,101 @@ export class AdminService {
       // Prisma client are out-of-sync (missing columns or relations). Surface a
       // helpful error suggesting running migrations / generating the client.
       if (!player) {
-        const msg = (err && err.message) ? String(err.message) : 'Failed creating Player record';
-        throw new BadRequestException(`${msg} - ensure Prisma migrations are applied and run 'npx prisma generate'`);
+        const msg =
+          finalErr && finalErr.message
+            ? String(finalErr.message)
+            : 'Failed creating Player record';
+        throw new BadRequestException(
+          `${msg} - ensure Prisma migrations are applied and run 'npx prisma generate'`,
+        );
       }
     }
 
     try {
-      await this.loggingService.writeLog(undefined as any, Role.Admin, `CreateUnassignedSession: player:${player.player_id}`, `player:${player.player_id}`);
-    } catch (e) { void e; }
+      await this.loggingService.writeLog(
+        undefined as any,
+        Role.Admin,
+        `CreateUnassignedSession: player:${player.player_id}`,
+        `player:${player.player_id}`,
+      );
+    } catch (e) {
+      void e;
+    }
 
-    return { ok: true, player: { player_id: player.player_id, nickname: player.nickname ?? null, planned_duration_minutes: plannedMinutes ?? null, session_type: sessionTypeStr ?? null, session_started: false } };
+    return {
+      ok: true,
+      player: {
+        player_id: player.player_id,
+        nickname: player.nickname ?? null,
+        planned_duration_minutes: plannedMinutes ?? null,
+        session_type: sessionTypeStr ?? null,
+        session_started: false,
+      },
+    };
   }
 
   // Create a BallTransaction for the active assignment on the given bay.
   // Payload may include: bucket_count (defaults to 1), delivered_time (ISO string).
-  async createBallTransactionForBay(bayNo: string, payload: any = {}, handlerId?: number) {
-    Logger.log(`createBallTransactionForBay called bay=${bayNo} handler=${handlerId} payload=${JSON.stringify(payload)}`, 'AdminService');
+  async createBallTransactionForBay(
+    bayNo: string,
+    payload: any = {},
+    handlerId?: number,
+  ) {
+    Logger.log(
+      `createBallTransactionForBay called bay=${bayNo} handler=${handlerId} payload=${JSON.stringify(payload)}`,
+      'AdminService',
+    );
     if (!bayNo) throw new BadRequestException('bayNo is required');
     // find bay by number or id
-    let bay = await this.prisma.bay.findFirst({ where: { bay_number: String(bayNo) } }).catch(() => null);
+    let bay = await this.prisma.bay
+      .findFirst({ where: { bay_number: String(bayNo) } })
+      .catch(() => null);
     if (!bay) {
       const maybeId = Number(bayNo);
       if (!Number.isNaN(maybeId)) {
-        bay = await this.prisma.bay.findUnique({ where: { bay_id: maybeId } as any }).catch(() => null);
+        bay = await this.prisma.bay
+          .findUnique({ where: { bay_id: maybeId } as any })
+          .catch(() => null);
       }
     }
     if (!bay) {
-      Logger.warn(`createBallTransactionForBay: bay not found bay=${bayNo}`, 'AdminService');
+      Logger.warn(
+        `createBallTransactionForBay: bay not found bay=${bayNo}`,
+        'AdminService',
+      );
       throw new BadRequestException('Bay not found');
     }
 
     // find active assignment for this bay
-    const assignment = await this.prisma.bayAssignment.findFirst({ where: { bay_id: bay.bay_id, open_time: true }, orderBy: { assigned_time: 'desc' } }).catch(() => null);
+    const assignment = await this.prisma.bayAssignment
+      .findFirst({
+        where: { bay_id: bay.bay_id, open_time: true },
+        orderBy: { assigned_time: 'desc' },
+      })
+      .catch(() => null);
     if (!assignment) {
-      Logger.warn(`createBallTransactionForBay: no active assignment for bay_id=${bay.bay_id}`, 'AdminService');
+      Logger.warn(
+        `createBallTransactionForBay: no active assignment for bay_id=${bay.bay_id}`,
+        'AdminService',
+      );
       throw new BadRequestException('No active assignment found for bay');
     }
 
-    Logger.log(`createBallTransactionForBay: found assignment_id=${assignment.assignment_id} for bay_id=${bay.bay_id}`, 'AdminService');
+    Logger.log(
+      `createBallTransactionForBay: found assignment_id=${assignment.assignment_id} for bay_id=${bay.bay_id}`,
+      'AdminService',
+    );
 
     const bucketCount = Number(payload?.bucket_count ?? 1) || 1;
-    const delivered = payload?.delivered_time ? new Date(String(payload.delivered_time)) : new Date();
+    const delivered = payload?.delivered_time
+      ? new Date(String(payload.delivered_time))
+      : new Date();
 
-    const dataObj: any = { assignment: { connect: { assignment_id: assignment.assignment_id } }, bucket_count: bucketCount, delivered_time: delivered };
+    const dataObj: any = {
+      assignment: { connect: { assignment_id: assignment.assignment_id } },
+      bucket_count: bucketCount,
+      delivered_time: delivered,
+    };
     if (handlerId) {
       // Prisma expects relation connect for required relation fields in the
       // regular create input. Use nested connect to associate an existing
@@ -2000,12 +2955,30 @@ export class AdminService {
     }
 
     try {
-      const created = await this.prisma.ballTransaction.create({ data: dataObj });
-      Logger.log(`createBallTransactionForBay: created tx_id=${created.transaction_id} assignment_id=${assignment.assignment_id}`, 'AdminService');
-      try { await this.loggingService.writeLog(handlerId ?? undefined, Role.Dispatcher as any, `BallTransaction:create`, `tx:${created.transaction_id}`); } catch (e) { void e; }
+      const created = await this.prisma.ballTransaction.create({
+        data: dataObj,
+      });
+      Logger.log(
+        `createBallTransactionForBay: created tx_id=${created.transaction_id} assignment_id=${assignment.assignment_id}`,
+        'AdminService',
+      );
+      try {
+        await this.loggingService.writeLog(
+          handlerId ?? undefined,
+          Role.Dispatcher as any,
+          `BallTransaction:create`,
+          `tx:${created.transaction_id}`,
+        );
+      } catch (e) {
+        void e;
+      }
       return { ok: true, transaction: created };
     } catch (err: any) {
-      Logger.error('createBallTransactionForBay: failed creating transaction', err, 'AdminService');
+      Logger.error(
+        'createBallTransactionForBay: failed creating transaction',
+        err,
+        'AdminService',
+      );
       throw err;
     }
   }

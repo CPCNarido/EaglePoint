@@ -121,8 +121,7 @@ export function buildNotification(
     }
 
     return { title, body, type, icon, severity };
-  } catch (e) {
-    return { title: opts?.defaultTitle ?? 'Notification', body: defaultMessage ?? '', type: opts?.preferredType ?? 'info', icon: 'info', severity: opts?.preferredSeverity ?? 'low' };
+  } catch (_e) { void _e; return { title: opts?.defaultTitle ?? 'Notification', body: defaultMessage ?? '', type: opts?.preferredType ?? 'info', icon: 'info', severity: opts?.preferredSeverity ?? 'low' };
   }
 }
 

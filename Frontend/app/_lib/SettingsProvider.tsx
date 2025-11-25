@@ -38,8 +38,7 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         enableReservations: typeof data?.enableReservations === 'boolean' ? data.enableReservations : s.enableReservations,
         totalAvailableBays: Number(data?.totalAvailableBays ?? data?.total_available_bays ?? s.totalAvailableBays),
       }));
-    } catch {
-      // ignore network errors and keep defaults
+    } catch (_e) { void _e; // ignore network errors and keep defaults
     }
   };
    
@@ -57,14 +56,14 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       if (typeof window !== 'undefined' && window.addEventListener) {
         window.addEventListener('settings:updated', onSettingsUpdated as EventListener);
       }
-    } catch {}
+    } catch (_e) { void _e; }
 
     return () => {
       try {
         if (typeof window !== 'undefined' && window.removeEventListener) {
           window.removeEventListener('settings:updated', onSettingsUpdated as EventListener);
         }
-      } catch {}
+      } catch (_e) { void _e; }
     };
   }, []);
   /* eslint-enable react-hooks/exhaustive-deps */

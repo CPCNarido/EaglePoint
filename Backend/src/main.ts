@@ -27,15 +27,16 @@ async function bootstrap() {
   try {
     const uploadsPath = join(__dirname, '..', 'uploads');
     try {
-      if (!fs.existsSync(uploadsPath)) fs.mkdirSync(uploadsPath, { recursive: true });
+      if (!fs.existsSync(uploadsPath))
+        fs.mkdirSync(uploadsPath, { recursive: true });
     } catch (e) {
-      // ignore
+      void e;
     }
     app.use('/uploads', express.static(uploadsPath));
   } catch (e) {
     // best-effort; if static middleware cannot be registered, continue without failing
     // (some environments may not permit filesystem writes)
-    // eslint-disable-next-line no-console
+
     console.warn('Failed to register uploads static', e);
   }
   await app.listen(process.env.PORT ?? 3000);

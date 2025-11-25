@@ -10,13 +10,12 @@ import {
   Platform,
   ScrollView,
   StyleSheet,
-  Pressable,
 } from "react-native";
 import Constants from "expo-constants";
 import * as Network from "expo-network";
 import { useRouter } from "expo-router";
 import Splash from "./components/Splash";
-import { tw } from "react-native-tailwindcss";
+// removed unused `tw` import from this file (tailwind used elsewhere)
 import { saveAccessToken } from "./_lib/auth";
 import { useSettings } from "./_lib/SettingsProvider";
 import ErrorModal from "./components/ErrorModal";
@@ -32,9 +31,7 @@ const getDevHostIp = (): string | null => {
       manifest?.debuggerHost || manifest?.packagerOpts?.host || null;
     if (!debuggerHost) return null;
     return String(debuggerHost).split(":")[0];
-  } catch {
-    return null;
-  }
+  } catch (_e) { void _e; return null; }
 };
 
 const resolveBaseUrl = () => {
@@ -61,7 +58,7 @@ const probeHosts = async (candidates: string[]) => {
         const t = setTimeout(() => {
           try {
             controller.abort();
-          } catch {}
+          } catch (_e) { void _e; }
         }, timeoutMs);
         const url = `${override.replace(/\/$/, "")}/api/health`;
         const resp = await fetch(url, { method: "GET", signal: controller.signal }).catch(
@@ -72,16 +69,16 @@ const probeHosts = async (candidates: string[]) => {
           console.debug("Using persisted backendBaseUrlOverride (reachable)", override);
           try {
             (global as any).__EAGLEPOINT_BASE_URL__ = override;
-          } catch {}
+          } catch (_e) { void _e; }
           return override;
         }
         console.warn("Persisted override unreachable, removing it", override);
         await AsyncStorage.removeItem("backendBaseUrlOverride");
-      } catch {
-        await AsyncStorage.removeItem("backendBaseUrlOverride");
-      }
+        } catch (_e) { void _e;
+          await AsyncStorage.removeItem("backendBaseUrlOverride");
+        }
     }
-  } catch {}
+  } catch (_e) { void _e; }
 
   const tryHealth = (base: string) =>
     new Promise<string>((resolve, reject) => {
@@ -90,7 +87,7 @@ const probeHosts = async (candidates: string[]) => {
       const t = setTimeout(() => {
         try {
           controller.abort();
-        } catch {}
+        } catch (_e) { void _e; }
         reject(new Error("timeout"));
       }, timeoutMs);
       const url = `${base.replace(/\/$/, "")}/api/health`;
@@ -119,11 +116,11 @@ const probeHosts = async (candidates: string[]) => {
           await AsyncStorage.setItem("backendBaseUrlOverride", winner);
         try {
           (global as any).__EAGLEPOINT_BASE_URL__ = winner;
-        } catch {}
-      } catch {}
+        } catch (_e) { void _e; }
+      } catch (_e) { void _e; }
       return winner;
     }
-  } catch {}
+  } catch (_e) { void _e; }
   return null;
 };
 
@@ -138,7 +135,7 @@ const persistLastError = async (title: string, detail: any) => {
       "lastLoginError",
       JSON.stringify({ time: Date.now(), title, detail })
     );
-  } catch {}
+  } catch (_e) { void _e; }
 };
 
 // === LOGIN SCREEN (new design + error modal integration) ===
@@ -179,7 +176,7 @@ export default function Login() {
       let deviceIp: string | null = null;
       try {
         deviceIp = await Network.getIpAddressAsync();
-      } catch {}
+      } catch (_e) { void _e; }
 
       const candidates: string[] = [];
       if (deviceIp) {
@@ -226,7 +223,7 @@ export default function Login() {
         let bodyText = "";
         try {
           bodyText = await res.text();
-        } catch {}
+        } catch (_e) { void _e; }
         const detail = {
           status: res.status,
           statusText: res.statusText,

@@ -36,9 +36,7 @@ export async function exportReport(params: ExportParams): Promise<{ ok: boolean;
           URL.revokeObjectURL(url);
           return { ok: true };
         }
-      } catch (e) {
-        // ignore and fallthrough to JSON wrapper
-      }
+      } catch (_e) { void _e; /* ignore and fallthrough to JSON wrapper */ }
     }
     if (contentType.includes('text/csv') || contentType.includes('application/csv')) {
       // Try to get an ArrayBuffer first (works in most fetch implementations), then build a Blob from it.
@@ -48,24 +46,20 @@ export async function exportReport(params: ExportParams): Promise<{ ok: boolean;
           const ab = await res.arrayBuffer();
           blob = new Blob([ab], { type: contentType || 'text/csv' });
         }
-      } catch (e) {
-        // arrayBuffer may not be available in some environments; fallback to blob()
+      } catch (_e) { void _e; /* arrayBuffer may not be available in some environments; fallback to blob() */
         blob = null;
       }
 
       if (!blob) {
         try {
           blob = await res.blob();
-        } catch (e) {
-          // last resort: try text()
+        } catch (_e) { void _e; // last resort: try text()
           try {
             const txt = await (res as any).text();
-            // eslint-disable-next-line no-console
+            
             console.log('Export CSV (text fallback):', String(txt).slice(0, 200));
             return { ok: true };
-          } catch (e2) {
-            return { ok: false, error: 'Failed reading CSV response' };
-          }
+          } catch (_e2) { void _e2; return { ok: false, error: 'Failed reading CSV response' }; }
         }
       }
 
@@ -81,9 +75,7 @@ export async function exportReport(params: ExportParams): Promise<{ ok: boolean;
           URL.revokeObjectURL(url);
           return { ok: true };
         }
-      } catch (e) {
-        // ignore and fallback to logging
-      }
+      } catch (_e) { void _e; /* ignore and fallback to logging */ }
 
       // fallback: try to read text from blob if available
       try {
@@ -91,13 +83,11 @@ export async function exportReport(params: ExportParams): Promise<{ ok: boolean;
         if (typeof (blob as any).text === 'function') {
           // @ts-ignore
           const txt = await (blob as any).text();
-          // eslint-disable-next-line no-console
+           
           console.log('Export CSV:', String(txt).slice(0, 200));
           return { ok: true };
         }
-      } catch (e) {
-        // ignore
-      }
+      } catch (_e) { void _e; /* ignore */ }
       return { ok: true };
     }
 
@@ -119,7 +109,7 @@ export async function exportReport(params: ExportParams): Promise<{ ok: boolean;
         a.remove();
         URL.revokeObjectURL(url);
         return { ok: true };
-      } catch (e) {
+      } catch (e) { void e;
         // continue to csv fallback
       }
     }
@@ -137,15 +127,14 @@ export async function exportReport(params: ExportParams): Promise<{ ok: boolean;
         URL.revokeObjectURL(url);
         return { ok: true };
       }
-    } catch (e) {
-      // ignore
-    }
+      } catch (_e) { void _e; /* ignore */ }
     // fallback: log
-    // eslint-disable-next-line no-console
+     
     console.log('Export CSV (fallback):', csv.slice(0, 200));
     return { ok: true };
-  } catch (e: any) {
-    return { ok: false, error: String(e) };
+  } catch (_e: any) {
+    void _e;
+    return { ok: false, error: String(_e) };
   }
 }
 

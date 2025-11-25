@@ -38,8 +38,8 @@ export default function ErrorModal({
       // remove persisted diagnostic after showing
       if (AsyncStorage) await AsyncStorage.removeItem('lastLoginError');
       showLocalToast('Saved', 'Last error logged to console for inspection');
-    } catch (e) {
-      console.warn('Failed reading lastLoginError', e);
+    } catch (_e) {
+      console.warn('Failed reading lastLoginError', _e);
       showLocalToast('Error', 'Failed reading saved diagnostics');
     }
   };
@@ -86,7 +86,7 @@ export default function ErrorModal({
                   <Text style={{ color: '#1E2B20', fontWeight: '700' }}>Retry</Text>
                 </Pressable>
               ) : null}
-              <Pressable onPress={async () => { try { const AsyncStorageModule = await import('@react-native-async-storage/async-storage').catch(() => null); const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule; if (AsyncStorage) await AsyncStorage.removeItem('lastLoginError'); } catch {} onClose(); }} style={{ padding: 10, marginRight: 8 }}>
+              <Pressable onPress={async () => { try { const AsyncStorageModule = await import('@react-native-async-storage/async-storage').catch(() => null); const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule; if (AsyncStorage) await AsyncStorage.removeItem('lastLoginError'); } catch (_e) { void _e; } onClose(); }} style={{ padding: 10, marginRight: 8 }}>
                 <Text style={{ color: '#1E2B20', fontWeight: '600' }}>Close</Text>
               </Pressable>
               {typeof __DEV__ !== 'undefined' && __DEV__ ? (

@@ -15,11 +15,11 @@ export default function Toast({ visible, title, message, duration = 2000, onClos
     if (visible) {
       Animated.timing(anim, { toValue: 1, duration: 220, useNativeDriver: true }).start();
       const t = setTimeout(() => {
-        Animated.timing(anim, { toValue: 0, duration: 200, useNativeDriver: true }).start(() => { try { onClose && onClose(); } catch {} });
+        Animated.timing(anim, { toValue: 0, duration: 200, useNativeDriver: true }).start(() => { try { onClose && onClose(); } catch (_e) { void _e; } });
       }, duration);
       return () => clearTimeout(t);
     }
-  }, [visible]);
+  }, [visible, anim, duration, onClose]);
 
   if (!visible) return null;
   const bg = type === 'error' ? '#FDECEA' : type === 'info' ? '#EAF6FF' : '#EAF6EE';

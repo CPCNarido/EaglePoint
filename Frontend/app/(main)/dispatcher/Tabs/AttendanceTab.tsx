@@ -1,8 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
-import { Platform, Animated, Easing, ScrollView, Dimensions } from 'react-native';
-import { fetchWithAuth } from '../../../_lib/fetchWithAuth';
-import { isServicemanRole, isStaffActive, formatTimestamp, getRoleCategory } from '../../utils/staffHelpers';
-import {
+import { Platform, Animated, Easing, ScrollView, Dimensions ,
   View,
   Text,
   TextInput,
@@ -13,15 +10,22 @@ import {
   SafeAreaView,
   Switch,
   Alert,
-} from "react-native";
+} from 'react-native';
+import { fetchWithAuth } from '../../../_lib/fetchWithAuth';
+import { isServicemanRole, isStaffActive, formatTimestamp, getRoleCategory } from '../../utils/staffHelpers';
+
 import { PieChart } from 'react-native-chart-kit';
 import DateTimePickerModal from 'react-native-modal-datetime-picker';
 import DispatcherHeader from "../DispatcherHeader";
+void ScrollView;
+void isStaffActive;
 
 export default function AttendanceTab(props?: any) {
-  const [attendanceData, setAttendanceData] = useState<Array<any>>([]);
+  const [attendanceData, setAttendanceData] = useState<any[]>([]);
   // Raw attendance rows from backend (used to merge into staff view)
-  const [attendanceRows, setAttendanceRows] = useState<Array<any>>([]);
+  const [attendanceRows, setAttendanceRows] = useState<any[]>([]);
+  void attendanceRows;
+  void setAttendanceRows;
   const [loading, setLoading] = useState<boolean>(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -36,7 +40,7 @@ export default function AttendanceTab(props?: any) {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   // Batch update logs: record per-employee result when performing batch updates
-  const [batchLogs, setBatchLogs] = useState<Array<any>>([]);
+  const [batchLogs, setBatchLogs] = useState<any[]>([]);
   const [showBatchLogs, setShowBatchLogs] = useState(false);
 
   // inline clock-in editing (use native time picker)
@@ -63,8 +67,8 @@ export default function AttendanceTab(props?: any) {
           servicemenTotal++;
           if (att === 'present') servicemenPresent++;
         }
-      } catch (e) {
-        // ignore per-item role detection errors
+      } catch (_e) {
+        void _e;
       }
     });
 
@@ -79,6 +83,9 @@ export default function AttendanceTab(props?: any) {
       totalServicemen: servicemenTotal,
     };
   }, [attendanceData]);
+  void totalCount;
+  void servicemenPresentCount;
+  void totalServicemen;
   const statusCounts = useMemo(() => {
     const m: Record<string, number> = { Present: 0, Absent: 0, 'Clocked Out': 0, 'No Record': 0 };
     attendanceData.forEach((it) => {
@@ -149,7 +156,8 @@ export default function AttendanceTab(props?: any) {
       const rows = await res.json();
       setAttendanceRows(Array.isArray(rows) ? rows : []);
       return Array.isArray(rows) ? rows : [];
-    } catch (e) {
+    } catch (_e) {
+      void _e;
       setAttendanceRows([]);
       return [];
     }
@@ -169,7 +177,7 @@ export default function AttendanceTab(props?: any) {
       if (!res) throw new Error('No response from server');
       if (!res.ok) {
         let txt = '';
-        try { txt = await res.text(); } catch (e) { /* ignore */ }
+        try { txt = await res.text(); } catch (_e) { void _e; }
         throw new Error(`Request failed: ${res.status} ${res.statusText} ${txt}`);
       }
       return await res.json();
@@ -193,7 +201,7 @@ export default function AttendanceTab(props?: any) {
       }
       if (!res.ok) {
         let bodyText = '';
-        try { bodyText = await res.text(); } catch {}
+        try { bodyText = await res.text(); } catch (_e) { void _e; }
         setFetchError(`Request failed: ${res.status} ${res.statusText} ${bodyText ? '- ' + bodyText : ''}`);
         setAttendanceData([]);
         setLoading(false);
@@ -278,6 +286,7 @@ export default function AttendanceTab(props?: any) {
       </Animated.View>
     );
   };
+    void Chip;
 
   const toggleStatus = async (id: string) => {
     if (!editing) return;
@@ -306,7 +315,7 @@ export default function AttendanceTab(props?: any) {
 
   const markSelected = () => {
     (async () => {
-      const logs: Array<any> = [];
+      const logs: any[] = [];
       try {
         for (const id of selectedIds) {
           try {
@@ -334,7 +343,7 @@ export default function AttendanceTab(props?: any) {
 
   const handleBatchClockOut = () => {
     (async () => {
-      const logs: Array<any> = [];
+      const logs: any[] = [];
       try {
         for (const id of selectedIds) {
           try {
@@ -371,7 +380,7 @@ export default function AttendanceTab(props?: any) {
           text: 'OK',
           onPress: () => {
             (async () => {
-              const logs: Array<any> = [];
+              const logs: any[] = [];
               try {
                 const baseUrl = resolveBaseUrl();
                 const others = attendanceData
@@ -432,7 +441,8 @@ export default function AttendanceTab(props?: any) {
     const present = presentCount || 0;
     const absent = absentCount || 0;
     const out = clockedOutCount || 0;
-    const total = Math.max(1, present + absent + out);
+    const _total = Math.max(1, present + absent + out);
+    void _total;
     return [
       { name: 'Present', population: present, color: '#6A7337', legendFontColor: '#333', legendFontSize: 12 },
       { name: 'Absent', population: absent, color: '#c62828', legendFontColor: '#333', legendFontSize: 12 },
@@ -458,7 +468,7 @@ export default function AttendanceTab(props?: any) {
         const ampm = hh >= 12 ? 'PM' : 'AM';
         return `${String(hh12).padStart(2, '0')}:${String(mm).padStart(2, '0')} ${ampm}`;
       }
-    } catch (e) {}
+    } catch (_e) { void _e; }
     // fallback: try to extract time with regex
     const m = String(rawOrFormatted).match(/(\d{1,2}:\d{2})/);
     return m ? m[1] : '------';

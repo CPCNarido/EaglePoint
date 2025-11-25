@@ -138,7 +138,12 @@ export class AuthService {
     refreshToken: string;
     role: string;
     userId: number;
-    user: { employee_id: number; full_name: string; username?: string | null; role: string };
+    user: {
+      employee_id: number;
+      full_name: string;
+      username?: string | null;
+      role: string;
+    };
   }> {
     const user = await this.validateUser(login, password);
     if (!user) {

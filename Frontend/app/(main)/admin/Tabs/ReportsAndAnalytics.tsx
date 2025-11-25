@@ -1,11 +1,11 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Platform, Dimensions, useWindowDimensions, TextInput } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, ActivityIndicator, Platform, Dimensions, useWindowDimensions } from 'react-native';
 import { tw } from 'react-native-tailwindcss';
 import { useSettings } from '../../../lib/SettingsProvider';
 import ErrorModal from '../../../components/ErrorModal';
 import { friendlyMessageFromThrowable } from '../../../lib/errorUtils';
 
-export default function ReportsAndAnalytics() {
+function ReportsAndAnalytics() {
   useSettings();
   const [loading, setLoading] = useState(false);
   // header info
@@ -38,6 +38,7 @@ export default function ReportsAndAnalytics() {
 
   const [WEB_CHART_SIZE, setWebChartSize] = useState(() => ({ ...DEFAULT_WEB_CHART_SIZE }));
   const [showChartSizeEditor, setShowChartSizeEditor] = useState(false);
+  void showChartSizeEditor; void setShowChartSizeEditor;
   // Native (non-web) chart gap - kept as a separate tweakable value so device
   // layout remains unchanged by default but can be overridden via AsyncStorage.
   const DEFAULT_NATIVE_CHART_GAP = 12;
@@ -58,7 +59,7 @@ export default function ReportsAndAnalytics() {
           try {
             const parsed = JSON.parse(raw || '{}');
             if (mounted && parsed && typeof parsed === 'object') setWebChartSize((s) => ({ ...s, ...parsed }));
-          } catch {}
+          } catch (err) { void err; }
         }
         // load native gap override (optional)
         try {
@@ -67,9 +68,9 @@ export default function ReportsAndAnalytics() {
             const v = parseInt(rawGap as any, 10);
             if (!Number.isNaN(v) && mounted) setNativeChartGap(v);
           }
-        } catch {}
+        } catch (err) { void err; }
       } catch (err) {
-        // ignore
+        void err;
       }
     })();
     return () => { mounted = false; };
@@ -85,6 +86,7 @@ export default function ReportsAndAnalytics() {
       // ignore
     }
   };
+  void persistWebChartSize;
 
   const persistNativeChartGap = async (next: number) => {
     try {
@@ -96,6 +98,7 @@ export default function ReportsAndAnalytics() {
       // ignore
     }
   };
+  void persistNativeChartGap;
 
   const { width, height } = useWindowDimensions();
   const isTablet = Math.max(width, height) >= 900; // match root layout heuristic
@@ -150,37 +153,15 @@ export default function ReportsAndAnalytics() {
   const [RNChartKit, setRNChartKit] = useState<any>(null);
   useEffect(() => {
     // Allow a dev override to skip loading any chart libraries on web/native.
-    // This helps avoid runtime issues where a native-only chart or svg lib
-    // tries to render unsupported elements (like the "arc" element) on web.
-    // By default we do NOT skip charts so installing the web shim enables
-    // react-native-chart-kit on web. To intentionally skip charts set
-    // window.__EAGLEPOINT_SKIP_WEB_CHARTS__ = true in the browser console.
+    // If skipped on web, attempt to load chart.js (web-friendly). Otherwise
+    // load react-native-chart-kit on native platforms.
     const SKIP_WEB_CHARTS = !!((global as any).__EAGLEPOINT_SKIP_WEB_CHARTS__);
 
     if (SKIP_WEB_CHARTS && Platform.OS === 'web') {
       setWebCharts(null);
       setChartJsOnly(false);
       setRNChartKit(null);
-      return;
-    }
-
-    if (Platform.OS === 'web') {
-      // Try to load react-chartjs-2 first (gives React components). If it fails due to peer deps
-      // we fall back to using chart.js directly and a small canvas renderer. Also ensure
-      // essential Chart.js scales/elements are registered to avoid runtime errors like
-      // "category is not a registered scale".
       (async () => {
-        try {
-          // @ts-ignore
-          const rc2 = await import('react-chartjs-2');
-          setWebCharts(rc2);
-        } catch (_e) {
-          console.warn('react-chartjs-2 not available, falling back to chart.js canvas renderer', _e);
-          setWebCharts(null);
-          setChartJsOnly(true);
-        }
-
-        // Try to import chart.js and register the common scales/elements/plugins
         try {
           // Import the chart.js module (not /auto) so we can register specific pieces
           // @ts-ignore
@@ -190,12 +171,11 @@ export default function ReportsAndAnalytics() {
           if (ChartLib && typeof ChartLib.register === 'function') {
             try {
               ChartLib.register(CategoryScale, LinearScale, TimeScale, BarElement, LineElement, PointElement, ArcElement, Tooltip, Legend, Filler);
-            } catch (regErr) {
-              // ignore registration errors
-            }
+            } catch (regErr) { void regErr; }
           }
+          setChartJsOnly(true);
         } catch (err) {
-          // ignore - registration is best-effort
+          void err; // ignore - registration is best-effort
         }
       })();
     } else {
@@ -408,8 +388,8 @@ export default function ReportsAndAnalytics() {
   const typeToUse = reportType || selectedReport;
   const res = await exportReport({ baseUrl, reportType: typeToUse, format: 'pdf' } as any);
       if (!res.ok) showError('Export failed' + (res.error ? ': ' + res.error : ''));
-    } catch (e) {
-      // eslint-disable-next-line no-console
+    } catch (e) { void e;
+       
       console.error('Export error', e);
       showError(e, 'Export failed');
     }
@@ -424,12 +404,14 @@ export default function ReportsAndAnalytics() {
       }
       // On native platforms, fall back to export (PDF) which the device can open/print using native viewers
       await onDownload(reportType || selectedReport);
-    } catch (e) {
-      // eslint-disable-next-line no-console
+    } catch (e) { void e;
+      
       console.error('Print error', e);
       showError('Print failed');
     }
   };
+  void onPrint;
+  
 
   const onPrintPreview = async (reportType?: string) => {
     const typeToUse = reportType || selectedReport;
@@ -466,7 +448,7 @@ export default function ReportsAndAnalytics() {
       }
       // Do not revoke immediately so the browser can load it; revoke after a delay
       setTimeout(() => { try { URL.revokeObjectURL(url); } catch {} }, 60_000);
-    } catch (e) {
+    } catch (e) { void e;
       console.error('Preview error', e);
       showError(e, 'Failed to open preview');
     }
@@ -987,6 +969,8 @@ export default function ReportsAndAnalytics() {
     </ScrollView>
   );
 }
+
+export default ReportsAndAnalytics;
 
 const styles = StyleSheet.create({
   container: { padding: 20 },

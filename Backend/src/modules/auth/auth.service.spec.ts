@@ -11,7 +11,13 @@ describe('AuthService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         AuthService,
-        { provide: JwtService, useValue: { sign: () => 'x', verify: () => ({ sub: 1, role: 'Admin' }) } },
+        {
+          provide: JwtService,
+          useValue: {
+            sign: () => 'x',
+            verify: () => ({ sub: 1, role: 'Admin' }),
+          },
+        },
         { provide: PrismaService, useValue: {} },
         { provide: ConfigService, useValue: { get: () => undefined } },
       ],

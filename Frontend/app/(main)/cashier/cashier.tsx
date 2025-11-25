@@ -19,6 +19,9 @@ import TransactionTab from './Tabs/TransactionTab';
 import PlayerListTab from './Tabs/PlayerListTab';
 import TeamChats from '../admin/Tabs/TeamChats';
 
+// Referenced to silence no-unused-vars where ScrollView is imported but not used in this layout
+void ScrollView;
+
 type OverviewItem = {
   title: string;
   value: string;
@@ -34,6 +37,7 @@ export default function CashierLayout() {
   // Live overview state (keeps cashier in sync with Admin dashboard)
   const [overview, setOverview] = useState<any>(null);
   const [loadingOverview, setLoadingOverview] = useState<boolean>(false);
+  void loadingOverview;
   const prevOverviewJsonRef = useRef<string | null>(null);
   const isFetchingRef = useRef(false);
 
@@ -57,19 +61,19 @@ export default function CashierLayout() {
           const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
           const override = AsyncStorage ? await AsyncStorage.getItem('backendBaseUrlOverride') : null;
           if (override) baseUrl = override;
-        } catch {}
+        } catch (_e) { void _e; }
 
         let d: any = null;
         try {
           const r = await fetchWithAuth(`${baseUrl}/api/admin/me`, { method: 'GET' });
           if (r.ok) d = await r.json();
-        } catch {}
+        } catch (_e) { void _e; }
         if (!d) return;
         const name = d?.full_name || d?.name || d?.username || 'CASHIER';
         const empId = d?.employee_id ?? d?.employeeId ?? null;
         setUserName(name);
         setUserEmployeeId(empId != null ? String(empId) : '');
-      } catch {}
+      } catch (_e) { void _e; }
     })();
   }, []);
 
@@ -142,12 +146,12 @@ export default function CashierLayout() {
       try { if (overviewUpdateTimer) clearTimeout(overviewUpdateTimer); } catch {}
       overviewUpdateTimer = setTimeout(() => { fetchOverview(); }, 2000);
     };
-    try { if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('overview:updated', onOverviewUpdated as EventListener); } catch {}
+    try { if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('overview:updated', onOverviewUpdated as EventListener); } catch (_e) { void _e; }
 
     return () => {
       clearInterval(interval);
-      try { if (overviewUpdateTimer) clearTimeout(overviewUpdateTimer); } catch {}
-      try { if (typeof window !== 'undefined' && window.removeEventListener) window.removeEventListener('overview:updated', onOverviewUpdated as EventListener); } catch {}
+      try { if (overviewUpdateTimer) clearTimeout(overviewUpdateTimer); } catch (_e) { void _e; }
+      try { if (typeof window !== 'undefined' && window.removeEventListener) window.removeEventListener('overview:updated', onOverviewUpdated as EventListener); } catch (_e) { void _e; }
     };
   }, [fetchOverview]);
 
@@ -181,23 +185,23 @@ export default function CashierLayout() {
           const streamUrl = token ? `${streamBase}/api/admin/chats/stream?token=${encodeURIComponent(token)}` : `${streamBase}/api/admin/chats/stream`;
           try {
             es = new EventSource(streamUrl);
-            es.onmessage = (ev: any) => {
-              try {
-                const payload = JSON.parse(ev.data);
+              es.onmessage = (ev: any) => {
                 try {
-                  const json = JSON.stringify(payload);
-                  prevOverviewJsonRef.current = json;
-                  setOverview(payload);
-                } catch {}
-              } catch {}
-            };
-            es.onerror = () => { try { es.close(); } catch {} };
+                  const payload = JSON.parse(ev.data);
+                  try {
+                    const json = JSON.stringify(payload);
+                    prevOverviewJsonRef.current = json;
+                    setOverview(payload);
+                  } catch (_e) { void _e; }
+                } catch (_e) { void _e; }
+              };
+              es.onerror = () => { try { es.close(); } catch (_e) { void _e; } };
           } catch {}
         }
       } catch {}
     })();
 
-    return () => { try { if (es) es.close(); } catch {} };
+    return () => { try { if (es) es.close(); } catch (_e) { void _e; } };
   }, []);
 
   return (
@@ -280,6 +284,7 @@ const OverviewCard: React.FC<OverviewItem> = ({
     <Text style={styles.overviewSubtitle}>{subtitle}</Text>
   </View>
 );
+void OverviewCard;
 
 // Legend is provided by the shared RealTimeBayOverview component and admin Legend.
 

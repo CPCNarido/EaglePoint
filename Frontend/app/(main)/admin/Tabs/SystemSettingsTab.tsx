@@ -42,6 +42,8 @@ export default function SystemSettingsTab() {
   const [errorModalDetails, setErrorModalDetails] = useState<any>(null);
   const [errorModalTitle, setErrorModalTitle] = useState<string | undefined>(undefined);
 
+  void errorModalTitle;
+
   const showError = (err: any, fallback?: string) => {
     const friendly = friendlyMessageFromThrowable(err, fallback ?? 'An error occurred');
     setErrorModalType(friendly?.type ?? 'other');
@@ -200,10 +202,11 @@ export default function SystemSettingsTab() {
   const pickAndUpload = async () => {
     try {
       // dynamic import so we don't require DocumentPicker in web/native builds where it's not present
-  // dynamic import - ts-ignore so build doesn't require the module at compile time
-  // (it may not be present in some environments)
-  // @ts-ignore
-  const docPicker = await import('expo-document-picker').catch(() => null);
+      // dynamic import - ts-ignore so build doesn't require the module at compile time
+      // (it may not be present in some environments)
+      // @ts-ignore
+      // eslint-disable-next-line import/no-unresolved
+      const docPicker = await import('expo-document-picker').catch(() => null);
       if (!docPicker || !docPicker.getDocumentAsync) {
         showError('File picker is not available in this environment. Use the web admin UI to upload a seal.', 'Not supported');
         return;

@@ -48,11 +48,11 @@ export default function SessionControlTab({ userName, counts, assignedBays }: { 
             // end_time being in the future.
             if (s.session_started === true) return true;
             if (!s.end_time && !s.endTime) return false;
-            try { const et = new Date(s.end_time ?? s.endTime); return !isNaN(et.getTime()) && et.getTime() > Date.now(); } catch (e) { return false; }
+            try { const et = new Date(s.end_time ?? s.endTime); return !isNaN(et.getTime()) && et.getTime() > Date.now(); } catch (_e) { void _e; return false; }
           }
           // Fallback: include rows with null end_time or end_time in the future
           if (s.end_time == null && s.endTime == null) return true;
-          try { const et = new Date(s.end_time ?? s.endTime); return !isNaN(et.getTime()) && et.getTime() > Date.now(); } catch (e) { return false; }
+          try { const et = new Date(s.end_time ?? s.endTime); return !isNaN(et.getTime()) && et.getTime() > Date.now(); } catch (_e) { void _e; return false; }
         }) : [];
         // normalize objects to a simple shape for the UI
         const normalized = active.map((s: any, ix: number) => ({
@@ -66,8 +66,7 @@ export default function SessionControlTab({ userName, counts, assignedBays }: { 
         }));
         setSessions(normalized);
       }
-    } catch (e) {
-      // ignore
+    } catch (_e) { void _e; // ignore
     }
   };
 
@@ -101,8 +100,7 @@ export default function SessionControlTab({ userName, counts, assignedBays }: { 
             const svc = Array.isArray(rows) ? rows.filter((s:any) => isServicemanRole(s.role)) : [];
             setServicemen(svc);
           }
-      } catch (e) {
-        // ignore
+      } catch (_e) { void _e; // ignore
       }
     })();
     return () => { mounted = false; };
@@ -217,8 +215,8 @@ export default function SessionControlTab({ userName, counts, assignedBays }: { 
         const txt = await r.text().catch(() => 'Failed');
         showError(`Edit failed: ${txt}`);
       }
-    } catch (e) {
-      showError(e);
+    } catch (_e) {
+      showError(_e);
     } finally { setActionLoading(false); }
   };
 
@@ -258,8 +256,8 @@ export default function SessionControlTab({ userName, counts, assignedBays }: { 
         const txt = await r.text().catch(() => 'Failed');
         showError(`Extend failed: ${txt}`);
       }
-    } catch (e) {
-      showError(e);
+    } catch (_e) {
+      showError(_e);
     } finally { setActionLoading(false); }
   };
 
@@ -297,8 +295,8 @@ export default function SessionControlTab({ userName, counts, assignedBays }: { 
         const txt = await r.text().catch(() => 'Failed');
         showError(`End failed: ${txt}`);
       }
-    } catch (e) {
-      showError(e);
+    } catch (_e) {
+      showError(_e);
     } finally { setActionLoading(false); }
   };
 
@@ -336,7 +334,7 @@ export default function SessionControlTab({ userName, counts, assignedBays }: { 
         const txt = await r.text().catch(() => 'Failed');
         showError(`Start failed: ${txt}`);
       }
-    } catch (e) {
+    } catch (e) { void e;
       showError(e);
     } finally { setActionLoading(false); }
   };

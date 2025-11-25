@@ -8,12 +8,12 @@ import {
   ActivityIndicator,
   StyleSheet,
   Platform,
-  TextInput,
   Modal,
   Pressable,
   Animated,
   Easing,
 } from "react-native";
+// Note: `TextInput` was removed from imports because it's not used in this file.
 import ErrorModal from '../../../components/ErrorModal';
 import Toast from '../../../components/Toast';
 import { friendlyMessageFromThrowable } from '../../../lib/errorUtils';
@@ -23,7 +23,7 @@ import { isServicemanRole } from '../../utils/staffHelpers';
 export default function BayAssignmentScreen({ userName, counts, assignedBays }: { userName?: string; counts?: { availableBays?: number; totalBays?: number; servicemenAvailable?: number; servicemenTotal?: number; waitingQueue?: number }; assignedBays?: number[] | null }) {
   const [players, setPlayers] = useState<any[]>([]);
 
-  const [servicemen, setServicemen] = useState<Array<{id:number;name:string;online?:boolean}>>([]);
+  const [servicemen, setServicemen] = useState<{id:number;name:string;online?:boolean}[]>([]);
   const [busyServicemen, setBusyServicemen] = useState<number[]>([]);
 
   const [selectedPlayer, setSelectedPlayer] = useState<any | null>(null);
@@ -31,8 +31,10 @@ export default function BayAssignmentScreen({ userName, counts, assignedBays }: 
   const [nextServicemanIndex, setNextServicemanIndex] = useState(0);
   const [selectedBay, setSelectedBay] = useState<number | string | null>(null);
   const [bayDropdownOpen, setBayDropdownOpen] = useState(false);
+  void bayDropdownOpen; void setBayDropdownOpen;
   const [availableBays, setAvailableBays] = useState<number[] | null>(null);
   const [totalBaysCount, setTotalBaysCount] = useState<number | null>(null);
+  void totalBaysCount; void setTotalBaysCount;
   const dropdownButtonRef = useRef<any>(null);
   const [showBayOptions, setShowBayOptions] = useState(false);
   const [dropdownPos, setDropdownPos] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
@@ -50,6 +52,7 @@ export default function BayAssignmentScreen({ userName, counts, assignedBays }: 
   const [errorModalType, setErrorModalType] = useState<any | null>(null);
   const [errorModalDetails, setErrorModalDetails] = useState<any>(null);
   const [errorModalTitle, setErrorModalTitle] = useState<string | undefined>(undefined);
+  void errorModalTitle;
 
   const showError = (err: any, fallback?: string) => {
     const friendly = friendlyMessageFromThrowable(err, fallback ?? 'An error occurred');
@@ -127,7 +130,7 @@ export default function BayAssignmentScreen({ userName, counts, assignedBays }: 
         } else {
           showError('Server refused assignment.');
         }
-      } catch (e) {
+      } catch (e) { void e;
         showError(e, 'Assignment failed.');
       } finally {
         setAssigning(false);
@@ -142,6 +145,7 @@ export default function BayAssignmentScreen({ userName, counts, assignedBays }: 
       </Text>
     </View>
   );
+  void renderBadge;
 
   const renderDropdown = () => (
     <View>
@@ -292,14 +296,14 @@ export default function BayAssignmentScreen({ userName, counts, assignedBays }: 
                 // fall back to end_time in the future to include planned sessions.
                 if (r.session_started === true) return true;
                 if (!r.end_time) return false;
-                try { const et = new Date(r.end_time); return !isNaN(et.getTime()) && et.getTime() > Date.now(); } catch (e) { return false; }
+                try { const et = new Date(r.end_time); return !isNaN(et.getTime()) && et.getTime() > Date.now(); } catch (e) { void e; return false; }
               }
               if (r.end_time == null) return true;
-              try { const et = new Date(r.end_time); return !isNaN(et.getTime()) && et.getTime() > Date.now(); } catch (e) { return false; }
+              try { const et = new Date(r.end_time); return !isNaN(et.getTime()) && et.getTime() > Date.now(); } catch (e) { void e; return false; }
             }) : [];
             if (mounted) setPlayers(waiting.map((w: any) => ({ id: w.player_id, name: w.player_name ?? w.session_id, receipt: w.session_id, note: '', plannedDuration: w.planned_duration_minutes ?? null })));
           }
-        } catch (e) { /* ignore */ }
+        } catch (_e) { void _e; }
 
         // Fetch servicemen (include online flag). Only show servicemen who are currently "present"
         // i.e. have a clock-in and have NOT clocked out. If attendance fetch fails, fall back to full staff list.
@@ -332,12 +336,12 @@ export default function BayAssignmentScreen({ userName, counts, assignedBays }: 
               const svc = Array.isArray(staff) ? staff.filter((s: any) => isServicemanRole(s.role)).sort((a: any,b: any)=> (a.employee_id||0)-(b.employee_id||0)) : [];
               if (mounted) setServicemen(svc.map((s: any) => ({ id: s.employee_id, name: s.full_name || s.username, online: !!s.online })));
             }
-          } catch (e) {
+          } catch (e) { void e;
             // attendance fetch errored - fall back to staff-only list
             const svc = Array.isArray(staff) ? staff.filter((s: any) => isServicemanRole(s.role)).sort((a: any,b: any)=> (a.employee_id||0)-(b.employee_id||0)) : [];
             if (mounted) setServicemen(svc.map((s: any) => ({ id: s.employee_id, name: s.full_name || s.username, online: !!s.online })));
           }
-        } catch (e) { /* ignore */ }
+        } catch (_e) { void _e; }
 
         // Fetch bay overview so we can list actual available bays (matches mock dropdown behavior)
         try {
@@ -377,8 +381,8 @@ export default function BayAssignmentScreen({ userName, counts, assignedBays }: 
               }
             }
           }
-        } catch (e) { /* ignore */ }
-      } catch (e) { /* ignore */ }
+        } catch (_e) { void _e; }
+      } catch (_e) { void _e; }
     })();
     return () => { mounted = false; };
   }, []);

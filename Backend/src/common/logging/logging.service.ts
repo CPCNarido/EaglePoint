@@ -22,8 +22,7 @@ export class LoggingService {
       if (!actorId) return;
       // Cast to any to avoid mismatches when Prisma client types are not yet regenerated
       await this.prisma.systemLog.create({
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-ignore
+        // (we intentionally cast to any for best-effort logging)
         data: {
           employee_id: actorId,
           role: role as any,

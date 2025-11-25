@@ -47,7 +47,7 @@ export default function RealTimeBayOverview({ overview, settings, highlightedBay
       if (hasPlayer && start && !end) return 'Open';
       if (end) return 'Timed';
       return null;
-    } catch (e) { return null; }
+    } catch (_e) { void _e; return null; }
   };
 
   const getAdminBayColor = (b: any) => {
@@ -64,7 +64,7 @@ export default function RealTimeBayOverview({ overview, settings, highlightedBay
         return '#2E7D32';
       }
       return getColorFromStatus(String(b?.status ?? 'Available'));
-    } catch (e) { return '#2E7D32'; }
+    } catch (_e) { void _e; return '#2E7D32'; }
   };
 
   useEffect(() => {
@@ -94,7 +94,7 @@ export default function RealTimeBayOverview({ overview, settings, highlightedBay
         else if (b?.player) {
           player = String(b.player.nickname ?? b.player.full_name ?? b.player.name ?? b.player.player_id ?? '');
         } else if (b?.playerName) player = String(b.playerName);
-      } catch (e) { player = null; }
+      } catch (_e) { void _e; player = null; }
       const ballsUsed = b?.total_balls ?? b?.balls_used ?? b?.bucket_count ?? b?.transactions_count ?? null;
       setSelectedBay(num);
       setSelectedBayDetails({ player: player ?? '—', ballsUsed: ballsUsed ?? '—', raw: b });

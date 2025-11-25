@@ -47,17 +47,21 @@ export default function TeamChats() {
   const prevMessagesCount = useRef(0);
   const socketRef = useRef<Socket | null>(null);
   // buffered outgoing messages that have been sent over WS but not yet persisted
-  const outgoingBufferRef = useRef<Array<any>>([]);
+  const outgoingBufferRef = useRef<any[]>([]);
+  // keep a ref to the selected chat so socket handlers don't close over stale state
+  const selectedChatRef = useRef<ChatRoom | null>(null);
   const [wsStatus, setWsStatus] = useState<'connecting'|'open'|'closed'|'error'|'disabled'>('connecting');
   const [bufferedCount, setBufferedCount] = useState<number>(0);
   const retryCountRef = useRef<number>(0);
   const reconnectTimerRef = useRef<any>(null);
   const prevSelectedChatRef = useRef<ChatRoom | null>(null);
   const [showDebug, setShowDebug] = useState(false);
+  void setShowDebug;
 
   useEffect(() => {
     // On mount: keep the clock ticking, fetch admin and then load the roster.
     const t = setInterval(() => setNow(new Date()), 1000);
+    void t;
     (async () => {
       try {
         const id = await fetchAdmin();
@@ -81,7 +85,7 @@ export default function TeamChats() {
               try {
                 // disconnect existing if any
                 if (socketRef.current) {
-                  try { socketRef.current.disconnect(); } catch {};
+                  try { socketRef.current.disconnect(); } catch (_e) { void _e; };
                   socketRef.current = null;
                 }
                 const opts: any = { transports: ['websocket'], autoConnect: true, reconnection: true, auth: {} };
@@ -114,15 +118,17 @@ export default function TeamChats() {
                       sent_at: m.sent_at ?? new Date().toISOString(),
                     };
 
-                    if (selectedChat) {
-                      if (selectedChat.chat_id && incoming.chat_id === selectedChat.chat_id) {
+                    // Use ref to avoid stale closure over `selectedChat`.
+                    const currentSelected = selectedChatRef.current;
+                    if (currentSelected) {
+                      if (currentSelected.chat_id && incoming.chat_id === currentSelected.chat_id) {
                         setMessages((prev) => [...prev, incoming]);
-                        try { setLastPreview((p) => ({ ...p, [`chat-${incoming.chat_id}`]: String(incoming.content).slice(0, 80) })); } catch {}
+                        try { setLastPreview((p) => ({ ...p, [`chat-${incoming.chat_id}`]: String(incoming.content).slice(0, 80) })); } catch (_e) { void _e; }
                         return;
                       }
-                      if (selectedChat.employee_id && incoming.sender_id === selectedChat.employee_id) {
+                      if (currentSelected.employee_id && incoming.sender_id === currentSelected.employee_id) {
                         setMessages((prev) => [...prev, incoming]);
-                        try { setLastPreview((p) => ({ ...p, [`emp-${selectedChat.employee_id}`]: String(incoming.content).slice(0, 80) })); } catch {}
+                        try { setLastPreview((p) => ({ ...p, [`emp-${currentSelected.employee_id}`]: String(incoming.content).slice(0, 80) })); } catch (_e) { void _e; }
                         return;
                       }
                     }
@@ -131,41 +137,42 @@ export default function TeamChats() {
                       const key = incoming.chat_id ? `chat-${incoming.chat_id}` : `emp-${incoming.sender_id}`;
                       setLastPreview((prev) => ({ ...prev, [key]: String(incoming.content).slice(0, 80) }));
                       setUnseenCounts((prev) => ({ ...(prev || {}), [key]: (prev?.[key] ?? 0) + 1 }));
-                    } catch {}
-                  } catch (e) { /* ignore */ }
+                    } catch (_e) { void _e; }
+                  } catch (_e) { void _e; }
                 });
-              } catch (e) {
-                console.log('[TeamChats] socket.io creation failed', e);
+              } catch (_e) {
+                console.log('[TeamChats] socket.io creation failed', _e);
                 socketRef.current = null;
                 setWsStatus('disabled');
               }
-            } catch (e) {
-              console.log('[TeamChats] connectWebSocket failed', e);
+            } catch (_e) {
+              console.log('[TeamChats] connectWebSocket failed', _e);
               setWsStatus('error');
             }
           };
 
           let cancelled = false;
+          void cancelled;
           connectWebSocket();
 
           return () => {
             cancelled = true;
             try {
               // flush any buffered outgoing messages when component unmounts
-              (async () => { try { await flushBufferedMessages(); } catch {} })();
+              (async () => { try { await flushBufferedMessages(); } catch (_e) { void _e; } })();
               if (reconnectTimerRef.current) { clearTimeout(reconnectTimerRef.current); reconnectTimerRef.current = null; }
-              if (socketRef.current) { try { socketRef.current.disconnect(); } catch {} socketRef.current = null; }
-            } catch {};
+              if (socketRef.current) { try { socketRef.current.disconnect(); } catch (_e) { void _e; } socketRef.current = null; }
+            } catch (_e) { void _e; };
           };
-      } catch (e) { /* ignore */ }
+      } catch (_e) { void _e; }
     })();
 
     return () => {
       try {
         // flush any buffered outgoing messages when component unmounts
-        (async () => { try { await flushBufferedMessages(); } catch {} })();
-        if (socketRef.current) { try { socketRef.current.disconnect(); } catch {} socketRef.current = null; }
-      } catch {};
+        (async () => { try { await flushBufferedMessages(); } catch (_e) { void _e; } })();
+        if (socketRef.current) { try { socketRef.current.disconnect(); } catch (_e) { void _e; } socketRef.current = null; }
+      } catch (_e) { void _e; };
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [adminEmployeeId]);
@@ -180,7 +187,7 @@ export default function TeamChats() {
           if (prev.employee_id) await flushBufferedMessages({ employeeId: prev.employee_id });
           else if (prev.chat_id !== undefined) await flushBufferedMessages({ chat_id: prev.chat_id });
         }
-      } catch (e) { /* ignore flush errors */ }
+          } catch (_e) { void _e; /* ignore flush errors */ }
       prevSelectedChatRef.current = selectedChat;
     })();
   }, [selectedChat]);
@@ -217,8 +224,8 @@ export default function TeamChats() {
       }
       // remove flushed items from buffer
       outgoingBufferRef.current = buf.filter((it) => !toFlush.includes(it));
-      try { setBufferedCount(outgoingBufferRef.current.length); } catch {}
-    } catch (e) { /* ignore best-effort */ }
+      try { setBufferedCount(outgoingBufferRef.current.length); } catch (_e) { void _e; }
+    } catch (_e) { void _e; /* ignore best-effort */ }
   };
 
   // fetch messages once when the selected chat changes (no polling)
@@ -236,6 +243,29 @@ export default function TeamChats() {
     })();
   }, [selectedChat]);
 
+  // keep selectedChatRef in sync for socket handlers
+  useEffect(() => {
+    selectedChatRef.current = selectedChat;
+  }, [selectedChat]);
+
+  // Ensure we join the server chat room for the selected chat so we reliably
+  // receive room-level broadcasts. Also leave the previous room when switching.
+  useEffect(() => {
+    try {
+      const prev = prevSelectedChatRef.current;
+      // leave previous room if we were in one
+      if (socketRef.current && prev && prev.chat_id) {
+        try { socketRef.current.emit('leave:chat', { chat_id: Number(prev.chat_id) }); } catch (_e) { void _e; }
+      }
+
+      // join the newly-selected chat room (if it has a chat_id)
+      if (socketRef.current && selectedChat && selectedChat.chat_id) {
+        try { socketRef.current.emit('join:chat', { chat_id: Number(selectedChat.chat_id) }, (ack: any) => { try { console.log('join:chat ack', ack); } catch (_e) { void _e; } }); } catch (_e) { void _e; }
+      }
+    } catch (_e) { void _e; }
+    // do not update prevSelectedChatRef here; the other effect handles that
+  }, [selectedChat]);
+
   const getBaseUrl = async () => {
     let baseUrl = Platform.OS === 'android' ? 'http://10.127.147.53:3000' : 'http://localhost:3000';
     try {
@@ -244,7 +274,7 @@ export default function TeamChats() {
       const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
       const override = AsyncStorage ? await AsyncStorage.getItem('backendBaseUrlOverride') : null;
       if (override) baseUrl = override;
-    } catch {}
+    } catch (_e) { void _e; }
     return baseUrl;
   };
 
@@ -270,7 +300,7 @@ export default function TeamChats() {
       const res = await fetch(`${baseUrl}/api/admin/me`, { method: 'GET', credentials: 'include', headers });
       if (!res.ok) return;
       const d = await res.json();
-      try { console.log('fetchAdmin response', d); } catch {}
+      try { console.log('fetchAdmin response', d); } catch (_e) { void _e; }
   const name = d?.full_name || d?.name || d?.username || 'Admin';
   setAdminName(name);
   // prefer employee_id when available (explicit requirement)
@@ -293,8 +323,8 @@ export default function TeamChats() {
         const r2 = await fetch(`${baseUrl}/api/admin/staff`, { method: 'GET', credentials: 'include', headers: headers2 });
         if (r2.ok) {
           const staff = await r2.json();
-          try { console.log('fetchRooms: raw staff response', staff); } catch {}
-          if (Array.isArray(staff) && staff.length) {
+          try { console.log('fetchRooms: raw staff response', staff); } catch (_e) { void _e; }
+            if (Array.isArray(staff) && staff.length) {
             // Prefer explicit employee_id field when present. Map presence if provided by API.
             const mapped = staff.map((s: any) => ({
               employee_id: Number(s.employee_id ?? s.id),
@@ -302,11 +332,11 @@ export default function TeamChats() {
               role: s.role ?? '',
               online: Boolean(s.online ?? false),
             }));
-            try { console.log('fetchRooms: mapped staff', mapped, 'adminEmployeeId', adminEmployeeId); } catch {}
+            try { console.log('fetchRooms: mapped staff', mapped, 'adminEmployeeId', adminEmployeeId); } catch (_e) { void _e; }
             roomsAcc.push(...mapped);
           }
         }
-      } catch {}
+      } catch (_e) { void _e; }
 
       // dedupe rooms by employee_id and remove self (show only other staff)
       const dedupeRooms = (arr: ChatRoom[]) => {
@@ -328,11 +358,11 @@ export default function TeamChats() {
       // so we do not fetch or append chat rooms here. Keep roomsAcc limited to staff entries.
 
       const deduped = dedupeRooms(roomsAcc);
-      try { console.log('fetchRooms: deduped roster', deduped); } catch {}
+      try { console.log('fetchRooms: deduped roster', deduped); } catch (_e) { void _e; }
       setRooms(deduped);
       // auto-select first staff or first group by preference
       if (deduped.length) setSelectedChat(deduped[0]);
-    } catch {}
+    } catch (_e) { void _e; }
     finally { setLoadingRooms(false); }
   };
 
@@ -370,11 +400,11 @@ export default function TeamChats() {
                   }
                 }
                 setUnseenCounts(updated);
-              } catch {}
+              } catch (_e) { void _e; }
               return next;
             });
         }
-      } catch {}
+      } catch (_e) { void _e; }
     })();
   }, [adminEmployeeId]);
 
@@ -419,13 +449,13 @@ export default function TeamChats() {
               if (selectedChat) {
                 if (selectedChat.chat_id && incoming.chat_id === selectedChat.chat_id) {
                   setMessages((prev) => [...prev, incoming]);
-                  try { setLastPreview((p) => ({ ...p, [`chat-${incoming.chat_id}`]: String(incoming.content).slice(0, 80) })); } catch {}
+                  try { setLastPreview((p) => ({ ...p, [`chat-${incoming.chat_id}`]: String(incoming.content).slice(0, 80) })); } catch (_e) { void _e; }
                   return;
                 }
                 // For direct chats (selectedChat.employee_id), match by sender_id
                 if (selectedChat.employee_id && incoming.sender_id === selectedChat.employee_id) {
                   setMessages((prev) => [...prev, incoming]);
-                  try { setLastPreview((p) => ({ ...p, [`emp-${selectedChat.employee_id}`]: String(incoming.content).slice(0, 80) })); } catch {}
+                  try { setLastPreview((p) => ({ ...p, [`emp-${selectedChat.employee_id}`]: String(incoming.content).slice(0, 80) })); } catch (_e) { void _e; }
                   return;
                 }
               }
@@ -435,23 +465,21 @@ export default function TeamChats() {
                 const key = incoming.chat_id ? `chat-${incoming.chat_id}` : `emp-${incoming.sender_id}`;
                 setLastPreview((prev) => ({ ...prev, [key]: String(incoming.content).slice(0, 80) }));
                 setUnseenCounts((prev) => ({ ...(prev || {}), [key]: (prev?.[key] ?? 0) + 1 }));
-              } catch {}
-            } catch (e) { /* ignore parse errors */ }
+              } catch (_e) { void _e; }
+              } catch (_e) { void _e; /* ignore parse errors */ }
           });
 
           es.onerror = () => {
-            try { es.close(); } catch {}
+            try { es.close(); } catch (_e) { void _e; }
           };
-        } catch (e) {
-          // ignore EventSource creation errors
+        } catch (_e) { void _e; // ignore EventSource creation errors
         }
-      } catch (e) {
-        // ignore
+      } catch (_e) { void _e; // ignore
       }
     })();
 
     return () => {
-      try { if (es) es.close(); } catch {}
+      try { if (es) es.close(); } catch (_e) { void _e; }
     };
   }, [adminEmployeeId, selectedChat]);
 
@@ -490,18 +518,18 @@ export default function TeamChats() {
             });
             setMessages(normalized);
             // clear unseen count for this chat since user loaded it
-            try { setUnseenCounts((prev) => { const cp = { ...prev }; delete cp[`chat-${chatId}`]; return cp; }); } catch {}
+            try { setUnseenCounts((prev) => { const cp = { ...prev }; delete cp[`chat-${chatId}`]; return cp; }); } catch (_e) { void _e; }
             // update preview for this chat
             try {
               const last = normalized.length ? normalized[normalized.length - 1] : null;
               if (last) setLastPreview((p) => ({ ...p, [`chat-${chatId}`]: String(last.content).slice(0, 80) }));
-            } catch {}
+            } catch (_e) { void _e; }
             return;
           }
-        } catch {}
+        } catch (_e) { void _e; }
       }
       setMessages([]);
-    } catch {}
+    } catch (_e) { void _e; }
     finally { setLoadingMessages(false); }
   };
 
@@ -520,7 +548,7 @@ export default function TeamChats() {
           let senderName = m.sender_name ?? (m.sender?.full_name ?? 'Unknown');
           // Strict ownership: only trust server-provided senderId. Do not infer ownership by name/role.
           if (senderId === undefined) {
-            try { console.log('fetchDirectMessages: raw message missing sender_id', m); } catch {}
+            try { console.log('fetchDirectMessages: raw message missing sender_id', m); } catch (_e) { void _e; }
           }
           return {
             message_id: m.message_id ?? m.id,
@@ -533,34 +561,33 @@ export default function TeamChats() {
         });
         setMessages(normalized);
   // clear unseen count for this emp chat
-  try { setUnseenCounts((prev) => { const cp = { ...prev }; delete cp[`emp-${employeeId}`]; return cp; }); } catch {}
+  try { setUnseenCounts((prev) => { const cp = { ...prev }; delete cp[`emp-${employeeId}`]; return cp; }); } catch (_e) { void _e; }
         try {
           const last = normalized.length ? normalized[normalized.length - 1] : null;
-          if (last) setLastPreview((p) => ({ ...p, [`emp-${employeeId}`]: String(last.content).slice(0, 80) }));
-        } catch {}
-        return;
+          if (last) {
+            try { setLastPreview((p) => ({ ...p, [`emp-${employeeId}`]: String(last.content).slice(0, 80) })); } catch (_e) { void _e; }
+          }
+        } catch (_e) { void _e; }
       }
-      setMessages([]);
-    } catch {}
+    } catch (_e) { void _e; }
     finally { setLoadingMessages(false); }
-  };
+    };
 
-  // auto-scroll to end when new messages are added
+    // auto-scroll to end when new messages are added
   useEffect(() => {
     try {
       if (messages.length > prevMessagesCount.current) {
         // scroll to end
-        // Prefer FlatList.scrollToEnd when available, otherwise fall back to scrollToOffset
         try {
           if (listRef.current && typeof (listRef.current as any).scrollToEnd === 'function') {
-            // small delay helps avoid a visual jump when switching chats
-            setTimeout(() => { try { (listRef.current as any).scrollToEnd({ animated: true }); } catch {} }, 60);
+            // small delay to avoid visual jump
+            setTimeout(() => { try { (listRef.current as any).scrollToEnd({ animated: true }); } catch (_e) { void _e; } }, 60);
           } else if (listRef.current && typeof (listRef.current as any).scrollToOffset === 'function') {
-            setTimeout(() => { try { (listRef.current as any).scrollToOffset({ offset: 99999, animated: true }); } catch {} }, 60);
+            setTimeout(() => { try { (listRef.current as any).scrollToOffset({ offset: 99999, animated: true }); } catch (_e) { void _e; } }, 60);
           }
-        } catch {}
+        } catch (_e) { void _e; }
       }
-    } catch {}
+    } catch (_e) { void _e; }
     prevMessagesCount.current = messages.length;
   }, [messages]);
 
@@ -584,16 +611,16 @@ export default function TeamChats() {
               } else {
                 // ack failed: keep in buffer for later persistence
                 outgoingBufferRef.current.push({ tempId, chat_id: chatId, content });
-                try { setBufferedCount(outgoingBufferRef.current.length); } catch {}
+                try { setBufferedCount(outgoingBufferRef.current.length); } catch (_e) { void _e; }
                 console.log('[TeamChats] sendMessage: ack failed, buffered for persistence', { bufferedCount: outgoingBufferRef.current.length });
               }
-            } catch (e) { /* ignore ack handler errors */ }
+            } catch (_e) { void _e; /* ignore ack handler errors */ }
           });
           // preview update
-          try { setLastPreview((p) => ({ ...p, [`chat-${chatId}`]: String(content).slice(0, 80) })); } catch {}
+          try { setLastPreview((p) => ({ ...p, [`chat-${chatId}`]: String(content).slice(0, 80) })); } catch (_e) { void _e; }
           return true;
-        } catch (e) {
-          // fall through to HTTP fallback
+        } catch (_e) {
+          void _e; // fall through to HTTP fallback
         }
       }
 
@@ -614,16 +641,16 @@ export default function TeamChats() {
           // replace temp message with server message
           const serverSentAt = m?.sent_at ?? new Date().toISOString();
           setMessages((prev) => prev.map((it) => (it.tempId === tempId ? { message_id: m?.message_id ?? undefined, chat_id: chatId, sender_name: adminName, sender_id: adminEmployeeId ?? undefined, content, sent_at: serverSentAt, status: 'sent' } : it)));
-          try { setLastPreview((p) => ({ ...p, [`chat-${chatId}`]: String(content).slice(0, 80) })); } catch {}
-          try { if (typeof window !== 'undefined' && window.dispatchEvent) window.dispatchEvent(new Event('overview:updated')); } catch {}
+          try { setLastPreview((p) => ({ ...p, [`chat-${chatId}`]: String(content).slice(0, 80) })); } catch (_e) { void _e; }
+          try { if (typeof window !== 'undefined' && window.dispatchEvent) window.dispatchEvent(new Event('overview:updated')); } catch (_e) { void _e; }
           // re-fetch to get canonical message(s) from db
           await fetchMessages(chatId);
           console.log('[TeamChats] sendMessage: HTTP send ok, server message id', m?.message_id);
           return true;
-        } catch {}
+        } catch (_e) { void _e; }
       }
-    } catch (e) {
-      /* ignore */
+    } catch (_e) {
+      void _e; /* ignore */
     }
     // mark failed
     console.log('[TeamChats] sendMessage: failed to send', { tempId });
@@ -648,14 +675,14 @@ export default function TeamChats() {
                 setMessages((prev) => prev.map((it) => (it.tempId === tempId ? { ...it, status: 'sent', message_id: ack.message.message_id ?? it.message_id, sent_at: ack.message.sent_at ?? it.sent_at } : it)));
               } else {
                 outgoingBufferRef.current.push({ tempId, employeeId, content });
-                try { setBufferedCount(outgoingBufferRef.current.length); } catch {}
+                try { setBufferedCount(outgoingBufferRef.current.length); } catch (_e) { void _e; }
                 console.log('[TeamChats] sendDirectMessage: ack failed, buffered for persistence', { bufferedCount: outgoingBufferRef.current.length });
               }
-            } catch (e) { /* ignore */ }
+            } catch (_e) { void _e; }
           });
-          try { setLastPreview((p) => ({ ...p, [`emp-${employeeId}`]: String(content).slice(0, 80) })); } catch {}
+          try { setLastPreview((p) => ({ ...p, [`emp-${employeeId}`]: String(content).slice(0, 80) })); } catch (_e) { void _e; }
           return true;
-        } catch (e) { /* fall back to HTTP */ }
+        } catch (_e) { void _e; /* fall back to HTTP */ }
       }
 
       // Fallback to HTTP
@@ -670,13 +697,13 @@ export default function TeamChats() {
       const m = await r.json();
       const serverSentAt = m?.sent_at ?? new Date().toISOString();
       setMessages((prev) => prev.map((it) => (it.tempId === tempId ? { message_id: m?.message_id ?? undefined, chat_id: m?.chat_id ?? m?.chatId ?? 0, sender_name: adminName, sender_id: adminEmployeeId ?? undefined, content, sent_at: serverSentAt, status: 'sent' } : it)));
-      try { if (typeof window !== 'undefined' && window.dispatchEvent) window.dispatchEvent(new Event('overview:updated')); } catch {}
+      try { if (typeof window !== 'undefined' && window.dispatchEvent) window.dispatchEvent(new Event('overview:updated')); } catch (_e) { void _e; }
       await fetchDirectMessages(employeeId);
-      try { setLastPreview((p) => ({ ...p, [`emp-${employeeId}`]: String(content).slice(0, 80) })); } catch {}
+      try { setLastPreview((p) => ({ ...p, [`emp-${employeeId}`]: String(content).slice(0, 80) })); } catch (_e) { void _e; }
       console.log('[TeamChats] sendDirectMessage: HTTP send ok, server message id', m?.message_id ?? m?.message?.message_id ?? null);
       return true;
-    } catch (e) {
-      console.log('[TeamChats] sendDirectMessage: unexpected error', e);
+    } catch (_e) {
+      console.log('[TeamChats] sendDirectMessage: unexpected error', _e);
       setMessages((prev) => prev.map((it) => (it.tempId === tempId ? { ...it, status: 'failed' } : it)));
       return false;
     }
@@ -702,6 +729,9 @@ export default function TeamChats() {
     // Per user request: do not wire the red urgent button to any function here.
     return false;
   };
+
+  // Mark sendBroadcast referenced to avoid unused-vars warning (function intentionally unused)
+  void sendBroadcast;
 
   const onSendPressed = async () => {
     if (!selectedChat) return;
@@ -747,12 +777,12 @@ export default function TeamChats() {
             } as ChatMessage));
             setMessages((prev) => [...normalized, ...prev]);
             // attempt to keep scroll position stable
-            try { if (listRef.current && typeof (listRef.current as any).scrollToOffset === 'function') (listRef.current as any).scrollToOffset({ offset: normalized.length * 80, animated: false }); } catch {}
+            try { if (listRef.current && typeof (listRef.current as any).scrollToOffset === 'function') (listRef.current as any).scrollToOffset({ offset: normalized.length * 80, animated: false }); } catch (_e) { void _e; }
             break;
           }
-        } catch {}
+        } catch (_e) { void _e; }
       }
-    } catch {}
+    } catch (_e) { void _e; }
     finally { setLoadingEarlier(false); }
   };
 
@@ -805,7 +835,7 @@ export default function TeamChats() {
   const groupedRooms = React.useMemo(() => {
     const order = ['Dispatcher', 'Cashier', 'BallHandler', 'Admin', 'Other'];
     const titleMap: Record<string, string> = { Dispatcher: 'Dispatchers', Cashier: 'Cashiers', BallHandler: 'Ball Handler', Admin: 'Admins', Other: 'Other' };
-    const groups: Array<{ key: string; title: string; items: ChatRoom[] }> = [];
+    const groups: { key: string; title: string; items: ChatRoom[] }[] = [];
 
     // apply roster search filter (name or role)
     const filtered = (rooms || []).filter((ro) => {
@@ -971,9 +1001,9 @@ export default function TeamChats() {
                   try {
                     if (isAtBottom && listRef.current && typeof (listRef.current as any).scrollToEnd === 'function') {
                       // small timeout to allow layout to stabilize and avoid flicker when switching chats
-                      setTimeout(() => { try { (listRef.current as any).scrollToEnd({ animated: true }); } catch {} }, 60);
+                      setTimeout(() => { try { (listRef.current as any).scrollToEnd({ animated: true }); } catch (_e) { void _e; } }, 60);
                     }
-                  } catch {}
+                  } catch (_e) { void _e; }
                 }}
                 onScroll={(e: any) => {
                   try {
@@ -981,7 +1011,7 @@ export default function TeamChats() {
                     const paddingToBottom = 40;
                     const atBottom = (layoutMeasurement.height + contentOffset.y) >= (contentSize.height - paddingToBottom);
                     setIsAtBottom(Boolean(atBottom));
-                  } catch {}
+                  } catch (_e) { void _e; }
                 }}
                 initialNumToRender={20}
                 scrollEventThrottle={100}
@@ -993,7 +1023,7 @@ export default function TeamChats() {
               <TouchableOpacity
                 style={styles.floatingLatestButton}
                 onPress={() => {
-                  try { if (listRef.current && typeof (listRef.current as any).scrollToEnd === 'function') (listRef.current as any).scrollToEnd({ animated: true }); setIsAtBottom(true); } catch {}
+                  try { if (listRef.current && typeof (listRef.current as any).scrollToEnd === 'function') (listRef.current as any).scrollToEnd({ animated: true }); setIsAtBottom(true); } catch (_e) { void _e; }
                 }}
               >
                 <Text style={styles.floatingLatestText}>Latest ↓</Text>

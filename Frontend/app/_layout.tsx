@@ -2,7 +2,7 @@ import { Stack } from "expo-router";
 import React, { useEffect } from 'react';
 import SettingsProvider from './lib/SettingsProvider';
 import { enterFullScreen, exitFullScreen } from './(main)/utils/fullscreen';
-import { Keyboard, Platform } from 'react-native';
+import { Keyboard } from 'react-native';
 
 export default function RootLayout() {
   useEffect(() => {
@@ -13,7 +13,7 @@ export default function RootLayout() {
       if (!mounted) return;
       try {
         await enterFullScreen();
-      } catch {}
+      } catch (_e) { void _e; }
     })();
 
     // When the keyboard opens on many Android/tablet setups while in immersive mode,
@@ -24,12 +24,12 @@ export default function RootLayout() {
       try {
         // Only do this on platforms where immersive mode impacts keyboard behavior
         await exitFullScreen();
-      } catch {}
+      } catch (_e) { void _e; }
     };
     const onKeyboardHide = async () => {
       try {
         await enterFullScreen();
-      } catch {}
+      } catch (_e) { void _e; }
     };
 
     const showSub = Keyboard.addListener('keyboardDidShow', onKeyboardShow);
@@ -37,8 +37,8 @@ export default function RootLayout() {
 
     return () => {
       mounted = false;
-      try { showSub.remove(); } catch {}
-      try { hideSub.remove(); } catch {}
+      try { showSub.remove(); } catch (_e) { void _e; }
+      try { hideSub.remove(); } catch (_e) { void _e; }
       // restore UI on unmount
       exitFullScreen().catch(() => {});
     };

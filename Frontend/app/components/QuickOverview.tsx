@@ -62,7 +62,7 @@ export default function QuickOverview({ overview, settings, currencySymbol = '$'
               }
               return String(present);
             }
-          } catch (e) { /* ignore */ }
+          } catch (_e) { void _e; }
           return '—';
         })()}
         subtitle={'Total Staffs'}
@@ -71,11 +71,11 @@ export default function QuickOverview({ overview, settings, currencySymbol = '$'
       <OverviewCard title="Next Tee Time" value={(() => {
         if (!overview || !overview.nextTeeTime) return '—';
         if (overview.nextTeeTime === 'Bay Ready') return 'Bay Ready';
-        try { return new Date(overview.nextTeeTime).toLocaleTimeString(); } catch { return String(overview.nextTeeTime); }
+        try { return new Date(overview.nextTeeTime).toLocaleTimeString(); } catch (_e) { void _e; return String(overview.nextTeeTime); }
       })()} subtitle={(() => {
         if (!overview || !overview.nextTeeTime) return '';
         if (overview.nextTeeTime === 'Bay Ready') return '';
-        try { return new Date(overview.nextTeeTime).toLocaleDateString(); } catch { return ''; }
+        try { return new Date(overview.nextTeeTime).toLocaleDateString(); } catch (_e) { void _e; return ''; }
       })()} color="#6D4C41" />
     </View>
   );

@@ -25,7 +25,7 @@ export async function processFileForUpload(file: any, onSealUpload?: (file: any)
       // Native-like asset with uri property: fetch blob then try to construct a
       // File when possible, otherwise pass an object with blob and metadata.
       if (file && typeof file.uri === 'string') {
-        try {
+    try {
           const resp = await fetch(file.uri);
           const blob = await resp.blob();
           const name = file.fileName || file.name || 'seal.jpg';
@@ -35,9 +35,7 @@ export async function processFileForUpload(file: any, onSealUpload?: (file: any)
           if (typeof File !== 'undefined') {
             try {
               payload = new File([blob], name, { type });
-            } catch (e) {
-              payload = { uri: file.uri, blob, name, type };
-            }
+            } catch (_e) { void _e; payload = { uri: file.uri, blob, name, type }; }
           } else {
             payload = { uri: file.uri, blob, name, type };
           }
@@ -45,13 +43,9 @@ export async function processFileForUpload(file: any, onSealUpload?: (file: any)
           const uploaded = await onSealUpload(payload);
           if (uploaded) return { uploadedUrl: uploaded };
           return { uploadedUrl: null, error: 'Upload did not return a URL' };
-        } catch (err: any) {
-          return { uploadedUrl: null, error: err?.message ? String(err.message) : 'Fetch failed' };
-        }
+        } catch (err: any) { const _err = err as any; return { uploadedUrl: null, error: _err?.message ? String(_err.message) : 'Fetch failed' }; }
       }
-    } catch (err: any) {
-      return { uploadedUrl: null, error: err?.message ? String(err.message) : 'Upload failed' };
-    }
+    } catch (err: any) { const _err = err as any; return { uploadedUrl: null, error: _err?.message ? String(_err.message) : 'Upload failed' }; }
   }
 
   // No upload handler or upload failed — produce a local preview where
@@ -60,9 +54,7 @@ export async function processFileForUpload(file: any, onSealUpload?: (file: any)
     try {
       const url = (window as any).URL.createObjectURL(file);
       return { uploadedUrl: null, previewUri: url };
-    } catch (e) {
-      return { uploadedUrl: null, previewUri: null, error: 'Failed to create preview' };
-    }
+    } catch (_e) { void _e; return { uploadedUrl: null, previewUri: null, error: 'Failed to create preview' }; }
   }
 
   if (file && typeof file.uri === 'string') {

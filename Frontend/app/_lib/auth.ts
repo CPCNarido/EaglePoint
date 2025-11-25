@@ -1,5 +1,10 @@
 import { Platform } from 'react-native';
 
+// Intentional: only named exports. Remove default export to avoid import/no-named-as-default-member warnings.
+
+// Provide a harmless default export so Expo Router won't treat this file as a broken route.
+import React from 'react';
+
 const DEFAULT_KEYS = ['authToken', 'token', 'refreshToken', 'user', 'EAGLEPOINT_AUTH'];
 
 export async function logoutAndClear(options?: { baseUrl?: string }) {
@@ -8,9 +13,8 @@ export async function logoutAndClear(options?: { baseUrl?: string }) {
 
   // Tell server to revoke refresh token (best-effort). Use credentials to send cookies if available.
   try {
-    await fetch(`${baseUrl}/logout`, { method: 'POST', credentials: 'include' }).catch(() => {});
-  } catch {
-    // ignore
+    await fetch(`${baseUrl}/logout`, { method: 'POST', credentials: 'include' }).catch(() => null);
+  } catch (_e) { void _e; // ignore
   }
 
   // Clear web storage
@@ -18,7 +22,7 @@ export async function logoutAndClear(options?: { baseUrl?: string }) {
     if (typeof window !== 'undefined' && window.localStorage) {
       DEFAULT_KEYS.forEach((k) => window.localStorage.removeItem(k));
     }
-  } catch {}
+  } catch (_e) { void _e; }
 
   // Clear native AsyncStorage if available
   try {
@@ -29,7 +33,7 @@ export async function logoutAndClear(options?: { baseUrl?: string }) {
     if (AsyncStorage && AsyncStorage.multiRemove) {
       await AsyncStorage.multiRemove(DEFAULT_KEYS);
     }
-  } catch {}
+  } catch (_e) { void _e; }
 }
 
 export function saveAccessToken(token?: string) {
@@ -42,7 +46,7 @@ export function saveAccessToken(token?: string) {
     if (typeof window !== 'undefined' && window.localStorage) {
       window.localStorage.setItem('authToken', token);
     }
-  } catch {}
+  } catch (_e) { void _e; }
 
   try {
     // @ts-ignore
@@ -54,10 +58,5 @@ export function saveAccessToken(token?: string) {
     }
   } catch {}
 }
-
-// Intentional: only named exports. Remove default export to avoid import/no-named-as-default-member warnings.
-
-// Provide a harmless default export so Expo Router won't treat this file as a broken route.
-import React from 'react';
 const _HiddenAuthHelper: React.FC = () => null;
 export default _HiddenAuthHelper;

@@ -1,0 +1,53 @@
+// Top-level build file where you can add configuration options common to all sub-projects/modules.
+
+buildscript {
+  repositories {
+    google()
+    mavenCentral()
+  }
+  dependencies {
+    classpath('com.android.tools.build:gradle')
+    classpath('com.facebook.react:react-native-gradle-plugin')
+    classpath('org.jetbrains.kotlin:kotlin-gradle-plugin')
+  }
+}
+
+// Root project ext properties used by many modules. Keep synced with Expo configuration.
+ext {
+  compileSdkVersion = 36
+  minSdkVersion = 24
+  targetSdkVersion = 36
+  buildToolsVersion = "36.0.0"
+  ndkVersion = "27.1.12297006"
+  kotlinVersion = "2.1.20"
+}
+
+allprojects {
+  repositories {
+    google()
+    mavenCentral()
+    maven { url 'https://www.jitpack.io' }
+  }
+}
+
+// Ensure consistent Java/Kotlin target across all subprojects to avoid
+// "Inconsistent JVM-target compatibility" errors during Kotlin compilation.
+subprojects {
+  afterEvaluate { project ->
+    // Force Java compile compatibility to Java 17 where possible.
+    project.tasks.withType(JavaCompile).configureEach { compileTask ->
+      compileTask.sourceCompatibility = JavaVersion.VERSION_17.toString()
+      compileTask.targetCompatibility = JavaVersion.VERSION_17.toString()
+    }
+
+    // If the Kotlin Android plugin is applied, set Kotlin JVM target to 17.
+    project.plugins.withId('kotlin-android') {
+      project.tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach { kotlinCompile ->
+        kotlinCompile.kotlinOptions.jvmTarget = '17'
+      }
+    }
+  }
+}
+
+apply plugin: "expo-root-project"
+apply plugin: "com.facebook.react.rootproject"

@@ -1,5 +1,13 @@
 import { Logger } from '@nestjs/common';
-import { WebSocketGateway, WebSocketServer, OnGatewayConnection, OnGatewayDisconnect, SubscribeMessage, MessageBody, ConnectedSocket } from '@nestjs/websockets';
+import {
+  WebSocketGateway,
+  WebSocketServer,
+  OnGatewayConnection,
+  OnGatewayDisconnect,
+  SubscribeMessage,
+  MessageBody,
+  ConnectedSocket,
+} from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { AdminService } from '../admin/admin.service';
 import { ChatService } from './chat.service';
@@ -17,7 +25,10 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   @WebSocketServer()
   server: Server;
 
-  constructor(private adminService: AdminService, private chatService: ChatService) {}
+  constructor(
+    private adminService: AdminService,
+    private chatService: ChatService,
+  ) {}
 
   handleConnection(client: Socket) {
     try {
@@ -31,12 +42,16 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       if (empId && Number.isFinite(empId)) {
         const room = `emp:${empId}`;
         client.join(room);
-        this.logger.log(`Socket connected for employee=${empId} socketId=${client.id}`);
+        this.logger.log(
+          `Socket connected for employee=${empId} socketId=${client.id}`,
+        );
       } else {
-        this.logger.log(`Socket connected (no employeeId) socketId=${client.id}`);
+        this.logger.log(
+          `Socket connected (no employeeId) socketId=${client.id}`,
+        );
       }
     } catch (e) {
-      this.logger.error('handleConnection error', e as any);
+      this.logger.error('handleConnection error', e);
     }
   }
 
@@ -44,16 +59,20 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     try {
       this.logger.log(`Socket disconnected id=${client.id}`);
     } catch (e) {
-      this.logger.error('handleDisconnect error', e as any);
+      this.logger.error('handleDisconnect error', e);
     }
   }
 
   // Client emits { type: 'message:new', message: { chat_id?, employeeId?, content, tempId?, sender_id? } }
   @SubscribeMessage('message:new')
-  async handleNewMessage(@MessageBody() payload: any, @ConnectedSocket() client: Socket) {
+  async handleNewMessage(
+    @MessageBody() payload: any,
+    @ConnectedSocket() client: Socket,
+  ) {
     try {
       const m = payload?.message ?? payload;
-      if (!m || typeof m !== 'object') return { ok: false, error: 'invalid payload' };
+      if (!m || typeof m !== 'object')
+        return { ok: false, error: 'invalid payload' };
 
       const senderId = Number(m?.sender_id ?? null) || null;
       const content = String(m?.content ?? '').trim();
@@ -64,16 +83,26 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       const tIn = Date.now();
       if (m?.chat_id !== undefined && m?.chat_id !== null) {
         const chatId = Number(m.chat_id);
-        persisted = await this.adminService.postChatMessage(chatId, content, senderId ?? undefined);
+        persisted = await this.adminService.postChatMessage(
+          chatId,
+          content,
+          senderId ?? undefined,
+        );
       } else if (m?.employeeId || m?.employee_id) {
         const emp = Number(m.employeeId ?? m.employee_id);
-        persisted = await this.adminService.postDirectMessage(emp, content, senderId ?? undefined);
+        persisted = await this.adminService.postDirectMessage(
+          emp,
+          content,
+          senderId ?? undefined,
+        );
       } else {
         return { ok: false, error: 'no recipient' };
       }
       const tOut = Date.now();
       const durationMs = tOut - tIn;
-      this.logger.log(`handleNewMessage: persisted tempId=${tempId} durationMs=${durationMs}`);
+      this.logger.log(
+        `handleNewMessage: persisted tempId=${tempId} durationMs=${durationMs}`,
+      );
 
       // Broadcast to connected socket.io clients: emit 'message:new' with persisted message
       const out = { type: 'message:new', message: persisted };
@@ -83,35 +112,40 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
         try {
           this.server.to(chatRoom).emit('message:new', out);
         } catch (e) {
-          this.logger.error(`SocketIO emit to ${chatRoom} failed`, e as any);
+          this.logger.error(`SocketIO emit to ${chatRoom} failed`, e);
         }
 
         // Then, ensure recipients who aren't currently in the chat room still receive the message via their emp:<id> room.
-        const recipients: number[] = await this.chatService.getRecipientEmployeeIds(persisted.chat_id);
+        const recipients: number[] =
+          await this.chatService.getRecipientEmployeeIds(persisted.chat_id);
         const adapter = (this.server as any).sockets?.adapter;
         const chatSet: Set<string> = adapter?.rooms?.get(chatRoom) ?? new Set();
         for (const rid of recipients) {
           try {
             const empRoom = `emp:${rid}`;
-            const empSet: Set<string> = adapter?.rooms?.get(empRoom) ?? new Set();
+            const empSet: Set<string> =
+              adapter?.rooms?.get(empRoom) ?? new Set();
             // If any of this employee's sockets are already in the chat room, skip emp-level emit to avoid duplicate delivery
             let alreadyInChat = false;
             for (const sid of empSet) {
-              if (chatSet && chatSet.has(sid)) { alreadyInChat = true; break; }
+              if (chatSet && chatSet.has(sid)) {
+                alreadyInChat = true;
+                break;
+              }
             }
             if (!alreadyInChat) {
               this.server.to(empRoom).emit('message:new', out);
             }
           } catch (e) {
-            this.logger.error(`SocketIO emit to emp:${rid} failed`, e as any);
+            this.logger.error(`SocketIO emit to emp:${rid} failed`, e);
           }
         }
       } catch (e) {
-        this.logger.error('SocketIO emit failed', e as any);
+        this.logger.error('SocketIO emit failed', e);
       }
 
-  // Acknowledge sender with persisted message and tempId mapping (include timing)
-  return { ok: true, message: persisted, tempId, durationMs };
+      // Acknowledge sender with persisted message and tempId mapping (include timing)
+      return { ok: true, message: persisted, tempId, durationMs };
     } catch (e: any) {
       this.logger.error('handleNewMessage failed', e);
       return { ok: false, error: e?.message ?? String(e) };
@@ -120,31 +154,39 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   // Allow clients to join a chat room so they receive a single-room emit for that chat
   @SubscribeMessage('join:chat')
-  handleJoinChat(@MessageBody() payload: any, @ConnectedSocket() client: Socket) {
+  handleJoinChat(
+    @MessageBody() payload: any,
+    @ConnectedSocket() client: Socket,
+  ) {
     try {
       const chatId = Number(payload?.chat_id ?? payload);
-      if (!Number.isFinite(chatId)) return { ok: false, error: 'invalid chat id' };
+      if (!Number.isFinite(chatId))
+        return { ok: false, error: 'invalid chat id' };
       const room = `chat:${chatId}`;
       client.join(room);
       this.logger.log(`Socket ${client.id} joined ${room}`);
       return { ok: true };
     } catch (e) {
-      this.logger.error('handleJoinChat failed', e as any);
+      this.logger.error('handleJoinChat failed', e);
       return { ok: false, error: 'join failed' };
     }
   }
 
   @SubscribeMessage('leave:chat')
-  handleLeaveChat(@MessageBody() payload: any, @ConnectedSocket() client: Socket) {
+  handleLeaveChat(
+    @MessageBody() payload: any,
+    @ConnectedSocket() client: Socket,
+  ) {
     try {
       const chatId = Number(payload?.chat_id ?? payload);
-      if (!Number.isFinite(chatId)) return { ok: false, error: 'invalid chat id' };
+      if (!Number.isFinite(chatId))
+        return { ok: false, error: 'invalid chat id' };
       const room = `chat:${chatId}`;
       client.leave(room);
       this.logger.log(`Socket ${client.id} left ${room}`);
       return { ok: true };
     } catch (e) {
-      this.logger.error('handleLeaveChat failed', e as any);
+      this.logger.error('handleLeaveChat failed', e);
       return { ok: false, error: 'leave failed' };
     }
   }

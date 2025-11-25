@@ -82,9 +82,7 @@ export default function Splash({ message = 'Loading System Data...', onClose, se
       // If the uri is invalid, log and fall back to placeholder to avoid DNS errors
       console.warn('Splash: invalid image uri detected, falling back to placeholder', { uri });
       return { uri: 'https://via.placeholder.com/88x88/17321d/ffffff?text=Seal' } as any;
-    } catch (e) {
-      return displaySealSource;
-    }
+    } catch (_e) { void _e; return displaySealSource; }
   }, [displaySealSource]);
 
   // Handle file input (web drag/drop or file picker). If an external
@@ -114,10 +112,7 @@ export default function Splash({ message = 'Loading System Data...', onClose, se
             const r = await fetch(payload.uri);
             const b = await r.blob();
             fd.append('file', b, payload.name || 'seal.jpg');
-          } catch (e) {
-            console.warn('Built-in uploader failed to fetch uri payload', e);
-            return null;
-          }
+          } catch (_e) { console.warn('Built-in uploader failed to fetch uri payload', _e); return null; }
         } else {
           return null;
         }
@@ -134,9 +129,7 @@ export default function Splash({ message = 'Loading System Data...', onClose, se
       const t = window.localStorage.getItem('authToken');
       if (t) authHeader = `Bearer ${t}`;
     }
-  } catch (e) {
-    // ignore
-  }
+  } catch (_e) { void _e; }
 
   if (!authHeader) {
     try {
@@ -144,12 +137,10 @@ export default function Splash({ message = 'Loading System Data...', onClose, se
       const AsyncStorageModule = await import('@react-native-async-storage/async-storage').catch(() => null);
       const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
       if (AsyncStorage && AsyncStorage.getItem) {
-        const t = await AsyncStorage.getItem('authToken').catch(() => null);
-        if (t) authHeader = `Bearer ${t}`;
-      }
-    } catch (e) {
-      // ignore
-    }
+          const t = await AsyncStorage.getItem('authToken').catch(() => null);
+          if (t) authHeader = `Bearer ${t}`;
+        }
+      } catch (_e) { void _e; }
   }
 
   const fetchOpts: any = { method: 'POST', body: fd, credentials: 'include' };
@@ -164,10 +155,7 @@ export default function Splash({ message = 'Loading System Data...', onClose, se
         // Backend now returns the persisted repo-relative path as `path`.
         // Fall back to legacy `url` if present for compatibility.
         return json?.path ?? json?.url ?? null;
-      } catch (e) {
-        console.warn('Built-in uploader error', e);
-        return null;
-      }
+      } catch (_e) { console.warn('Built-in uploader error', _e); return null; }
     });
 
     setUploading(true);
@@ -182,9 +170,9 @@ export default function Splash({ message = 'Loading System Data...', onClose, se
       }
       if (res.error) setUploadError(res.error);
     } catch (err: any) {
-      // eslint-disable-next-line no-console
-      console.warn('handleFile error', err);
-      setUploadError(err?.message ? String(err.message) : 'Upload failed');
+      const _err = err as any;
+      console.warn('handleFile error', _err);
+      setUploadError(_err?.message ? String(_err.message) : 'Upload failed');
     } finally {
       setUploading(false);
     }
@@ -197,9 +185,7 @@ export default function Splash({ message = 'Loading System Data...', onClose, se
         if (previewSource && previewSource.uri && previewSource.uri.startsWith && previewSource.uri.startsWith('blob:')) {
           URL.revokeObjectURL(previewSource.uri);
         }
-      } catch (e) {
-        // ignore
-      }
+      } catch (_e) { void _e; }
     };
   }, [previewSource]);
 
@@ -252,7 +238,7 @@ export default function Splash({ message = 'Loading System Data...', onClose, se
             try {
               const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
               if (!permission.granted) {
-                // eslint-disable-next-line no-console
+                 
                 console.warn('Media library permission not granted');
                 return;
               }
@@ -271,10 +257,7 @@ export default function Splash({ message = 'Loading System Data...', onClose, se
               // Pass the picked asset to the shared handler which will preview
               // and optionally upload.
               handleFile(picked);
-            } catch (err) {
-              // eslint-disable-next-line no-console
-              console.warn('Image picker failed', err);
-            }
+            } catch (err) { const _err = err as any; console.warn('Image picker failed', _err); }
           }}
           {...(Platform.OS === 'web' ? {
             onDragOver: (e: any) => { e.preventDefault(); setIsDragOver(true); },

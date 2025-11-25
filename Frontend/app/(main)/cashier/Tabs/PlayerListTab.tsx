@@ -1,8 +1,8 @@
 // ActivePlayerList.js
 import React, { useEffect, useState, useMemo } from 'react';
-import { View, Text, TextInput, TouchableOpacity, FlatList, StyleSheet, SafeAreaView, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, FlatList, StyleSheet, SafeAreaView, ActivityIndicator , Platform } from 'react-native';
 import CashierHeader from '../components/CashierHeader';
-import { Platform } from 'react-native';
+
 import { fetchWithAuth } from '../../../_lib/fetchWithAuth';
 
 type SessionRow = {
@@ -61,9 +61,9 @@ export default function ActivePlayerList({ userName }: { userName?: string }) {
           if (s.session_started === true) return true;
           if (s.end_time) {
             try {
-              const et = new Date(s.end_time);
-              if (!isNaN(et.getTime())) return et.getTime() > Date.now();
-            } catch (e) { void e; }
+                const et = new Date(s.end_time);
+                if (!isNaN(et.getTime())) return et.getTime() > Date.now();
+              } catch (_e) { void _e; }
           }
           return false;
         }
@@ -72,7 +72,7 @@ export default function ActivePlayerList({ userName }: { userName?: string }) {
         try {
           const et = new Date(s.end_time);
           if (!isNaN(et.getTime())) return et.getTime() > Date.now();
-        } catch (e) { void e; }
+        } catch (_e) { void _e; }
         return false;
       });
       setRows(activeOnly as SessionRow[]);
@@ -192,6 +192,7 @@ export default function ActivePlayerList({ userName }: { userName?: string }) {
       </View>
     </View>
   );
+  void renderHeader;
 
   const listEmpty = () => (
     <View style={{ paddingVertical: 20 }}>

@@ -21,7 +21,7 @@ export class AuthController {
     @Body() body: { email: string; password: string },
     @Res({ passthrough: true }) res: Response,
   ) {
-  const tokens = await this.authService.signIn(body.email, body.password);
+    const tokens = await this.authService.signIn(body.email, body.password);
 
     // Determine destination by role
     const role = (tokens as any).role as string | undefined;
@@ -60,7 +60,8 @@ export class AuthController {
     // Optionally return refreshToken in body for native clients only when enabled
     // via environment variable. Returning refresh tokens in JSON increases the
     // attack surface and should be disabled in most production deployments.
-    const allowNative = String(process.env.ALLOW_NATIVE_REFRESH ?? '').toLowerCase() === 'true';
+    const allowNative =
+      String(process.env.ALLOW_NATIVE_REFRESH ?? '').toLowerCase() === 'true';
     const result: any = {
       accessToken: tokens.accessToken,
       destination,
@@ -112,7 +113,8 @@ export class AuthController {
     // Return access + refresh tokens in body only when native refresh flow is
     // explicitly enabled via ALLOW_NATIVE_REFRESH. Web flows continue to rely
     // on the HttpOnly cookie set above.
-    const allowNativeRefresh = String(process.env.ALLOW_NATIVE_REFRESH ?? '').toLowerCase() === 'true';
+    const allowNativeRefresh =
+      String(process.env.ALLOW_NATIVE_REFRESH ?? '').toLowerCase() === 'true';
     const out: any = { accessToken: tokens.accessToken };
     if (allowNativeRefresh) out.refreshToken = tokens.refreshToken;
     return out;

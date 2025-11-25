@@ -74,12 +74,14 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
   const [toastVisible, setToastVisible] = useState(false);
   const [toastMessage, setToastMessage] = useState('');
   const [toastTitle, setToastTitle] = useState<string | undefined>(undefined);
-  const showToast = (title: string | undefined, msg: string, ms: number = 2000) => {
+  const _showToast = (title: string | undefined, msg: string, ms: number = 2000) => {
     setToastTitle(title);
     setToastMessage(msg);
     setToastVisible(true);
     setTimeout(() => setToastVisible(false), ms);
   };
+  // mark intentionally-unused function as used
+  void _showToast;
   // Success modal state (used instead of transient toast when user requested)
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [successModalTitle, setSuccessModalTitle] = useState<string | undefined>(undefined);
@@ -100,7 +102,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
       if (res?.error && typeof res.error === 'object') return res.error.message ?? String(res.error);
       if (res?.error && typeof res.error === 'string') return res.error;
       return null;
-    } catch (e) { return null; }
+    } catch (_e) { void _e; return null; }
   };
   // stopwatch map: bayNumber/string -> start timestamp (ms)
   const [stopwatches, setStopwatches] = useState<Record<string, number>>({});
@@ -111,17 +113,20 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
   // batch end in-progress
   const [batchEnding, setBatchEnding] = useState<boolean>(false);
   // selected bays for batch end
-  const [batchSelectedBays, setBatchSelectedBays] = useState<Array<number | string>>([]);
+  const [batchSelectedBays, setBatchSelectedBays] = useState<(number | string)[]>([]);
   // selection mode: when true tapping a bay toggles selection instead of opening per-bay modal
   const [isSelecting, setIsSelecting] = useState<boolean>(false);
-  const { width } = useWindowDimensions();
+  const { width: _width } = useWindowDimensions();
+  // mark intentionally-unused local to satisfy linter
+  void _width;
 
   // centralized error modal state
   const [errorModalVisible, setErrorModalVisible] = useState(false);
   const [errorModalMessage, setErrorModalMessage] = useState<string>('');
   const [errorModalType, setErrorModalType] = useState<any | null>(null);
   const [errorModalDetails, setErrorModalDetails] = useState<any>(null);
-  const [errorModalTitle, setErrorModalTitle] = useState<string | undefined>(undefined);
+  const [_errorModalTitle, setErrorModalTitle] = useState<string | undefined>(undefined);
+  void _errorModalTitle;
 
   const showError = (err: any, fallback?: string) => {
     const friendly = friendlyMessageFromThrowable(err, fallback ?? 'An error occurred');
@@ -160,7 +165,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
       const mm = String(mins).padStart(2, '0');
       const ss = String(secs).padStart(2, '0');
       return `${mm}:${ss} mins`;
-    } catch (e) { return '—'; }
+    } catch (_e) { void _e; return '—'; }
   };
 
   const getVisibleBayIds = () => {
@@ -168,7 +173,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
     const pageSizeLocal = getPageSizeLocal();
     const startIdx = (page - 1) * pageSizeLocal;
     const endIdx = Math.min(startIdx + pageSizeLocal, total);
-    const ids: Array<number | string> = [];
+    const ids: (number | string)[] = [];
     for (let idx = startIdx; idx < endIdx; idx++) {
       const num = idx + 1;
       const row = bays.find((b) => String(b.bay_number) === String(num) || String(b.bay_id) === String(num));
@@ -228,7 +233,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
               try { await AsyncStorage.removeItem('backendBaseUrlOverride'); } catch {}
               console.warn('Removed unreachable backendBaseUrlOverride', override);
             }
-          } catch (e) {
+          } catch (e) { void e;
             try { await AsyncStorage.removeItem('backendBaseUrlOverride'); } catch {}
           }
         }
@@ -267,7 +272,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
       } catch {
         setOverview(data);
       }
-    } catch (e) {
+    } catch (e) { void e;
       setOverview(null);
     } finally {
       // Turn off the spinner only if we turned it on earlier
@@ -283,9 +288,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
   if (!res.ok) return setBays([]);
   const data = await res.json();
       setBays(Array.isArray(data) ? data : []);
-    } catch (e) {
-      setBays([]);
-    }
+    } catch (_e) { void _e; setBays([]); }
   };
 
   // When bays load, initialize stopwatches from server-provided start_time so
@@ -308,11 +311,11 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
             if (!startStr) return;
             const ts = new Date(startStr).getTime();
             if (!isNaN(ts)) copy[id] = ts;
-          } catch (e) { /* ignore per-bay errors */ }
+          } catch (_e) { void _e; /* ignore per-bay errors */ }
         });
         return copy;
       });
-    } catch (e) { }
+          } catch (_e) { void _e; }
   }, [bays]);
 
   // small helper to POST JSON to an endpoint
@@ -329,11 +332,11 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
         if (res && typeof res.clone === 'function' && typeof res.clone().json === 'function') {
           try { parsedBody = await res.clone().json(); } catch { try { parsedBody = await res.clone().text(); } catch {} }
         }
-      } catch (e) {
+      } catch (e) { void e;
         // ignore parse errors
       }
       return { ok: !!(res && (res as any).ok), status: res ? (res as any).status : null, parsedBody, response: res };
-    } catch (e) {
+    } catch (e) { void e;
       return { ok: false, status: null, parsedBody: null, response: null, error: e };
     }
   };
@@ -364,7 +367,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
             g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.38);
             setTimeout(() => { try { o.stop(); ctx.close(); } catch {} }, 450);
           }
-        } catch (e) {
+        } catch (e) { void e;
           // ignore audio failures on web
         }
         return;
@@ -379,7 +382,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
           await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           return;
         }
-      } catch (e) {
+      } catch (e) { void e;
         // ignore
       }
 
@@ -425,10 +428,10 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
                 if (r2 && (r2.ok || r2.status === 404 || r2.status === 405)) {
                   if (r2.ok) break;
                 }
-              } catch (e) { }
+              } catch (_e) { void _e; }
             }
           }
-        } catch (e) {
+        } catch (e) { void e;
           // ignore and attempt fallbacks
           const candidates = [
             `${baseUrl}/api/dispatcher/bays/${bayNum}/end`,
@@ -441,10 +444,10 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
               if (r2 && (r2.ok || r2.status === 404 || r2.status === 405)) {
                 if (r2.ok) break;
               }
-            } catch (e) { }
+            } catch (_e) { void _e; }
           }
         }
-      } catch (e) {
+      } catch (e) { void e;
         // ignore backend errors
       }
 
@@ -456,7 +459,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
 
       // refresh overview in background so server-side state is eventually reflected
       try { fetchOverview(); } catch {}
-    } catch (e) {
+    } catch (e) { void e;
       // ignore notify errors
     }
   }, [resolveBaseUrl, fetchOverview]);
@@ -469,7 +472,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
       try {
         const res = await fetchWithAuth(`${baseUrl}/api/admin/bays/${bayNum}/override`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'End Session' }) });
         if (res && res.ok) return true;
-      } catch (e) {
+      } catch (e) { void e;
         // continue to fallbacks
       }
 
@@ -483,9 +486,9 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
           const body = url.endsWith('/end') ? undefined : JSON.stringify({ bayNo: bayNum });
           const r2 = await fetchWithAuth(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
           if (r2 && r2.ok) return true;
-        } catch (e) { /* ignore and try next */ }
+        } catch (e) { void e; /* ignore and try next */ }
       }
-    } catch (e) {
+    } catch (e) { void e;
       // ignore
     }
     return false;
@@ -535,7 +538,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
           }
           // small throttle so we don't overwhelm backend
           await new Promise((r) => setTimeout(r, 120));
-        } catch (e) { failed++; }
+        } catch (_e) { void _e; failed++; }
       }
       // After all attempts, fetch authoritative state from server so DB changes are reflected
       try { await fetchOverview(); await fetchBays(); } catch {}
@@ -544,7 +547,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
       setIsSelecting(false);
   setBatchSelectedBays([]);
   try { showError(`Completed: ${success}\nFailed: ${failed}`, 'Batch End Results'); } catch {}
-    } catch (e) {
+    } catch (e) { void e;
       setBatchEnding(false);
       try { showError('An error occurred performing the batch end.'); } catch {}
     }
@@ -864,7 +867,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
               }
             }
           }
-        } catch (e) {
+        } catch (e) { void e;
           // Ignore internal lookup failures; final error UI will surface server response.
         }
       }
@@ -876,7 +879,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
           if (r && r.ok) {
             didOk = true;
           }
-        } catch (e) {
+        } catch (e) { void e;
           // fall through to other attempts
         }
       }
@@ -886,7 +889,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
           const r2 = await fetchWithAuth(`${baseUrl}/api/admin/bays/${bayNum}/assign`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ playerName: editPlayerName || null, servicemanId: editServicemanId }) });
           lastRes = r2;
           if (r2 && r2.ok) didOk = true;
-        } catch (e) {
+        } catch (e) { void e;
           // ignore
         }
       }
@@ -912,7 +915,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
           showError(err, 'Update failed');
         }
       }
-    } catch (e) {
+    } catch (e) { void e;
       try { showError(e, 'Update failed'); } catch {}
     } finally {
       setEditActionLoading(false);
@@ -1017,7 +1020,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
                                     try { await fetchOverview(); await fetchBays(); } catch {}
                                     try { const msg = extractServerMessage(res) ?? 'Failed to end session. Server did not accept the request.'; showError(msg); } catch {}
                                   }
-                                } catch (e) {
+                                } catch (e) { void e;
                                   try { fetchOverview(); } catch {}
                                 } finally {
                                   setActionLoading(false);
@@ -1049,8 +1052,8 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
                                     const svc = Array.isArray(rows) ? rows.filter((s:any) => isServicemanRole(s.role)) : [];
                                     setServicemen(svc);
                                   }
-                                } catch (e) { /* ignore fetch failure, still open modal */ }
-                              } catch (e) { try { showError(e); } catch {} }
+                                } catch (e) { void e; /* ignore fetch failure, still open modal */ }
+                                } catch (e) { void e; try { showError(e); } catch {} }
                             }}>
                               <Text style={styles.modalButtonCancelText}>Edit</Text>
                             </TouchableOpacity>
@@ -1089,7 +1092,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
                                         try { await fetchOverview(); await fetchBays(); } catch {}
                                         try { const msg = extractServerMessage(res) ?? 'Failed to start session. Server did not accept the request.'; showError(msg); } catch {}
                                       }
-                                    } catch (e) {
+                                    } catch (e) { void e;
                                       try { await fetchOverview(); } catch {}
                                     } finally {
                                       setActionLoading(false);
@@ -1097,7 +1100,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
                                     }
                                   }
                                 });
-                              } catch (e) {
+                              } catch (e) { void e;
                                 // fallback: attempt to start without confirmation
                                 (async () => {
                                   setActionLoading(true);
@@ -1113,7 +1116,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
                                       try { await fetchOverview(); await fetchBays(); } catch {}
                                       try { const msg = extractServerMessage(res) ?? 'Failed to start session. Server did not accept the request.'; showError(msg); } catch {}
                                     }
-                                  } catch (err) {
+                                  } catch (err) { void err;
                                     try { await fetchOverview(); } catch {}
                                   } finally {
                                     setActionLoading(false);
@@ -1178,7 +1181,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
                       try { await fetchOverview(); await fetchBays(); } catch {}
                       try { const msg = extractServerMessage(res) ?? 'Failed to reserve bay. Server did not accept the request.'; showError(msg); } catch {}
                     }
-                  } catch (e) {
+                  } catch (e) { void e;
                     try { fetchOverview(); } catch {}
                   } finally {
                     setActionLoading(false);
@@ -1259,7 +1262,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
                       try { await fetchOverview(); await fetchBays(); } catch {}
                       try { const msg = extractServerMessage(res) ?? 'Failed to start open time. Server did not accept the request.'; showError(msg); } catch {}
                     }
-                  } catch (e) {
+                  } catch (e) { void e;
                     try { fetchOverview(); } catch {}
                   } finally {
                     setActionLoading(false);
@@ -1298,7 +1301,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
                       try { await fetchOverview(); await fetchBays(); } catch {}
                       try { const msg = extractServerMessage(res) ?? 'Failed to start session. Server did not accept the request.'; showError(msg); } catch {}
                     }
-                  } catch (e) {
+                  } catch (e) { void e;
                     try { fetchOverview(); } catch {}
                   } finally {
                     setActionLoading(false);

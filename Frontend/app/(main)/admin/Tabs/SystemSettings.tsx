@@ -37,6 +37,7 @@ export default function SystemSettings() {
   const [errorModalType, setErrorModalType] = useState<any | null>(null);
   const [errorModalDetails, setErrorModalDetails] = useState<any>(null);
   const [errorModalTitle, setErrorModalTitle] = useState<string | undefined>(undefined);
+  void errorModalTitle;
 
   const showError = (err: any, fallback?: string) => {
     const friendly = friendlyMessageFromThrowable(err, fallback ?? 'An error occurred');

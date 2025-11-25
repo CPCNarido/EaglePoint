@@ -63,8 +63,8 @@ const candidates = [
         console.warn(`FAILED -> ${c.url} returned ${res.status}`);
         if (text) console.warn('Response:', text);
       }
-    } catch (e) {
-      console.warn(`ERROR -> ${c.url} ->`, String(e));
+    } catch (_e) {
+      console.warn(`ERROR -> ${c.url} ->`, String(_e));
     }
   }
   console.error('All candidate endpoints failed. Check backend API routes or adjust the script payloads.');

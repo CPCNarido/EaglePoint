@@ -66,7 +66,7 @@ export default function AuditLogs() {
     try {
       const res = await Promise.race([fetchWithAuth(String(input), init || {}), timeoutPromise]);
       return res as Response;
-    } catch (e) {
+    } catch (e) { void e;
       throw e;
     }
   };
@@ -113,6 +113,7 @@ export default function AuditLogs() {
       if (!silent) setLoading(true);
       setFetchError(null);
       const baseUrl = Platform.OS === 'android' ? 'http://10.127.147.53:3000' : 'http://localhost:3000';
+      void baseUrl;
       const params = new URLSearchParams();
       // request enough rows to cover pages up to `forPage` (server returns newest first)
       const reqPage = forPage ?? page;
@@ -140,7 +141,7 @@ export default function AuditLogs() {
         if (!silent) setLogs([]);
         setTotalCount(0);
       }
-    } catch (e) {
+    } catch (e) { void e;
       // on abort or network error, avoid clearing logs when silent to prevent disorientation
       if (!silent) setLogs([]);
       if (e && (e as any).name === 'AbortError') setFetchError('Request timed out');
@@ -156,7 +157,7 @@ export default function AuditLogs() {
       if (!res.ok) return setStaff([]);
       const data = await res.json();
       setStaff(Array.isArray(data) ? data : []);
-    } catch (e) {
+    } catch (e) { void e;
       setStaff([]);
     }
   };
@@ -195,10 +196,10 @@ export default function AuditLogs() {
       const first = startOfMonth(y, m);
       const startWeekday = first.getDay(); // 0..6 (Sun..Sat)
       const total = daysInMonth(y, m);
-      const weeks: Array<Array<number | null>> = [];
+      const weeks: (number | null)[][] = [];
       let day = 1 - startWeekday;
       while (day <= total) {
-        const week: Array<number | null> = [];
+        const week: (number | null)[] = [];
         for (let i = 0; i < 7; i++) {
           if (day < 1 || day > total) week.push(null);
           else week.push(day);
@@ -289,7 +290,7 @@ export default function AuditLogs() {
         // @ts-ignore
         const mod = await import('react-native-modal-datetime-picker');
         setNativePickerComponent(mod?.default ?? mod);
-      } catch (e) {
+      } catch (e) { void e;
         // package not installed or failed to load - we'll fall back to the in-file calendar
         setNativePickerComponent(null);
       }
@@ -307,6 +308,7 @@ export default function AuditLogs() {
     setShowUserFilterOptions(false);
     fetchLogs();
   };
+  void applyUserFilter;
 
   const clearUserFilter = () => {
     setSelectedUserId(undefined);

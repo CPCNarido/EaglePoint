@@ -18,6 +18,7 @@ export default function TransactionTab({ userName }: { userName?: string }) {
   const [playerName, setPlayerName] = useState<string>('');
   const [receiptNumber, setReceiptNumber] = useState<string>('');
   const [notes, setNotes] = useState<string>('');
+  void notes; void setNotes;
   const [sessionType, setSessionType] = useState<'Timed' | 'Open'>('Timed');
   const [durationMinutes, setDurationMinutes] = useState<string>('');
   const [durationPickerVisible, setDurationPickerVisible] = useState<boolean>(false);
@@ -31,6 +32,7 @@ export default function TransactionTab({ userName }: { userName?: string }) {
 
   // price per hour (could be dynamic); keep a default for preview calculations
   const [pricePerHour, setPricePerHour] = useState<number>(800);
+  void setPricePerHour;
 
   const computePrice = () => {
     const mins = Number(durationMinutes) || 0;
@@ -57,7 +59,7 @@ export default function TransactionTab({ userName }: { userName?: string }) {
             const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
             const override = AsyncStorage ? await AsyncStorage.getItem('backendBaseUrlOverride') : null;
             if (override) baseUrl = override;
-          } catch (e) { /* ignore */ }
+          } catch (_e) { void _e; }
 
           // build request body for unassigned session
           const body: any = { nickname: playerName || undefined };
@@ -71,9 +73,9 @@ export default function TransactionTab({ userName }: { userName?: string }) {
           const url = `${baseUrl}/api/admin/sessions`;
           const res = await fetchWithAuth(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
           if (!res) throw new Error('No response from server');
-          if (!res.ok) {
+            if (!res.ok) {
             let txt = await res.text().catch(() => null);
-            try { const json = JSON.parse(txt || '{}'); if (json?.message) txt = json.message; } catch {}
+            try { const json = JSON.parse(txt || '{}'); if (json?.message) txt = json.message; } catch (_e) { void _e; }
             Alert.alert('Server Error', txt || `Failed to create session (status ${res.status})`);
             return;
           }
@@ -94,7 +96,7 @@ export default function TransactionTab({ userName }: { userName?: string }) {
 
       <Text style={styles.pageSubtitle}>Transaction Form</Text>
       <Text style={styles.leadText}>
-        This transaction initiates a new player session. Ensure the player's name and a valid receipt number are accurately recorded before proceeding to Bay Assignment.
+        This transaction initiates a new player session. Ensure the player’s name and a valid receipt number are accurately recorded before proceeding to Bay Assignment.
       </Text>
 
       <View style={[styles.row, isWide ? styles.rowWide : styles.rowNarrow]}>
@@ -106,12 +108,12 @@ export default function TransactionTab({ userName }: { userName?: string }) {
             <View style={styles.rowInline}>
               <View style={styles.inputGroup}>
                 <Text style={styles.label}>Player Name/ Nickname</Text>
-                <TextInput style={styles.input} placeholder="Enter the Player's name" value={playerName} onChangeText={setPlayerName} />
+                <TextInput style={styles.input} placeholder="Enter the Player’s name" value={playerName} onChangeText={setPlayerName} />
               </View>
             </View>
               <View style={styles.inputGroup}>
                 <Text style={styles.label}>Receipt Number</Text>
-                <TextInput style={styles.input} placeholder="Enter the Player's receipt number" value={receiptNumber} onChangeText={setReceiptNumber} />
+                <TextInput style={styles.input} placeholder="Enter the Player’s receipt number" value={receiptNumber} onChangeText={setReceiptNumber} />
               </View>
               
           </View>

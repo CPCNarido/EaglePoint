@@ -65,6 +65,7 @@ export default function StaffManagement({ refreshKey }: { refreshKey?: number })
   const [errorModalType, setErrorModalType] = useState<any | null>(null);
   const [errorModalDetails, setErrorModalDetails] = useState<any>(null);
   const [errorModalTitle, setErrorModalTitle] = useState<string | undefined>(undefined);
+  void errorModalTitle;
 
   const showError = (err: any, fallback?: string) => {
     const friendly = friendlyMessageFromThrowable(err, fallback ?? 'An error occurred');
@@ -192,7 +193,7 @@ export default function StaffManagement({ refreshKey }: { refreshKey?: number })
   setShowAdd(false);
   setFullName(''); setUsername(''); setPassword(''); setRole('Dispatcher');
   openApprovalPopup('Staff have been successfully added!.');
-    } catch (e) {
+    } catch (e) { void e;
       showError(e, 'Error creating staff');
     }
   };
@@ -240,7 +241,7 @@ export default function StaffManagement({ refreshKey }: { refreshKey?: number })
       (global as any).triggerAdminRefresh();
     }
   } catch {}
-    } catch (e) {
+    } catch (e) { void e;
       showError(e, 'Error updating staff');
     }
   };
@@ -332,7 +333,7 @@ export default function StaffManagement({ refreshKey }: { refreshKey?: number })
       (global as any).triggerAdminRefresh();
     }
   } catch {}
-    } catch (e) {
+    } catch (e) { void e;
       showError(e, 'Error deleting staff');
     }
   };
