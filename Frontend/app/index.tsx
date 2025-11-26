@@ -17,6 +17,7 @@ import { useRouter } from "expo-router";
 import Splash from "./components/Splash";
 // removed unused `tw` import from this file (tailwind used elsewhere)
 import { saveAccessToken } from "./_lib/auth";
+import Presence from "./lib/presence";
 import { useSettings } from "./_lib/SettingsProvider";
 import ErrorModal from "./components/ErrorModal";
 
@@ -250,6 +251,12 @@ export default function Login() {
       const data = await res.json().catch(() => ({ message: "OK" }));
       const access = data?.accessToken || data?.access_token || null;
       if (access) saveAccessToken(access);
+      try {
+        if (access) {
+          // Ensure presence socket is connected for the logged-in user so server receives presence
+          try { await Presence.ensureConnected(); } catch (_e) { /* non-fatal */ }
+        }
+      } catch (_e) { /* ignore */ }
 
       setShowTransitionSplash(true);
       await new Promise((r) => setTimeout(r, 700));

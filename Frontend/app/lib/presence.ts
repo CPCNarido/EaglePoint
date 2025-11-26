@@ -37,6 +37,21 @@ const getAuthToken = async () => {
   } catch (_e) { return null; }
 };
 
+// Try to resolve the logged-in employee id from the backend using the stored token.
+const resolveEmployeeIdFromServer = async () => {
+  try {
+    const token = await getAuthToken();
+    if (!token) return null;
+    const baseUrl = await getBaseUrl();
+    const res = await fetch(`${baseUrl}/api/admin/me`, { method: 'GET', headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) return null;
+    const d = await res.json().catch(() => null);
+    const emp = d?.employee_id ?? d?.employeeId ?? d?.id ?? null;
+    if (emp == null) return null;
+    return String(emp);
+  } catch (_e) { return null; }
+};
+
 const connect = async (employeeId: string | number) => {
   try {
     if (!employeeId) return;
@@ -86,4 +101,46 @@ const emit = (ev: string, ...args: any[]) => emitter.emit(ev, ...args);
 const getSocket = () => socket;
 const isConnected = () => Boolean(socket && socket.connected);
 
-export default { connect, disconnect, on, off, emit, getSocket, isConnected } as const;
+// Ensure there is a socket connected for the currently-logged-in employee.
+// If no employeeId is supplied, attempt to resolve it via the backend with the stored token.
+const ensureConnected = async () => {
+  try {
+    if (isConnected()) return getSocket();
+    // If we have a currentEmployeeId, connect with it
+    if (currentEmployeeId) return await connect(currentEmployeeId as string);
+    // Otherwise try to resolve from server using token
+    const emp = await resolveEmployeeIdFromServer();
+    if (emp) return await connect(emp);
+    return null;
+  } catch (_e) { return null; }
+};
+
+// Handle visibility / AppState to re-establish presence when the app becomes active.
+try {
+  if (typeof window !== 'undefined' && window.addEventListener) {
+    window.addEventListener('visibilitychange', () => {
+      try {
+        if (document.visibilityState === 'visible') {
+          void ensureConnected();
+        }
+      } catch (_e) { }
+    });
+  }
+} catch (_e) { }
+
+// For React Native AppState compatibility: attempt to re-connect when app becomes active
+try {
+  // dynamic import to avoid bundler-time dependency
+  // @ts-ignore
+  const RN = typeof require === 'function' ? require('react-native') : null;
+  const AppState = (RN && (RN as any).AppState) || null;
+  if (AppState && AppState.addEventListener) {
+    try {
+      AppState.addEventListener('change', (next: string) => {
+        try { if (next === 'active') void ensureConnected(); } catch (_e) { }
+      });
+    } catch (_e) { }
+  }
+} catch (_e) { }
+
+export default { connect, disconnect, on, off, emit, getSocket, isConnected, ensureConnected } as const;

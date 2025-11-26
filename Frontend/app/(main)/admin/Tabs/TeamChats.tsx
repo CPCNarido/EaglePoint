@@ -4,7 +4,7 @@ import Presence from '../../../lib/presence';
 import { isServicemanRole } from '../../utils/staffHelpers';
 import { View, Text, ScrollView, SectionList, StyleSheet, Platform, TextInput, TouchableOpacity, FlatList, KeyboardAvoidingView, ActivityIndicator, useWindowDimensions, Keyboard } from 'react-native';
 
-type ChatRoom = { chat_id?: number; name?: string | null; is_group?: boolean; employee_id?: number; role?: string; online?: boolean };
+type ChatRoom = { chat_id?: number; name?: string | null; is_group?: boolean; employee_id?: number; role?: string; online?: boolean; last_seen?: string | number | null };
 type ChatMessage = { message_id?: number; tempId?: string; chat_id: number; sender_name?: string; sender_id?: number; content: string; sent_at?: string; status?: 'pending' | 'sent' | 'failed' };
 
 export default function TeamChats() {
@@ -289,7 +289,8 @@ export default function TeamChats() {
           const id = Number(p?.employee_id ?? p?.employeeId ?? p?.id ?? null);
           const online = typeof p?.online === 'boolean' ? p.online : (String(p?.status ?? '').toLowerCase() === 'online');
           if (!Number.isFinite(id)) return;
-          setRooms((prev) => (prev || []).map((r) => (r.employee_id === id ? { ...r, online: Boolean(online) } : r)));
+          const providedLast = p?.last_seen ?? p?.lastSeen ?? p?.last_seen_at ?? null;
+          setRooms((prev) => (prev || []).map((r) => (r.employee_id === id ? { ...r, online: Boolean(online), last_seen: online ? null : (providedLast ?? Date.now()) } : r)));
         } catch (_e) { void _e; }
       };
 
@@ -384,6 +385,8 @@ export default function TeamChats() {
               name: s.full_name ?? s.username ?? `User ${s.id ?? s.employee_id}`,
               role: s.role ?? '',
               online: Boolean(s.online ?? false),
+              // normalize last-seen field if provided by API
+              last_seen: s.last_seen ?? s.lastSeen ?? s.last_seen_at ?? null,
             }));
             try { console.log('fetchRooms: mapped staff', mapped, 'adminEmployeeId', adminEmployeeId); } catch (_e) { void _e; }
             roomsAcc.push(...mapped);
@@ -879,14 +882,26 @@ export default function TeamChats() {
       }}
     >
       <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-        <View style={[styles.avatarCircleSmall, { backgroundColor: roleColor(item.role) }]}> 
-          <Text style={[styles.avatarInitialsSmall, { color: avatarInitialColor(item.role) }]}>{String((item.name ?? '').split(' ').map((s:any)=>s[0]).join('').slice(0,2)).toUpperCase() || 'U'}</Text>
+        <View style={{ position: 'relative', marginRight: 12 }}> 
+          <View style={[styles.avatarCircleSmall, { backgroundColor: roleColor(item.role) }]}> 
+            <Text style={[styles.avatarInitialsSmall, { color: avatarInitialColor(item.role) }]}>{String((item.name ?? '').split(' ').map((s:any)=>s[0]).join('').slice(0,2)).toUpperCase() || 'U'}</Text>
+          </View>
+          {item.online ? (
+            <View style={[styles.presenceDot, styles.presenceDotOnline]} />
+          ) : (
+            <View style={[styles.presenceDot, styles.presenceDotOffline]} />
+          )}
         </View>
         <View style={{ flex: 1 }}>
           <Text style={styles.roomName}>{item.name ?? (item.employee_id ? item.name : `Chat ${item.chat_id}`)}</Text>
           <Text style={styles.roomMeta}>{item.employee_id ? (item.role ?? 'User') : (item.is_group ? 'Group' : 'Chat')}</Text>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
-            <Text style={styles.roomSubMeta}>{ lastPreview[item.employee_id ? `emp-${item.employee_id}` : `chat-${item.chat_id}`] ?? 'Last: Emergency Alert' }</Text>
+            <View style={{ flexDirection: 'column', flex: 1 }}>
+              <Text style={styles.roomSubMeta}>{ lastPreview[item.employee_id ? `emp-${item.employee_id}` : `chat-${item.chat_id}`] ?? 'Last: Emergency Alert' }</Text>
+              {!item.online && item.last_seen ? (
+                <Text style={[styles.roomSubMeta, { marginTop: 4 }]}>{`Last seen ${formatLastSeen(item.last_seen)}`}</Text>
+              ) : null}
+            </View>
             {(() => {
               const key = item.employee_id ? `emp-${item.employee_id}` : `chat-${item.chat_id}`;
               const c = unseenCounts[key] ?? 0;
@@ -898,6 +913,19 @@ export default function TeamChats() {
       </View>
     </TouchableOpacity>
   );
+
+  const formatLastSeen = (ls?: string | number | null) => {
+    try {
+      if (!ls) return '';
+      const t = typeof ls === 'number' ? ls : (isNaN(Number(ls)) ? Date.parse(String(ls)) : Number(ls));
+      if (!t || Number.isNaN(t)) return '';
+      const diff = Math.floor((Date.now() - Number(t)) / 1000);
+      if (diff < 60) return `${diff}s ago`;
+      if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+      if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+      return new Date(Number(t)).toLocaleDateString();
+    } catch (_e) { return ''; }
+  };
 
   const roleColor = (role?: string) => {
     if (!role) return '#FFFFFF';
@@ -1201,4 +1229,7 @@ const styles = StyleSheet.create({
   roleChipActive: { backgroundColor: '#E9F6EE', borderColor: '#C9DABF'  },
   roleChipText: { color: '#27421A', fontWeight: '700', marginLeft: 6 },
   roleOnlineDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#1fbf4a', marginRight: 8 },
+  presenceDot: { width: 10, height: 10, borderRadius: 5, position: 'absolute', right: -2, bottom: -2, borderWidth: 1, borderColor: '#fff' },
+  presenceDotOnline: { backgroundColor: '#1fbf4a' },
+  presenceDotOffline: { backgroundColor: '#C0C0C0' },
 });

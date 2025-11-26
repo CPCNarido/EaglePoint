@@ -1,6 +1,7 @@
 import { Stack } from "expo-router";
 import React, { useEffect } from 'react';
 import SettingsProvider from './lib/SettingsProvider';
+import Presence from './lib/presence';
 import { enterFullScreen, exitFullScreen } from './(main)/utils/fullscreen';
 import { Keyboard } from 'react-native';
 
@@ -8,6 +9,24 @@ export default function RootLayout() {
   useEffect(() => {
     let mounted = true;
 
+    // Ensure presence is established for logged-in user when the app layout mounts
+    (async () => {
+      try {
+        await Presence.ensureConnected();
+      } catch (_e) { /* non-fatal */ }
+    })();
+
+    // Lightweight global interaction handler: any pointer/keyboard interaction
+    // triggers a best-effort ensureConnected so presence is re-established
+    const onUserInteraction = () => {
+      try { void Presence.ensureConnected(); } catch (_e) { /* ignore */ }
+    };
+    try {
+      if (typeof window !== 'undefined' && window.addEventListener) {
+        window.addEventListener('pointerdown', onUserInteraction, { passive: true } as any);
+        window.addEventListener('keydown', onUserInteraction, { passive: true } as any);
+      }
+    } catch (_e) { }
     // Try to enter full-screen on start
     (async () => {
       if (!mounted) return;
@@ -39,6 +58,12 @@ export default function RootLayout() {
       mounted = false;
       try { showSub.remove(); } catch (_e) { void _e; }
       try { hideSub.remove(); } catch (_e) { void _e; }
+      try {
+        if (typeof window !== 'undefined' && window.removeEventListener) {
+          window.removeEventListener('pointerdown', onUserInteraction as any);
+          window.removeEventListener('keydown', onUserInteraction as any);
+        }
+      } catch (_e) { }
       // restore UI on unmount
       exitFullScreen().catch(() => {});
     };
