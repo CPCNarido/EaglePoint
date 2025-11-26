@@ -51,6 +51,20 @@ export default function InfoPanel({ num, details, now, offsetX }: InfoPanelProps
         if (elapsedMs <= 0) return 'Time: 0:00';
         return `Time: ${formatMsForDisplay(elapsedMs)}`;
       }
+
+      // If start_time is not yet persisted but we already have at least one
+      // delivered bucket reported (total_balls / bucket_count), treat the
+      // session as started locally so the UI shows a running timer. Add a
+      // 30s offset to reflect the grace period applied by the backend.
+      try {
+        const balls = Number(raw?.total_balls ?? raw?.balls_used ?? raw?.bucket_count ?? details?.ballsUsed ?? details?.total_balls ?? 0) || 0;
+        if (balls >= 1) {
+          const estimatedStart = new Date(Date.now() - 30 * 1000);
+          const elapsedMs = now.getTime() - estimatedStart.getTime();
+          if (elapsedMs <= 0) return 'Time: 0:00';
+          return `Time: ${formatMsForDisplay(elapsedMs)}`;
+        }
+      } catch (_e) { void _e; }
     } catch (_e) { void _e; }
     return '—';
   };

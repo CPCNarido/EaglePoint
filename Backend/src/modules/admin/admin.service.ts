@@ -2541,25 +2541,34 @@ export class AdminService {
     if (existing)
       throw new BadRequestException('Bay already has an active session');
 
-    // Build player data
+    // Build player data (or attach existing player if provided)
     // Backwards-compat: some callers send `full_name` but the Player model only stores `nickname`.
     // Normalize by preferring explicit nickname, falling back to full_name when present.
     // If caller didn't provide a name but the bay has a reservation note (bay.note),
     // use that as the player nickname so reserved names persist into the created Player.
     const reserveNote =
       bay && typeof bay.note === 'string' ? String(bay.note).trim() : '';
-    const nickname =
-      String(
-        body?.nickname ?? body?.name ?? body?.full_name ?? reserveNote ?? '',
-      ).trim() || null;
-    const full_name = null; // not stored on Player (kept for compatibility variable but not persisted)
-    // Do not set start_time here — sessions created via dispatcher/admin or cashier
-    // should only be marked started after the ball handler delivers the first
-    // bucket and the configured grace period has elapsed. Leave start_time null
-    // so the UI and billing logic rely on the server-side computed flag.
-    const start_time = null;
-    // If no end_time supplied, leave it null to represent an open session (schema now allows nullable end_time)
-    const end_time = body?.end_time ? new Date(String(body.end_time)) : null;
+    const nicknameFromBody = String(body?.nickname ?? body?.name ?? body?.full_name ?? reserveNote ?? '').trim() || null;
+
+    // Allow callers to attach an existing player (created by Cashier) to this assignment
+    let existingPlayer: any = null;
+    try {
+      const pid = body?.playerId ?? body?.player_id ?? null;
+      const receipt = body?.receipt_number ?? body?.receipt ?? null;
+      if (pid) {
+        existingPlayer = await this.prisma.player.findUnique({ where: { player_id: Number(pid) as any } }).catch(() => null);
+      } else if (receipt) {
+        existingPlayer = await this.prisma.player.findFirst({ where: { receipt_number: String(receipt) } }).catch(() => null);
+      }
+    } catch (e) {
+      void e;
+    }
+
+    const nickname = existingPlayer ? (existingPlayer.nickname ?? nicknameFromBody) : nicknameFromBody;
+    // Do not set start_time here — sessions should only be marked started after the ball handler delivers the first bucket.
+    const start_time = existingPlayer ? existingPlayer.start_time ?? null : null;
+    // If caller provided end_time use it, otherwise prefer existing player's end_time when reusing a player
+    const end_time = body?.end_time ? new Date(String(body.end_time)) : (existingPlayer ? existingPlayer.end_time ?? null : null);
 
     // Determine creator: prefer provided dispatcherId, otherwise pick an existing Dispatcher or Admin account
     let createdBy: number | undefined = undefined;
@@ -2620,22 +2629,26 @@ export class AdminService {
       pricePerHour = '0.00';
     }
 
-    // Create player record (player.end_time may be null for open sessions)
+    // Create or reuse player record
     // include planned_duration_minutes when available (caller may supply planned_duration_minutes)
     const plannedMinutes =
       body?.planned_duration_minutes != null
         ? Number(body.planned_duration_minutes)
-        : null;
-    const player = await this.prisma.player.create({
-      data: {
-        nickname: nickname ?? undefined,
-        start_time,
-        end_time: end_time ?? null,
-        price_per_hour: pricePerHour ?? '0.00',
-        planned_duration_minutes: plannedMinutes ?? undefined,
-        creator: { connect: { employee_id: createdBy } },
-      } as any,
-    });
+        : (existingPlayer ? Number(existingPlayer.planned_duration_minutes || 0) || null : null);
+
+    let player: any = existingPlayer ?? null;
+    if (!player) {
+      player = await this.prisma.player.create({
+        data: {
+          nickname: nickname ?? undefined,
+          start_time,
+          end_time: end_time ?? null,
+          price_per_hour: pricePerHour ?? '0.00',
+          planned_duration_minutes: plannedMinutes ?? undefined,
+          creator: { connect: { employee_id: createdBy } },
+        } as any,
+      });
+    }
 
     // Create assignment
     // Ensure we have a dispatcher id to attach to the assignment (fallback to createdBy if not supplied)
@@ -2649,6 +2662,8 @@ export class AdminService {
       // attach player by relation connect so Prisma uses the nested relation input
       player: { connect: { player_id: player.player_id } },
       assigned_time: new Date(),
+      // For Timed sessions created via cashier/dispatcher we do NOT mark the assignment as started here.
+      // The authoritative session start_time will be set when the first BallTransaction is created by the ball handler.
       open_time: Boolean(isOpenSession),
       end_time: end_time ?? null,
       // typed session designation so historical records show whether it was Open/Timed/Reserved
@@ -2957,6 +2972,12 @@ export class AdminService {
     }
 
     try {
+      // Compute existing total balls for this assignment before creating the transaction
+      const sumBefore = await this.prisma.ballTransaction
+        .aggregate({ _sum: { bucket_count: true }, where: { assignment_id: assignment.assignment_id } })
+        .catch(() => ({ _sum: { bucket_count: 0 } }));
+      const totalBefore = Number(sumBefore?._sum?.bucket_count ?? 0) || 0;
+
       const created = await this.prisma.ballTransaction.create({
         data: dataObj,
       });
@@ -2974,6 +2995,53 @@ export class AdminService {
       } catch (e) {
         void e;
       }
+
+      // Compute new total and, if this transaction is the first bucket(s) (previous total was 0 and now >=1), mark the Player start_time
+      let newTotal = totalBefore + (Number(created.bucket_count) || 0);
+      try {
+        if (totalBefore < 1 && newTotal >= 1) {
+          // set player's start_time if not already set
+          if (assignment.player_id) {
+            const playerRow = await this.prisma.player.findUnique({ where: { player_id: assignment.player_id } }).catch(() => null);
+            if (playerRow && !playerRow.start_time) {
+              const startAt = created.delivered_time || new Date();
+              const updateData: any = { start_time: startAt };
+              // If player has a planned duration but no end_time, compute end_time from planned minutes
+              const planned = Number(playerRow.planned_duration_minutes || 0) || 0;
+              if (planned > 0 && !playerRow.end_time) {
+                updateData.end_time = new Date(new Date(startAt).getTime() + planned * 60000);
+              }
+              await this.prisma.player.update({ where: { player_id: playerRow.player_id }, data: updateData }).catch(() => null);
+            }
+
+            // Ensure assignment is marked open_time = true so overview treats bay as active
+            try {
+              await this.prisma.bayAssignment.update({ where: { assignment_id: assignment.assignment_id }, data: { open_time: true } }).catch(() => null);
+            } catch (e) { void e; }
+          }
+        }
+      } catch (e) {
+        void e;
+      }
+
+      // Broadcast assignment update to dispatchers so UIs update in real-time
+      try {
+        // gather dispatcher employee ids
+        const dispatchers = await this.prisma.employee.findMany({ where: { role: 'Dispatcher' }, select: { employee_id: true } }).catch(() => []);
+        const dispatcherIds = Array.isArray(dispatchers) ? dispatchers.map((d:any) => Number(d.employee_id)).filter((n) => Number.isFinite(n)) : [];
+        const payload = {
+          assignment_id: assignment.assignment_id,
+          bay_id: assignment.bay_id,
+          bay_no: bay.bay_number ?? null,
+          player_id: assignment.player_id,
+          added_buckets: Number(created.bucket_count) || 0,
+          total_balls: newTotal,
+          session_started: newTotal >= 1,
+          start_time: (newTotal >= 1 ? (created.delivered_time || new Date()) : null),
+        };
+        try { await this.chatService.notifyEvent('assignment:update', payload, dispatcherIds); } catch (_e) { void _e; }
+      } catch (e) { void e; }
+
       return { ok: true, transaction: created };
     } catch (err: any) {
       Logger.error(

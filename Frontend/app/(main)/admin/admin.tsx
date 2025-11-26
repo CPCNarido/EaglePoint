@@ -303,7 +303,14 @@ export default function AdminDashboard() {
           if (Number.isNaN(num)) continue;
           const endTs = b?.end_time ? new Date(b.end_time).getTime() : (b?.assignment_end_time ? new Date(b.assignment_end_time).getTime() : null);
           if (endTs && Number.isFinite(endTs)) {
-            const msLeft = endTs - nowTs;
+            let msLeft = endTs - nowTs;
+            try {
+              const balls = Number(b?.total_balls ?? b?.balls_used ?? b?.bucket_count ?? b?.transactions_count ?? 0) || 0;
+              // When the bay has at least one ball delivered, treat the session as started
+              // and grant a 30 second grace by adding 30s to the remaining time so
+              // the UI countdown reflects the backend "grace" behaviour.
+              if (balls >= 1) msLeft += 30 * 1000;
+            } catch (_e) { void _e; }
             nextMap[num] = msLeft;
 
             // ensure set exists

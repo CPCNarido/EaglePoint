@@ -19,7 +19,8 @@ export default function TransactionTab({ userName }: { userName?: string }) {
   const [receiptNumber, setReceiptNumber] = useState<string>('');
   const [notes, setNotes] = useState<string>('');
   void notes; void setNotes;
-  const [sessionType, setSessionType] = useState<'Timed' | 'Open'>('Timed');
+  // SessionType is fixed to Timed for cashier-created transactions
+  const [sessionType] = useState<'Timed' | 'Open'>('Timed');
   const [durationMinutes, setDurationMinutes] = useState<string>('');
   const [durationPickerVisible, setDurationPickerVisible] = useState<boolean>(false);
   const durationOptions = [30, 45, 60, 90, 120];
@@ -46,6 +47,14 @@ export default function TransactionTab({ userName }: { userName?: string }) {
     if (!playerName.trim()) {
       Alert.alert('Validation', 'Player name is required');
       return;
+    }
+    // For cashier flows we require a planned duration so the session is treated as Timed
+    if (sessionType === 'Timed') {
+      const mins = Number(durationMinutes) || 0;
+      if (!mins || mins <= 0) {
+        Alert.alert('Validation', 'Please select a planned duration for Timed sessions');
+        return;
+      }
     }
     Alert.alert('Confirm Transaction', `Create ${sessionType} session for ${playerName} (${receiptNumber || 'no receipt'})?`, [
       { text: 'Cancel', style: 'cancel' },
@@ -123,10 +132,10 @@ export default function TransactionTab({ userName }: { userName?: string }) {
 
             <Text style={[styles.label, { marginTop: 6 }]}>Session Type</Text>
             <View style={{ flexDirection: 'row', gap: 12, marginTop: 8 }}>
-              <TouchableOpacity style={[styles.radioItem, sessionType === 'Timed' ? styles.radioActive : {}]} onPress={() => setSessionType('Timed')}>
-                <View style={styles.radioDot}>{sessionType === 'Timed' ? <View style={styles.radioInner} /> : null}</View>
+              <View style={[styles.radioItem, styles.radioActive]}>
+                <View style={styles.radioDot}><View style={styles.radioInner} /></View>
                 <Text style={styles.radioLabel}>Timed Session (Fixed Playtime)</Text>
-              </TouchableOpacity>
+              </View>
             </View>
 
             <Text style={[styles.label, { marginTop: 12 }]}>Select Duration</Text>

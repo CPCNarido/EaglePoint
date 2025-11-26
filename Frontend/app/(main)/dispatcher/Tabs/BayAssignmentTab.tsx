@@ -110,6 +110,8 @@ export default function BayAssignmentScreen({ userName, counts, assignedBays }: 
         } catch {}
 
         const body: any = { nickname: selectedPlayer.name ?? selectedPlayer.player_name ?? selectedPlayer.nickname ?? null };
+        // Attach existing cashier-created player so server can reuse the record instead of creating a new one
+        if (selectedPlayer.id) body.playerId = selectedPlayer.id;
         if (svc && svc.id) body.servicemanId = svc.id;
   // POST to server to start session on the chosen bay
   const res = await fetchWithAuth(`${baseUrl}/api/admin/bays/${selectedBay}/start`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -127,6 +129,68 @@ export default function BayAssignmentScreen({ userName, counts, assignedBays }: 
           setSelectedBay(null);
           // clear explicit selection after assignment
           setSelectedServiceman(null);
+          // Refresh waiting sessions and bay overview so server-persisted start_time/session_started
+          // becomes visible when switching tabs or after logout/login.
+          try {
+            const sres = await fetchWithAuth(`${baseUrl}/api/admin/reports/sessions?limit=1000`, { method: 'GET' });
+            if (sres && sres.ok) {
+              const rows = await sres.json();
+              const waiting = Array.isArray(rows) ? rows.filter((r: any) => {
+                const noBay = (r.bay_no == null && r.bay_id == null) || (!r.bay_no && !r.bay_id);
+                if (!noBay) return false;
+                const st = String(r.session_type ?? '').toLowerCase();
+                if (st === 'open') return true;
+                if (st === 'timed') {
+                  if (r.session_started === true) return true;
+                  if (!r.end_time) return false;
+                  try { const et = new Date(r.end_time); return !isNaN(et.getTime()) && et.getTime() > Date.now(); } catch (e) { void e; return false; }
+                }
+                if (r.end_time == null) return true;
+                try { const et = new Date(r.end_time); return !isNaN(et.getTime()) && et.getTime() > Date.now(); } catch (e) { void e; return false; }
+              }) : [];
+              setPlayers(waiting.map((w: any) => ({
+                id: w.player_id,
+                name: w.player_name ?? w.session_id,
+                receipt: w.session_id,
+                note: '',
+                plannedDuration: w.planned_duration_minutes ?? null,
+                balls: Number(w.total_buckets ?? w.total_balls ?? 0) || 0,
+                sessionStarted: !!w.session_started,
+              })));
+            }
+          } catch (_e) { void _e; }
+          try {
+            const r3 = await fetchWithAuth(`${baseUrl}/api/admin/overview`, { method: 'GET' });
+            if (r3 && r3.ok) {
+              const ov = await r3.json();
+              const rows = ov?.bays || ov?.bayList || ov || [];
+              if (Array.isArray(rows)) {
+                const avail: number[] = [];
+                const busyIds: number[] = [];
+                for (const b of rows) {
+                  const bayNo = Number(b?.bay_number ?? b?.bayNo ?? b?.bay_no ?? b?.bay ?? null);
+                  const rawSession = b?.session;
+                  const sessionAction = rawSession && typeof rawSession === 'object' ? (rawSession.action || rawSession.status || rawSession.type || rawSession.session_type) : rawSession;
+                  const sessionCandidate = String(b?.status ?? sessionAction ?? b?.session_type ?? b?.sessionType ?? b?.type ?? b?.bay_status ?? b?.action ?? '').toString();
+                  const sessionLower = (sessionCandidate || '').toLowerCase();
+                  const isReservedFlag = !!(b?.reserved || b?.is_reserved || b?.reserved_for || sessionLower.includes('reserved') || sessionLower.includes('specialuse') || sessionLower === 'specialuse' || String(b?.status) === 'Reserved');
+                  const isSpecialFlag = !!(b?.special_use || b?.specialUse || b?.is_special_use || b?.specialuse || sessionLower.includes('special') || sessionLower.includes('specialuse'));
+                  const isAvailableRaw = ((!b?.player && !b?.player_name) || sessionLower.includes('available') || (sessionLower.includes('timed') && !b?.player));
+                  const isAvailable = isAvailableRaw && !isReservedFlag && !isSpecialFlag;
+                  if (!Number.isNaN(bayNo) && isAvailable) avail.push(bayNo);
+                  const maybeIds = [b?.serviceman_id, b?.servicemanId, b?.serviceman?.employee_id, b?.serviceman?.id, b?.assigned_employee_id, b?.assignee_id, b?.serviceman_employee_id, b?.employee_id, b?.servicemanEmployeeId];
+                  for (const mid of maybeIds) {
+                    if (mid != null) {
+                      const n = Number(mid);
+                      if (!Number.isNaN(n) && !busyIds.includes(n)) busyIds.push(n);
+                    }
+                  }
+                }
+                setAvailableBays(avail.sort((a,b)=>a-b));
+                setBusyServicemen(busyIds);
+              }
+            }
+          } catch (_e) { void _e; }
         } else {
           showError('Server refused assignment.');
         }
@@ -265,6 +329,62 @@ export default function BayAssignmentScreen({ userName, counts, assignedBays }: 
     if (!stillAvailable) setSelectedServiceman(null);
   }, [busyServicemen, servicemen]);
 
+  // Real-time SSE subscription: listen for assignment updates (ball transactions)
+  useEffect(() => {
+    let es: EventSource | null = null;
+    (async () => {
+      try {
+        let baseUrl = Platform.OS === 'android' ? 'http://10.127.147.53:3000' : 'http://localhost:3000';
+        try {
+          // @ts-ignore dynamic import
+          const AsyncStorageModule = await import('@react-native-async-storage/async-storage').catch(() => null);
+          const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
+          const override = AsyncStorage ? await AsyncStorage.getItem('backendBaseUrlOverride') : null;
+          if (override) baseUrl = override;
+        } catch (_e) { void _e; }
+
+        if (typeof EventSource === 'undefined') return;
+        let token: string | null = null;
+        try {
+          const AsyncStorageModule = await import('@react-native-async-storage/async-storage').catch(() => null);
+          const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
+          token = AsyncStorage ? await AsyncStorage.getItem('authToken') : null;
+        } catch (_e) { void _e; }
+
+        const streamBase = baseUrl.replace(/\/$/, '');
+        const streamUrl = token ? `${streamBase}/api/admin/chats/stream?token=${encodeURIComponent(token)}` : `${streamBase}/api/admin/chats/stream`;
+        try {
+          es = new EventSource(streamUrl);
+          es.addEventListener('assignment:update', (ev: any) => {
+            try {
+              const payload = JSON.parse(ev.data);
+              // payload: { assignment_id, bay_id, bay_no, player_id, added_buckets, total_balls, session_started, start_time }
+              if (!payload) return;
+              setPlayers((prev: any[]) => {
+                if (!prev || prev.length === 0) return prev;
+                return prev.map((p: any) => {
+                  if (Number(p.id) === Number(payload.player_id)) {
+                    return { ...p, balls: Number(payload.total_balls) || (Number(p.balls) || 0) + (Number(payload.added_buckets) || 0), sessionStarted: !!payload.session_started };
+                  }
+                  return p;
+                });
+              });
+              setSelectedPlayer((cur: any) => {
+                if (!cur) return cur;
+                if (Number(cur.id) === Number(payload.player_id)) {
+                  return { ...cur, balls: Number(payload.total_balls) || (Number(cur.balls) || 0) + (Number(payload.added_buckets) || 0), sessionStarted: !!payload.session_started };
+                }
+                return cur;
+              });
+            } catch (_e) { void _e; }
+          });
+        } catch (_e) { void _e; }
+      } catch (_e) { void _e; }
+    })();
+
+    return () => { try { if (es) es.close(); } catch (_e) { void _e; } };
+  }, []);
+
   // Fetch players waiting (unassigned) and servicemen on mount
   useEffect(() => {
     let mounted = true;
@@ -282,7 +402,7 @@ export default function BayAssignmentScreen({ userName, counts, assignedBays }: 
         // Fetch recent sessions and filter for players without bay assignment and not ended
         try {
           const res = await fetchWithAuth(`${baseUrl}/api/admin/reports/sessions?limit=1000`, { method: 'GET' });
-          if (res && res.ok) {
+            if (res && res.ok) {
             const rows = await res.json();
             // rows may be array of mapped sessions; prefer `session_type` from API and include
             // timed sessions whose end_time is in the future.
@@ -301,7 +421,16 @@ export default function BayAssignmentScreen({ userName, counts, assignedBays }: 
               if (r.end_time == null) return true;
               try { const et = new Date(r.end_time); return !isNaN(et.getTime()) && et.getTime() > Date.now(); } catch (e) { void e; return false; }
             }) : [];
-            if (mounted) setPlayers(waiting.map((w: any) => ({ id: w.player_id, name: w.player_name ?? w.session_id, receipt: w.session_id, note: '', plannedDuration: w.planned_duration_minutes ?? null })));
+            // Include ball count and session_started flag so Dispatcher UI can show hint
+            if (mounted) setPlayers(waiting.map((w: any) => ({
+              id: w.player_id,
+              name: w.player_name ?? w.session_id,
+              receipt: w.session_id,
+              note: '',
+              plannedDuration: w.planned_duration_minutes ?? null,
+              balls: Number(w.total_buckets ?? w.total_balls ?? 0) || 0,
+              sessionStarted: !!w.session_started,
+            })));
           }
         } catch (_e) { void _e; }
 
@@ -412,9 +541,10 @@ export default function BayAssignmentScreen({ userName, counts, assignedBays }: 
                   ]}
                 >
                   <View>
-                    <Text style={styles.playerName}>{player.name}</Text>
-                    <Text style={styles.playerReceipt}>{player.receipt}</Text>
-                    <Text style={styles.playerNote}>Note: {player.note}</Text>
+                      <Text style={styles.playerName}>{player.name}</Text>
+                      <Text style={styles.playerReceipt}>{player.receipt}</Text>
+                      <Text style={styles.playerNote}>Note: {player.note}</Text>
+                      <Text style={[styles.playerNote, { marginTop: 6 }]}>Balls: {player.balls ?? 0} • Timer: {player.sessionStarted ? 'Started' : 'Not started'}</Text>
                   </View>
 
                   <TouchableOpacity
@@ -445,6 +575,8 @@ export default function BayAssignmentScreen({ userName, counts, assignedBays }: 
                 <>
                   <Text style={styles.infoBoxName}>{selectedPlayer.name}</Text>
                   <Text style={styles.infoBoxReceipt}>{selectedPlayer.receipt}</Text>
+                  <Text style={[styles.infoBoxLabel, { marginTop: 8 }]}>Balls: {selectedPlayer.balls ?? 0}</Text>
+                  <Text style={[styles.infoBoxLabel]}>Timer: {selectedPlayer.sessionStarted ? 'Started' : 'Not started (starts when first ball is handed over)'}</Text>
                 </>
               ) : (
                 <Text style={styles.warningText}>

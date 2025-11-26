@@ -332,6 +332,56 @@ export class ChatService {
     }
   }
 
+  // Broadcast a generic event to specified employee recipients (SSE + WS).
+  async notifyEvent(eventName: string, payload: any, recipientIds?: number[]) {
+    try {
+      const sentTo: number[] = [];
+      let recipients: number[] = [];
+      if (Array.isArray(recipientIds) && recipientIds.length) {
+        recipients = recipientIds.map((n) => Number(n)).filter((n) => Number.isFinite(n));
+      } else {
+        // default to all connected SSE clients
+        recipients = Array.from(this.clients.keys()).map((n) => Number(n));
+      }
+
+      for (const rid of recipients) {
+        const set = this.clients.get(Number(rid));
+        if (!set || set.size === 0) continue;
+        for (const res of Array.from(set)) {
+          try {
+            res.write(`event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`);
+            sentTo.push(rid);
+          } catch (e) {
+            this.logger.error(`notifyEvent: write failed for employee=${rid}`, e);
+            try { res.end(); } catch (_e) { void _e; }
+          }
+        }
+      }
+
+      // Also send to any WS clients registered for those recipients
+      try {
+        await this.ensureWsServer();
+        for (const rid of recipients) {
+          const set = this.wsClients.get(Number(rid));
+          if (!set || set.size === 0) continue;
+          for (const ws of Array.from(set)) {
+            try {
+              if (ws && ws.readyState === ws.OPEN) {
+                ws.send(JSON.stringify({ type: eventName, payload }));
+              }
+            } catch (e) {
+              this.logger.error('notifyEvent: ws send failed', e);
+            }
+          }
+        }
+      } catch (_err) { void _err; }
+
+      this.logger.log(`notifyEvent: event=${eventName} sent to ${sentTo.length} SSE client(s)`);
+    } catch (e) {
+      this.logger.error('notifyEvent failed', e);
+    }
+  }
+
   // Determine recipient employee IDs for a chat room. Public helper for other transports (e.g., Socket.IO).
   async getRecipientEmployeeIds(chatId: number): Promise<number[]> {
     try {
