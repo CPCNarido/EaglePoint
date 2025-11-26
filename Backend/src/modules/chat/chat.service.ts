@@ -9,6 +9,8 @@ export class ChatService {
   private clients: Map<number, Set<Response>> = new Map();
   // optional WebSocket clients map (employeeId -> Set<WebSocket>)
   private wsClients: Map<number, Set<any>> = new Map();
+  // Track Socket.IO connected employee sockets (employeeId -> Set<socketId>)
+  private socketIoClients: Map<number, Set<string>> = new Map();
   private wsServerStarted = false;
 
   constructor(private prisma: PrismaService) {}
@@ -114,6 +116,39 @@ export class ChatService {
     } catch (e) {
       this.logger.error('Failed to start WebSocket server', e);
     }
+  }
+
+  // Record a Socket.IO connection for an employee id
+  registerSocketIoConnection(employeeId: number, socketId: string) {
+    try {
+      const key = Number(employeeId);
+      if (!key || !socketId) return;
+      if (!this.socketIoClients.has(key)) this.socketIoClients.set(key, new Set());
+      this.socketIoClients.get(key)!.add(String(socketId));
+      this.logger.log(`SocketIO: register connection emp=${key} socket=${socketId} (count=${this.socketIoClients.get(key)!.size})`);
+    } catch (e) {
+      this.logger.error('registerSocketIoConnection failed', e);
+    }
+  }
+
+  // Remove a Socket.IO connection record for an employee id
+  unregisterSocketIoConnection(employeeId: number, socketId?: string) {
+    try {
+      const key = Number(employeeId);
+      if (!key) return;
+      const set = this.socketIoClients.get(key);
+      if (!set) return;
+      if (socketId) set.delete(String(socketId));
+      if (!socketId || set.size === 0) this.socketIoClients.delete(key);
+      else this.logger.log(`SocketIO: unregister connection emp=${key} socket=${socketId} (count=${set.size})`);
+    } catch (e) {
+      this.logger.error('unregisterSocketIoConnection failed', e);
+    }
+  }
+
+  // Return a set of employee ids currently known to have at least one Socket.IO connection
+  getSocketIoConnectedEmployeeIds(): Set<number> {
+    return new Set(Array.from(this.socketIoClients.keys()).map((n) => Number(n)));
   }
 
   subscribe(res: Response, employeeId: number) {

@@ -42,6 +42,18 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       if (empId && Number.isFinite(empId)) {
         const room = `emp:${empId}`;
         client.join(room);
+        // persist the employee id on the socket so we can read it on disconnect
+        try { (client as any).data = (client as any).data || {}; (client as any).data.employeeId = empId; } catch (_e) { /* ignore */ }
+        // notify other clients about this staff going online (presence broadcast)
+        try {
+          const payload = { employee_id: empId, online: true } as any;
+          this.server.emit('presence:update', payload);
+          this.server.emit('staff:online', payload);
+        } catch (e) {
+          this.logger.error('presence emit failed (connect)', e);
+        }
+        // record socket.io connection in ChatService so other server APIs can consult live presence
+        try { this.chatService.registerSocketIoConnection(empId, client.id); } catch (_e) { void _e; }
         this.logger.log(
           `Socket connected for employee=${empId} socketId=${client.id}`,
         );
@@ -57,6 +69,21 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   handleDisconnect(client: Socket) {
     try {
+      // attempt to read employee id persisted on connect and broadcast offline presence
+      try {
+        const empId = Number((client as any)?.data?.employeeId ?? null) || null;
+        if (empId && Number.isFinite(empId)) {
+          const payload = { employee_id: empId, online: false } as any;
+          try {
+            this.server.emit('presence:update', payload);
+            this.server.emit('staff:offline', payload);
+          } catch (e) {
+            this.logger.error('presence emit failed (disconnect)', e);
+          }
+          // remove socket.io connection record
+          try { this.chatService.unregisterSocketIoConnection(empId, client.id); } catch (_e) { void _e; }
+        }
+      } catch (_e) { void _e; }
       this.logger.log(`Socket disconnected id=${client.id}`);
     } catch (e) {
       this.logger.error('handleDisconnect error', e);

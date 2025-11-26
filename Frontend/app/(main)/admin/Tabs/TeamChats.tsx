@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
+import Presence from '../../../lib/presence';
 import { isServicemanRole } from '../../utils/staffHelpers';
-import { View, Text, ScrollView, SectionList, StyleSheet, Platform, TextInput, TouchableOpacity, FlatList, KeyboardAvoidingView, ActivityIndicator, useWindowDimensions } from 'react-native';
+import { View, Text, ScrollView, SectionList, StyleSheet, Platform, TextInput, TouchableOpacity, FlatList, KeyboardAvoidingView, ActivityIndicator, useWindowDimensions, Keyboard } from 'react-native';
 
 type ChatRoom = { chat_id?: number; name?: string | null; is_group?: boolean; employee_id?: number; role?: string; online?: boolean };
 type ChatMessage = { message_id?: number; tempId?: string; chat_id: number; sender_name?: string; sender_id?: number; content: string; sent_at?: string; status?: 'pending' | 'sent' | 'failed' };
@@ -14,6 +15,8 @@ export default function TeamChats() {
 
   const [rooms, setRooms] = useState<ChatRoom[]>([]);
   const [loadingRooms, setLoadingRooms] = useState(false);
+  const [rosterSearch, setRosterSearch] = useState<string>('');
+  const [showOnlineOnly, setShowOnlineOnly] = useState<boolean>(false);
 
   // compute role counts for an "Online users" quick section (derived from rooms list)
   // Each role maps to an object with total and online counts.
@@ -27,7 +30,7 @@ export default function TeamChats() {
       if (r.online) counts[role].online += 1;
     }
     return counts;
-  }, [rooms]);
+  }, [rooms, rosterSearch, showOnlineOnly]);
 
   const [selectedChat, setSelectedChat] = useState<ChatRoom | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -35,7 +38,7 @@ export default function TeamChats() {
 
   const [composer, setComposer] = useState('');
   const [lastPreview, setLastPreview] = useState<Record<string, string>>({});
-  const [rosterSearch, setRosterSearch] = useState<string>('');
+  
   const listRef = useRef<FlatList<ChatMessage> | null>(null);
   const listKey = selectedChat ? (selectedChat.employee_id ? `emp-${selectedChat.employee_id}` : `chat-${selectedChat.chat_id}`) : 'none';
   const [isAtBottom, setIsAtBottom] = useState<boolean>(true);
@@ -58,6 +61,12 @@ export default function TeamChats() {
   const [showDebug, setShowDebug] = useState(false);
   void setShowDebug;
 
+  // Track keyboard and composer sizes so the chat list keeps enough bottom
+  // padding to avoid messages being hidden below the composer (especially
+  // on Android where KeyboardAvoidingView behavior may not push the list).
+  const [keyboardHeight, setKeyboardHeight] = useState<number>(0);
+  const [composerHeight, setComposerHeight] = useState<number>(0);
+
   useEffect(() => {
     // On mount: keep the clock ticking, fetch admin and then load the roster.
     const t = setInterval(() => setNow(new Date()), 1000);
@@ -72,6 +81,46 @@ export default function TeamChats() {
             if (!adminEmployeeId) return;
             setWsStatus('connecting');
             try {
+              // Prefer global Presence socket when available (app-wide connection)
+              try {
+                const globalSocket = Presence.getSocket && Presence.getSocket();
+                if (globalSocket) {
+                  // detach any previous handlers we attached here
+                  try { globalSocket.off('connect'); globalSocket.off('disconnect'); globalSocket.off('connect_error'); globalSocket.off('message:new'); } catch (_e) { void _e; }
+                  socketRef.current = globalSocket as any;
+                  // attach light handlers so UI status reflects connection
+                  globalSocket.on('connect', () => { retryCountRef.current = 0; setWsStatus('open'); });
+                  globalSocket.on('disconnect', (reason: any) => { setWsStatus('closed'); });
+                  globalSocket.on('connect_error', (err: any) => { setWsStatus('error'); });
+                  // forward message:new from global socket into the same handler used previously
+                  globalSocket.on('message:new', (d: any) => {
+                    try {
+                      const payload = d?.message ? d.message : d;
+                      if (!payload) return;
+                      const m = payload;
+                      const incoming: ChatMessage = {
+                        message_id: m.message_id,
+                        chat_id: m.chat_id ?? 0,
+                        sender_id: m.sender_id ?? undefined,
+                        sender_name: m.sender_name ?? 'Unknown',
+                        content: m.content ?? '',
+                        sent_at: m.sent_at ?? new Date().toISOString(),
+                      };
+                      const currentSelected = selectedChatRef.current;
+                      if (currentSelected) {
+                        if (currentSelected.chat_id && incoming.chat_id === currentSelected.chat_id) { setMessages((prev) => [...prev, incoming]); try { setLastPreview((p) => ({ ...p, [`chat-${incoming.chat_id}`]: String(incoming.content).slice(0, 80) })); } catch (_e) { void _e; } return; }
+                        if (currentSelected.employee_id && incoming.sender_id === currentSelected.employee_id) { setMessages((prev) => [...prev, incoming]); try { setLastPreview((p) => ({ ...p, [`emp-${currentSelected.employee_id}`]: String(incoming.content).slice(0, 80) })); } catch (_e) { void _e; } return; }
+                      }
+                      try { const key = incoming.chat_id ? `chat-${incoming.chat_id}` : `emp-${incoming.sender_id}`; setLastPreview((prev) => ({ ...prev, [key]: String(incoming.content).slice(0, 80) })); setUnseenCounts((prev) => ({ ...(prev || {}), [key]: (prev?.[key] ?? 0) + 1 })); } catch (_e) { void _e; }
+                    } catch (_e) { void _e; }
+                  });
+                  // reflect current connection state
+                  setWsStatus(globalSocket.connected ? 'open' : 'connecting');
+                  return;
+                }
+              } catch (_e) { void _e; }
+
+              // Fallback: create a local socket (previous behavior)
               const baseUrl = await getBaseUrl();
               // read token from async storage if available
               // @ts-ignore
@@ -79,31 +128,17 @@ export default function TeamChats() {
               const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
               const token = AsyncStorage ? await AsyncStorage.getItem('authToken') : null;
 
-              // Use socket.io on the same base URL (no separate port)
               const socketUrl = baseUrl.replace(/\/$/, '');
-              console.log('[TeamChats] connectWebSocket ->', socketUrl, 'employeeId=', adminEmployeeId);
               try {
-                // disconnect existing if any
-                if (socketRef.current) {
-                  try { socketRef.current.disconnect(); } catch (_e) { void _e; };
-                  socketRef.current = null;
-                }
+                if (socketRef.current) { try { socketRef.current.disconnect(); } catch (_e) { void _e; } socketRef.current = null; }
                 const opts: any = { transports: ['websocket'], autoConnect: true, reconnection: true, auth: {} };
                 if (token) opts.auth.token = token;
-                // attach employeeId as query for server convenience
                 opts.query = { employeeId: String(adminEmployeeId) };
                 const socket = io(socketUrl, opts);
                 socketRef.current = socket;
-
-                socket.on('connect', () => { retryCountRef.current = 0; setWsStatus('open'); console.log('WS connected'); });
-
-                socket.on('disconnect', (reason: any) => {
-                  console.log('WS disconnected', reason);
-                  setWsStatus('closed');
-                });
-
-                socket.on('connect_error', (err: any) => { console.log('WS connect_error', err); setWsStatus('error'); });
-
+                socket.on('connect', () => { retryCountRef.current = 0; setWsStatus('open'); });
+                socket.on('disconnect', (reason: any) => { setWsStatus('closed'); });
+                socket.on('connect_error', (err: any) => { setWsStatus('error'); });
                 socket.on('message:new', (d: any) => {
                   try {
                     const payload = d?.message ? d.message : d;
@@ -117,38 +152,16 @@ export default function TeamChats() {
                       content: m.content ?? '',
                       sent_at: m.sent_at ?? new Date().toISOString(),
                     };
-
-                    // Use ref to avoid stale closure over `selectedChat`.
                     const currentSelected = selectedChatRef.current;
                     if (currentSelected) {
-                      if (currentSelected.chat_id && incoming.chat_id === currentSelected.chat_id) {
-                        setMessages((prev) => [...prev, incoming]);
-                        try { setLastPreview((p) => ({ ...p, [`chat-${incoming.chat_id}`]: String(incoming.content).slice(0, 80) })); } catch (_e) { void _e; }
-                        return;
-                      }
-                      if (currentSelected.employee_id && incoming.sender_id === currentSelected.employee_id) {
-                        setMessages((prev) => [...prev, incoming]);
-                        try { setLastPreview((p) => ({ ...p, [`emp-${currentSelected.employee_id}`]: String(incoming.content).slice(0, 80) })); } catch (_e) { void _e; }
-                        return;
-                      }
+                      if (currentSelected.chat_id && incoming.chat_id === currentSelected.chat_id) { setMessages((prev) => [...prev, incoming]); try { setLastPreview((p) => ({ ...p, [`chat-${incoming.chat_id}`]: String(incoming.content).slice(0, 80) })); } catch (_e) { void _e; } return; }
+                      if (currentSelected.employee_id && incoming.sender_id === currentSelected.employee_id) { setMessages((prev) => [...prev, incoming]); try { setLastPreview((p) => ({ ...p, [`emp-${currentSelected.employee_id}`]: String(incoming.content).slice(0, 80) })); } catch (_e) { void _e; } return; }
                     }
-
-                    try {
-                      const key = incoming.chat_id ? `chat-${incoming.chat_id}` : `emp-${incoming.sender_id}`;
-                      setLastPreview((prev) => ({ ...prev, [key]: String(incoming.content).slice(0, 80) }));
-                      setUnseenCounts((prev) => ({ ...(prev || {}), [key]: (prev?.[key] ?? 0) + 1 }));
-                    } catch (_e) { void _e; }
+                    try { const key = incoming.chat_id ? `chat-${incoming.chat_id}` : `emp-${incoming.sender_id}`; setLastPreview((prev) => ({ ...prev, [key]: String(incoming.content).slice(0, 80) })); setUnseenCounts((prev) => ({ ...(prev || {}), [key]: (prev?.[key] ?? 0) + 1 })); } catch (_e) { void _e; }
                   } catch (_e) { void _e; }
                 });
-              } catch (_e) {
-                console.log('[TeamChats] socket.io creation failed', _e);
-                socketRef.current = null;
-                setWsStatus('disabled');
-              }
-            } catch (_e) {
-              console.log('[TeamChats] connectWebSocket failed', _e);
-              setWsStatus('error');
-            }
+              } catch (_e) { socketRef.current = null; setWsStatus('disabled'); }
+            } catch (_e) { setWsStatus('error'); }
           };
 
           let cancelled = false;
@@ -266,6 +279,46 @@ export default function TeamChats() {
     // do not update prevSelectedChatRef here; the other effect handles that
   }, [selectedChat]);
 
+  // Listen for presence updates from the websocket (server may emit when users connect/disconnect)
+  useEffect(() => {
+    try {
+      const socket = socketRef.current;
+      if (!socket) return;
+      const onPresence = (p: any) => {
+        try {
+          const id = Number(p?.employee_id ?? p?.employeeId ?? p?.id ?? null);
+          const online = typeof p?.online === 'boolean' ? p.online : (String(p?.status ?? '').toLowerCase() === 'online');
+          if (!Number.isFinite(id)) return;
+          setRooms((prev) => (prev || []).map((r) => (r.employee_id === id ? { ...r, online: Boolean(online) } : r)));
+        } catch (_e) { void _e; }
+      };
+
+      const eventNames = ['presence:update', 'staff:online', 'staff:status', 'user:online', 'user:offline'];
+      for (const ev of eventNames) socket.on(ev, onPresence);
+      return () => { for (const ev of eventNames) try { socket.off(ev, onPresence); } catch (_e) { void _e; } };
+    } catch (_e) { void _e; }
+    // only re-run when websocket status changes (re-attach) or socket ref changes
+  }, [wsStatus]);
+
+  // When "showOnlineOnly" is enabled, poll the roster periodically so presence info
+  // (computed server-side) stays fresh even if the server doesn't emit presence events.
+  useEffect(() => {
+    if (!showOnlineOnly) return;
+    let cancelled = false;
+    const doRefresh = async () => {
+      try {
+        const prev = selectedChat;
+        await fetchRooms(adminEmployeeId ?? null);
+        // try to preserve selection if user had a chat open
+        try { if (!cancelled && prev) setSelectedChat(prev); } catch (_e) { void _e; }
+      } catch (_e) { void _e; }
+    };
+    // refresh immediately, then poll
+    void doRefresh();
+    const id = setInterval(() => { void doRefresh(); }, 20000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [showOnlineOnly, adminEmployeeId, selectedChat]);
+
   const getBaseUrl = async () => {
     let baseUrl = Platform.OS === 'android' ? 'http://10.127.147.53:3000' : 'http://localhost:3000';
     try {
@@ -360,8 +413,9 @@ export default function TeamChats() {
       const deduped = dedupeRooms(roomsAcc);
       try { console.log('fetchRooms: deduped roster', deduped); } catch (_e) { void _e; }
       setRooms(deduped);
-      // auto-select first staff or first group by preference
-      if (deduped.length) setSelectedChat(deduped[0]);
+      // auto-select first staff or first group by preference, but only when
+      // there is no current selection so refreshes/polls don't steal focus.
+      if (deduped.length && !selectedChat) setSelectedChat(deduped[0]);
     } catch (_e) { void _e; }
     finally { setLoadingRooms(false); }
   };
@@ -590,6 +644,34 @@ export default function TeamChats() {
     } catch (_e) { void _e; }
     prevMessagesCount.current = messages.length;
   }, [messages]);
+
+  // compute spacer so last message sits above composer + keyboard
+  const bottomSpacerHeight = Math.max(120, composerHeight + keyboardHeight + 24);
+
+  // when the spacer changes (keyboard shown/hidden or composer resized) keep
+  // the list scrolled to bottom if user was already at the bottom.
+  useEffect(() => {
+    try {
+      if (isAtBottom && listRef.current && typeof (listRef.current as any).scrollToEnd === 'function') {
+        setTimeout(() => { try { (listRef.current as any).scrollToEnd({ animated: true }); } catch (_e) { void _e; } }, 60);
+      }
+    } catch (_e) { void _e; }
+  }, [bottomSpacerHeight]);
+
+  // Listen for keyboard show/hide so we can increase the FlatList bottom padding
+  useEffect(() => {
+    try {
+      const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+      const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+      const onShow = (e: any) => {
+        try { setKeyboardHeight(e?.endCoordinates?.height ?? 0); } catch (_e) { setKeyboardHeight(0); }
+      };
+      const onHide = () => setKeyboardHeight(0);
+      const subShow = Keyboard.addListener(showEvent, onShow);
+      const subHide = Keyboard.addListener(hideEvent, onHide);
+      return () => { try { subShow.remove(); subHide.remove(); } catch (_e) { void _e; } };
+    } catch (_e) { void _e; }
+  }, []);
 
   const sendMessage = async (chatId: number, content: string) => {
     if (!content || content.trim().length === 0) return false;
@@ -832,13 +914,15 @@ export default function TeamChats() {
   };
 
   // Filter rooms by rosterSearch then group by role for roster sections (preserve desired display order)
+  // Honor `showOnlineOnly` to restrict the roster to currently-online staff when enabled.
   const groupedRooms = React.useMemo(() => {
     const order = ['Dispatcher', 'Cashier', 'BallHandler', 'Admin', 'Other'];
     const titleMap: Record<string, string> = { Dispatcher: 'Dispatchers', Cashier: 'Cashiers', BallHandler: 'Ball Handler', Admin: 'Admins', Other: 'Other' };
     const groups: { key: string; title: string; items: ChatRoom[] }[] = [];
 
-    // apply roster search filter (name or role)
+    // apply roster search filter (name or role) and optional "online only" filter
     const filtered = (rooms || []).filter((ro) => {
+      if (showOnlineOnly && !ro.online) return false;
       if (!rosterSearch || rosterSearch.trim().length === 0) return true;
       const q = rosterSearch.toLowerCase().trim();
       const name = String(ro.name ?? '').toLowerCase();
@@ -867,7 +951,7 @@ export default function TeamChats() {
     }
 
     return groups;
-  }, [rooms]);
+  }, [rooms, rosterSearch, showOnlineOnly]);
 
   const renderMessage = ({ item }: { item: ChatMessage }) => {
   const fromMe = (item.sender_id !== undefined && adminEmployeeId !== null) ? item.sender_id === adminEmployeeId : (item.sender_name === adminName);
@@ -914,13 +998,21 @@ export default function TeamChats() {
 
             {/* Online users / active roles quick chips */}
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.roleChipsRow} contentContainerStyle={{ paddingVertical: 6 }}>
-              <TouchableOpacity style={[styles.roleChip, !rosterSearch ? styles.roleChipActive : null]} onPress={() => setRosterSearch('')}>
+              <TouchableOpacity style={[styles.roleChip, !rosterSearch && !showOnlineOnly ? styles.roleChipActive : null]} onPress={() => { setRosterSearch(''); setShowOnlineOnly(false); }}>
                 <Text style={styles.roleChipText}>All</Text>
               </TouchableOpacity>
+
+              <TouchableOpacity style={[styles.roleChip, showOnlineOnly ? styles.roleChipActive : null]} onPress={() => { setShowOnlineOnly((v) => !v); setRosterSearch(''); }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  {showOnlineOnly ? <View style={styles.roleOnlineDot} /> : <View style={{ width: 8, height: 8, marginRight: 8 }} />}
+                  <Text style={styles.roleChipText}>Online only</Text>
+                </View>
+              </TouchableOpacity>
+
               {Object.keys(roleCounts).map((role) => {
                   const rc = roleCounts[role] ?? { total: 0, online: 0 };
                   return (
-                    <TouchableOpacity key={role} style={[styles.roleChip, rosterSearch && rosterSearch.toLowerCase() === String(role).toLowerCase() ? styles.roleChipActive : null]} onPress={() => setRosterSearch(role)}>
+                    <TouchableOpacity key={role} style={[styles.roleChip, rosterSearch && rosterSearch.toLowerCase() === String(role).toLowerCase() ? styles.roleChipActive : null]} onPress={() => { setRosterSearch(role); setShowOnlineOnly(false); }}>
                       <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                         {rc.online > 0 ? <View style={styles.roleOnlineDot} /> : <View style={{ width: 8, height: 8, marginRight: 8 }} />}
                         <Text style={styles.roleChipText}>{role} ({rc.online}/{rc.total})</Text>
@@ -986,7 +1078,8 @@ export default function TeamChats() {
                 data={messages}
                 renderItem={renderMessage}
                 keyExtractor={(m, idx) => String(m.tempId ?? m.message_id ?? idx)}
-                contentContainerStyle={{ padding: 12, flexGrow: 1, justifyContent: 'flex-end', paddingBottom: 120 }}
+                contentContainerStyle={{ padding: 12, flexGrow: 1, justifyContent: 'flex-end' }}
+                ListFooterComponent={() => (<View style={{ height: bottomSpacerHeight }} />)}
                 keyboardShouldPersistTaps="handled"
                 ListHeaderComponent={() => (
                   messages.length ? (
@@ -1021,7 +1114,7 @@ export default function TeamChats() {
             {/* Jump-to-latest floating button when user scrolled up */}
             {!isAtBottom && (
               <TouchableOpacity
-                style={styles.floatingLatestButton}
+                style={[styles.floatingLatestButton, { bottom: bottomSpacerHeight + 20 }]}
                 onPress={() => {
                   try { if (listRef.current && typeof (listRef.current as any).scrollToEnd === 'function') (listRef.current as any).scrollToEnd({ animated: true }); setIsAtBottom(true); } catch (_e) { void _e; }
                 }}
@@ -1030,7 +1123,7 @@ export default function TeamChats() {
               </TouchableOpacity>
             )}
 
-            <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.composerRowInside}>
+            <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.composerRowInside} onLayout={(e) => { try { setComposerHeight(e.nativeEvent.layout.height); } catch (_e) { void _e; } }}>
               <TextInput value={composer} onChangeText={setComposer} placeholder="Type your message in here" style={styles.composerInputInside} />
               <TouchableOpacity style={styles.sendButtonInside} onPress={onSendPressed}><Text style={styles.sendIcon}>➤</Text></TouchableOpacity>
             </KeyboardAvoidingView>

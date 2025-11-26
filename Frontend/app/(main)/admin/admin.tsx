@@ -4,6 +4,7 @@ import { tw } from 'react-native-tailwindcss';
 import { useRouter } from "expo-router";
 import { useNavigation } from '@react-navigation/native';
 import { logoutAndClear } from '../../_lib/auth';
+import Presence from '../../lib/presence';
 import { fetchWithAuth } from '../../_lib/fetchWithAuth';
 import { useSettings } from '../../lib/SettingsProvider';
 import { buildNotification } from '../../lib/notification';
@@ -41,6 +42,7 @@ export default function AdminDashboard() {
 
   const performLogout = async () => {
     try { setLogoutModalVisible(false); } catch (_e) { void _e; }
+  try { await Presence.disconnect(); } catch (_e) { void _e; }
   await logoutAndClear();
     router.replace('/');
   };
@@ -458,6 +460,8 @@ export default function AdminDashboard() {
         const id = empId != null ? String(empId) : '';
         setAdminName(name);
         setAdminId(id);
+        // Connect global presence socket as soon as we know the employee id
+        try { if (id) void Presence.connect(id); } catch (_e) { void _e; }
       } catch {
         // ignore
       }
@@ -472,6 +476,7 @@ export default function AdminDashboard() {
       try {
         if (typeof window !== 'undefined' && window.removeEventListener) window.removeEventListener('overview:updated', onOverviewUpdated as EventListener);
       } catch (_e) { void _e; }
+      try { void Presence.disconnect(); } catch (_e) { void _e; }
     };
   }, [fetchOverview]);
 

@@ -1188,29 +1188,33 @@ export class AdminService {
       },
     });
 
-    // Compute a lightweight presence indicator:
-    // - online if the staff sent a chat message within the last 5 minutes
-    // - OR if they are referenced on an open bay assignment (dispatcher or serviceman)
+    // Compute a lightweight presence indicator.
+    // Prefer live Socket.IO-connected state when available (fast in-memory) and
+    // fall back to heuristics (recent chat messages or open assignments).
     try {
       const ids = staff.map((s) => s.employee_id).filter(Boolean);
       const onlineSet = new Set<number>();
 
-      if (ids.length) {
+      // 1) Prefer Socket.IO live connections recorded in ChatService
+      try {
+        const socketConnected = this.chatService.getSocketIoConnectedEmployeeIds();
+        for (const id of socketConnected) onlineSet.add(Number(id));
+      } catch (_e) { void _e; }
+
+      // 2) If no socket connection found for some ids, supplement with DB heuristics
+      const missing = ids.filter((i) => !onlineSet.has(i));
+      if (missing.length) {
         const recentThreshold = new Date(Date.now() - 5 * 60 * 1000); // 5 minutes
         try {
           const recentMsgs = await this.prisma.chatMessage.findMany({
             where: {
-              sender_id: { in: ids },
+              sender_id: { in: missing },
               sent_at: { gte: recentThreshold },
             },
             select: { sender_id: true },
           });
-          for (const m of recentMsgs)
-            if (m.sender_id) onlineSet.add(m.sender_id);
-        } catch (e) {
-          // best-effort; ignore errors querying messages
-          void e;
-        }
+          for (const m of recentMsgs) if (m.sender_id) onlineSet.add(m.sender_id);
+        } catch (_e) { void _e; }
 
         try {
           const openAssignments = await this.prisma.bayAssignment.findMany({
@@ -1218,12 +1222,10 @@ export class AdminService {
             select: { dispatcher_id: true, serviceman_id: true },
           });
           for (const a of openAssignments) {
-            if (a.dispatcher_id) onlineSet.add(a.dispatcher_id);
-            if (a.serviceman_id) onlineSet.add(a.serviceman_id);
+            if (a.dispatcher_id && missing.includes(a.dispatcher_id)) onlineSet.add(a.dispatcher_id);
+            if (a.serviceman_id && missing.includes(a.serviceman_id)) onlineSet.add(a.serviceman_id);
           }
-        } catch (e) {
-          void e;
-        }
+        } catch (_e) { void _e; }
       }
 
       return staff.map((s) => ({
