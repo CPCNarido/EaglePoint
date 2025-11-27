@@ -50,6 +50,16 @@ export default function RealTimeBayOverview({ overview, settings, highlightedBay
     } catch (_e) { void _e; return null; }
   };
 
+  // Helper: determine whether a bay/session should be considered started
+  // Consider session started only if there's at least one delivered ball.
+  const isSessionStarted = (b: any) => {
+    try {
+      if (!b) return false;
+      const balls = Number(b.total_balls ?? b.balls_used ?? b.bucket_count ?? b.transactions_count ?? 0) || 0;
+      return balls >= 1;
+    } catch (_e) { void _e; return false; }
+  };
+
   const getAdminBayColor = (b: any) => {
     try {
       if (showSessionLegend) {
@@ -57,7 +67,7 @@ export default function RealTimeBayOverview({ overview, settings, highlightedBay
         const stype = b?.session_type ?? inferSessionType(b);
         if (stype === 'Open') return '#BF930E';
         if (stype === 'Timed') {
-          if (b?.session_started) return '#D18B3A';
+          if (isSessionStarted(b)) return '#D18B3A';
           return '#A3784E';
         }
         if (original === 'SpecialUse') return '#6A1B9A';

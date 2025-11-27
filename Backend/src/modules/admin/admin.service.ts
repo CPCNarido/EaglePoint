@@ -2655,19 +2655,24 @@ export class AdminService {
     const assignmentDispatcherId = body?.dispatcherId ?? createdBy;
 
     // Determine if this is an open (stopwatch) session or a timed session.
-    // If the caller provided an explicit end_time, treat as Timed; otherwise Open.
-    const isOpenSession = !body?.end_time;
+    // If the caller provided an explicit end_time, treat as Timed.
+    // Also treat as Timed when the player has a planned duration (plannedMinutes > 0).
+    const isOpenSession = !body?.end_time && !(Number(plannedMinutes || 0) > 0);
 
     const assignmentData: any = {
       // attach player by relation connect so Prisma uses the nested relation input
       player: { connect: { player_id: player.player_id } },
       assigned_time: new Date(),
-      // For Timed sessions created via cashier/dispatcher we do NOT mark the assignment as started here.
-      // The authoritative session start_time will be set when the first BallTransaction is created by the ball handler.
-      open_time: Boolean(isOpenSession),
+      // Mark the assignment as active on the bay. The authoritative session start_time
+      // is still set when the first BallTransaction is created by the ball handler.
+      // `open_time` indicates the assignment is present on the bay so handlers
+      // and dispatchers can see it in their queues/views.
+      open_time: true,
       end_time: end_time ?? null,
       // typed session designation so historical records show whether it was Open/Timed/Reserved
-      session_type: isOpenSession ? 'Open' : 'Timed',
+      // Prefer explicit end_time, otherwise mark as Timed when a planned duration exists.
+      session_type:
+        body?.end_time || (Number(plannedMinutes || 0) > 0) ? 'Timed' : 'Open',
       // connect relations explicitly to satisfy Prisma's strict create input
       bay: { connect: { bay_id: bay.bay_id } },
       dispatcher: { connect: { employee_id: assignmentDispatcherId } },
@@ -3010,8 +3015,18 @@ export class AdminService {
               const planned = Number(playerRow.planned_duration_minutes || 0) || 0;
               if (planned > 0 && !playerRow.end_time) {
                 updateData.end_time = new Date(new Date(startAt).getTime() + planned * 60000);
+                // Ensure session_type reflects Timed when we compute an end_time from planned duration
+                updateData.session_type = 'Timed';
               }
-              await this.prisma.player.update({ where: { player_id: playerRow.player_id }, data: updateData }).catch(() => null);
+              const updatedPlayer = await this.prisma.player.update({ where: { player_id: playerRow.player_id }, data: updateData }).catch(() => null);
+              // Best-effort: also update the active bayAssignment.session_type for consistency
+              try {
+                if (updatedPlayer && updateData.session_type === 'Timed' && assignment && assignment.assignment_id) {
+                  await this.prisma.bayAssignment.update({ where: { assignment_id: assignment.assignment_id }, data: { session_type: 'Timed' } }).catch(() => null);
+                }
+              } catch (e) {
+                void e;
+              }
             }
 
             // Ensure assignment is marked open_time = true so overview treats bay as active

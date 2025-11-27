@@ -102,6 +102,18 @@ export default function DispatcherDashboard() {
 
   // Fetch global counts (overview, staff, queue) and poll periodically
   useEffect(() => {
+    // Helper: determine if a timestamp string refers to "today" in Philippine time (UTC+8).
+    const isCreatedTodayPH = (createdStr: any) => {
+      if (!createdStr) return false;
+      try {
+        const created = new Date(createdStr);
+        if (isNaN(created.getTime())) return false;
+        const phOffsetMs = 8 * 60 * 60 * 1000; // UTC+8
+        const createdPh = new Date(created.getTime() + phOffsetMs);
+        const nowPh = new Date(Date.now() + phOffsetMs);
+        return createdPh.getUTCFullYear() === nowPh.getUTCFullYear() && createdPh.getUTCMonth() === nowPh.getUTCMonth() && createdPh.getUTCDate() === nowPh.getUTCDate();
+      } catch (e) { void e; return false; }
+    };
     let mounted = true;
     const fetchCounts = async () => {
       try {
@@ -217,23 +229,11 @@ export default function DispatcherDashboard() {
           if (r3 && r3.ok) {
             const rows = await r3.json();
             if (!mounted) return;
-            // Consider a session "unassigned" when it has no bay number and no bay id, and it hasn't ended.
-            // Prefer the typed `session_type` from the API when present.
+            // Only count sessions that have no bay assigned
             const waiting = Array.isArray(rows) ? rows.filter((r: any) => {
-              const noBay = (r.bay_no == null && r.bay_id == null);
+              const noBay = (r.bay_no == null && r.bay_id == null) || (!r.bay_no && !r.bay_id);
               if (!noBay) return false;
-              const st = String(r.session_type ?? '').toLowerCase();
-              if (st === 'open') return true;
-              if (st === 'timed') {
-                // If the server indicates the timed session has started (first bucket + grace), it's not waiting
-                if ((r as any).session_started) return false;
-                // Otherwise treat it as waiting while it has no end_time or end_time is in the future
-                if (!r.end_time) return true;
-                try { const et = new Date(r.end_time); return !isNaN(et.getTime()) && et.getTime() > Date.now(); } catch (e) { void e; return false; }
-              }
-              // Fallback: treat rows with null end_time as unassigned
-              if (r.end_time == null) return true;
-              try { const et = new Date(r.end_time); return !isNaN(et.getTime()) && et.getTime() > Date.now(); } catch (e) { void e; return false; }
+              return true;
             }) : [];
             setGlobalWaitingQueue(waiting.length);
           }
@@ -362,7 +362,6 @@ export default function DispatcherDashboard() {
 const styles = StyleSheet.create({
   container: { flex: 1, flexDirection: "row", backgroundColor: "#F6F6F2" },
   sidebar: { width: 250, backgroundColor: "#1E2B20", padding: 20 },
-  // Logo block (mirrors admin sidebar styling)
   logoContainer: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
   logoImage: { width: 60, height: 60, borderRadius: 8, marginRight: 10, backgroundColor: 'transparent', overflow: 'hidden' },
   logoTextContainer: { flexDirection: 'column' },

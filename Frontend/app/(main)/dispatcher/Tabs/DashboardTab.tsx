@@ -168,6 +168,58 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
     } catch (_e) { void _e; return '—'; }
   };
 
+  // Compute display time for a bay: prefer explicit stopwatch, otherwise only
+  // show elapsed/remaining when the session is considered started (balls >= 1).
+  // NOTE: intentionally ignore any server-provided `session_started` hint and
+  // rely only on delivered-ball counts to match admin/cashier behavior exactly.
+  const computeBayTime = (row: any, fallbackNum: number) => {
+    try {
+      const id = String(row?.bay_number ?? row?.bay_id ?? fallbackNum);
+      // explicit client-side stopwatch wins
+      const swStart = stopwatches?.[id];
+      if (swStart) {
+        const elapsed = Date.now() - swStart;
+        if (elapsed <= 0) return { time: '0:00', timeLabel: 'Time:' };
+        return { time: formatMsForDisplay(elapsed), timeLabel: 'Time:' };
+      }
+
+      // Determine whether the session should be considered started.
+      // Use only delivered-ball counts (>=1) to decide — do not use
+      // server-side `session_started` hints. This keeps dispatcher in sync
+      // with admin/cashier which start timers only when a ball has been
+      // delivered.
+      const balls = Number(row?.total_balls ?? row?.balls_used ?? row?.bucket_count ?? row?.transactions_count ?? row?.totalBuckets ?? row?.totalBalls ?? 0) || 0;
+      const sessionStarted = balls >= 1;
+
+      // If the session hasn't started yet, show a not-started indicator
+      if (!sessionStarted) return { time: '—', timeLabel: '' };
+
+      // Session started: for *timed* sessions prefer showing remaining time
+      // (when `end_time` is present). Otherwise fall back to elapsed time
+      // derived from `start_time`. This prevents timed sessions from being
+      // displayed as open/stopwatch when an `end_time` exists.
+      const end = row?.end_time ? new Date(row.end_time) : null;
+      if (end && !isNaN(end.getTime())) {
+        const ms = end.getTime() - Date.now();
+        if (ms <= 0) return { time: 'Expired', timeLabel: 'Remaining:' };
+        return { time: formatMsForDisplay(ms), timeLabel: 'Remaining:' };
+      }
+
+      // No valid end_time: show elapsed time if a start_time is present
+      const startStr = (row as any)?.start_time ?? (row?.player && (row.player as any).start_time) ?? null;
+      if (startStr) {
+        const ts = new Date(startStr).getTime();
+        if (!isNaN(ts)) {
+          const elapsed = Date.now() - ts;
+          if (elapsed <= 0) return { time: '0:00', timeLabel: 'Time:' };
+          return { time: formatMsForDisplay(elapsed), timeLabel: 'Time:' };
+        }
+      }
+
+      return { time: '—', timeLabel: '' };
+    } catch (_e) { return { time: '—', timeLabel: '' }; }
+  };
+
   const getVisibleBayIds = () => {
     const total = Number(overview?.totalBays ?? 45);
     const pageSizeLocal = getPageSizeLocal();
@@ -309,8 +361,17 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
             // Prefer top-level start_time, then player.start_time
             const startStr = (b as any).start_time ?? (b.player && (b.player as any).start_time) ?? null;
             if (!startStr) return;
+            // Diagnostic: log candidate stopwatch initialization
+            try {
+              const balls = Number((b as any).total_balls ?? (b as any).balls_used ?? (b as any).bucket_count ?? (b as any).transactions_count ?? 0) || 0;
+              try { console.debug('[Dashboard] stopwatch candidate', { id, startStr, balls }); } catch (_e) { void _e; }
+              if (balls < 1) return;
+            } catch (_e) { void _e; return; }
             const ts = new Date(startStr).getTime();
-            if (!isNaN(ts)) copy[id] = ts;
+            if (!isNaN(ts)) {
+              try { console.debug('[Dashboard] initializing stopwatch', { id, ts }); } catch (_e) { void _e; }
+              copy[id] = ts;
+            }
           } catch (_e) { void _e; /* ignore per-bay errors */ }
         });
         return copy;
@@ -644,6 +705,20 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Listen for explicit stopwatch clear events from other dispatcher screens
+  useEffect(() => {
+    const onClear = (ev: any) => {
+      try {
+        const bay = (ev && ev.detail && (ev.detail.bay ?? ev.detail.bayNo)) ?? (ev && ev.bay) ?? null;
+        if (!bay) return;
+        try { setStopwatches((prev) => { const copy = { ...prev }; delete copy[String(bay)]; return copy; }); } catch {}
+        try { console.debug('[Dashboard] cleared stopwatch for bay', bay); } catch (_e) { void _e; }
+      } catch (_e) { void _e; }
+    };
+    try { if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('stopwatch:clear', onClear as EventListener); } catch (_e) { void _e; }
+    return () => { try { if (typeof window !== 'undefined' && window.removeEventListener) window.removeEventListener('stopwatch:clear', onClear as EventListener); } catch (_e) { void _e; } };
+  }, []);
+
   const renderOverviewCards = () => {
     const total = overview?.totalBays ?? '—';
     const available = overview?.availableBays ?? '—';
@@ -685,23 +760,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
       const player = row?.player_name ?? row?.player?.nickname ?? '—';
       
 
-      const { time, timeLabel } = (() => {
-        try {
-          const id = String(row?.bay_number ?? row?.bay_id ?? num);
-          // If we have an explicit stopwatch running for this bay, show elapsed mm:ss
-          const swStart = stopwatches?.[id];
-          if (swStart) {
-            const elapsed = Date.now() - swStart;
-            if (elapsed <= 0) return { time: '0:00', timeLabel: 'Time:' };
-            return { time: formatMsForDisplay(elapsed), timeLabel: 'Time:' };
-          }
-          const end = row?.end_time ? new Date(row.end_time) : null;
-          if (!end) return { time: '—', timeLabel: '' };
-          const ms = end.getTime() - Date.now();
-          if (ms <= 0) return { time: 'Expired', timeLabel: 'Remaining:' };
-          return { time: formatMsForDisplay(ms), timeLabel: 'Remaining:' };
-        } catch { return { time: '—', timeLabel: '' }; }
-      })();
+      const { time, timeLabel } = computeBayTime(row, num);
 
       const displayNumber = row?.bay_number ?? num;
   const bayId = row?.bay_number ?? row?.bay_id ?? num;
@@ -743,22 +802,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
       const status = row?.status ?? 'Available';
       const color = getColorFromStatus(status);
       const player = row?.player_name ?? row?.player?.nickname ?? '—';
-      const { time, timeLabel } = (() => {
-        try {
-          const id = String(row?.bay_number ?? row?.bay_id ?? num);
-          const swStart = stopwatches?.[id];
-          if (swStart) {
-            const elapsed = Date.now() - swStart;
-            if (elapsed <= 0) return { time: '0:00', timeLabel: 'Time:' };
-            return { time: formatMsForDisplay(elapsed), timeLabel: 'Time:' };
-          }
-          const end = row?.end_time ? new Date(row.end_time) : null;
-          if (!end) return { time: '—', timeLabel: '' };
-          const ms = end.getTime() - Date.now();
-          if (ms <= 0) return { time: 'Expired', timeLabel: 'Remaining:' };
-          return { time: formatMsForDisplay(ms), timeLabel: 'Remaining:' };
-        } catch { return { time: '—', timeLabel: '' }; }
-      })();
+      const { time, timeLabel } = computeBayTime(row, num);
 
       const displayNumber = row?.bay_number ?? num;
       const bayId = row?.bay_number ?? row?.bay_id ?? num;
@@ -1084,9 +1128,11 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
                                       const bayNum = selectedBay.bay_number ?? selectedBay.bay_id;
                                       const baseUrl = await resolveBaseUrl();
                                       const res = await postJson(`${baseUrl}/api/admin/bays/${bayNum}/start`, { nickname: selectedBay.player_name ?? null });
-                                      if (res && res.ok) {
-                                        setBays((prev) => prev.map(b => (String(b.bay_number) === String(bayNum) || String(b.bay_id) === String(bayNum)) ? { ...b, status: 'Occupied', player_name: selectedBay.player_name ?? null, start_time: new Date().toISOString() } : b));
-                                        try { setStopwatches((prev) => ({ ...prev, [String(bayNum)]: Date.now() })); } catch {}
+                                        if (res && res.ok) {
+                                        // Do not locally set start_time or start a stopwatch here.
+                                        // Session should be considered started only when a ball
+                                        // is delivered (balls >= 1) and reported by the server.
+                                        setBays((prev) => prev.map(b => (String(b.bay_number) === String(bayNum) || String(b.bay_id) === String(bayNum)) ? { ...b, status: 'Occupied', player_name: selectedBay.player_name ?? null } : b));
                                         try { await fetchOverview(); await fetchBays(); } catch {}
                                       } else {
                                         try { await fetchOverview(); await fetchBays(); } catch {}
@@ -1108,10 +1154,10 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
                                     const bayNum = selectedBay.bay_number ?? selectedBay.bay_id;
                                     const baseUrl = await resolveBaseUrl();
                                     const res = await postJson(`${baseUrl}/api/admin/bays/${bayNum}/start`, { nickname: selectedBay.player_name ?? null });
-                                    if (res && res.ok) {
-                                      setBays((prev) => prev.map(b => (String(b.bay_number) === String(bayNum) || String(b.bay_id) === String(bayNum)) ? { ...b, status: 'Occupied', player_name: selectedBay.player_name ?? null, start_time: new Date().toISOString() } : b));
-                                        try { setStopwatches((prev) => ({ ...prev, [String(bayNum)]: Date.now() })); } catch {}
-                                      try { await fetchOverview(); await fetchBays(); } catch {}
+                                      if (res && res.ok) {
+                                        // Do not set start_time locally; wait for server activity (balls)
+                                        setBays((prev) => prev.map(b => (String(b.bay_number) === String(bayNum) || String(b.bay_id) === String(bayNum)) ? { ...b, status: 'Occupied', player_name: selectedBay.player_name ?? null } : b));
+                                        try { await fetchOverview(); await fetchBays(); } catch {}
                                     } else {
                                       try { await fetchOverview(); await fetchBays(); } catch {}
                                       try { const msg = extractServerMessage(res) ?? 'Failed to start session. Server did not accept the request.'; showError(msg); } catch {}
@@ -1254,9 +1300,9 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
                     const bayNum = selectedBay?.bay_number ?? selectedBay?.bay_id;
                     const baseUrl = await resolveBaseUrl();
                     const res = await postJson(`${baseUrl}/api/admin/bays/${bayNum}/start`, { nickname: openName || null, servicemanName: assignServicemanName || null });
-                    if (res && res.ok) {
-                      setBays((prev) => prev.map(b => (String(b.bay_number) === String(bayNum) || String(b.bay_id) === String(bayNum)) ? { ...b, status: 'Open', player_name: openName, start_time: new Date().toISOString() } : b));
-                      try { setStopwatches((prev) => ({ ...prev, [String(bayNum)]: Date.now() })); } catch {}
+                      if (res && res.ok) {
+                      // For open time, don't start stopwatch until first ball
+                      setBays((prev) => prev.map(b => (String(b.bay_number) === String(bayNum) || String(b.bay_id) === String(bayNum)) ? { ...b, status: 'Open', player_name: openName } : b));
                       try { await fetchOverview(); await fetchBays(); } catch {}
                     } else {
                       try { await fetchOverview(); await fetchBays(); } catch {}
@@ -1294,8 +1340,8 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
                     const baseUrl = await resolveBaseUrl();
                     const res = await postJson(`${baseUrl}/api/admin/bays/${bayNum}/start`, { nickname: selectedBay?.player_name ?? null, servicemanName: assignServicemanName || null });
                     if (res && res.ok) {
-                      setBays((prev) => prev.map(b => (String(b.bay_number) === String(bayNum) || String(b.bay_id) === String(bayNum)) ? { ...b, status: 'Occupied', player_name: b.player_name ?? null, start_time: new Date().toISOString() } : b));
-                      try { setStopwatches((prev) => ({ ...prev, [String(bayNum)]: Date.now() })); } catch {}
+                      // Don't set start_time locally; rely on server to report ball deliveries
+                      setBays((prev) => prev.map(b => (String(b.bay_number) === String(bayNum) || String(b.bay_id) === String(bayNum)) ? { ...b, status: 'Occupied', player_name: b.player_name ?? null } : b));
                       try { await fetchOverview(); await fetchBays(); } catch {}
                     } else {
                       try { await fetchOverview(); await fetchBays(); } catch {}

@@ -36,6 +36,16 @@ export default function SessionControlTab({ userName, counts, assignedBays }: { 
   const r = await fetchWithAuth(`${baseUrl}/api/admin/reports/sessions?limit=1000`, { method: 'GET', headers });
       if (r && r.ok) {
         const rows = await r.json();
+        // Helper: determine whether a session should be considered "started".
+        // Consider a session started only when there is at least one delivered ball.
+        const isSessionStarted = (s: any) => {
+          try {
+            if (!s) return false;
+            const balls = Number(s.total_balls ?? s.totalBuckets ?? s.total_buckets ?? s.total_balls ?? s.balls ?? s.balls_used ?? 0) || 0;
+            return balls >= 1;
+          } catch (_e) { void _e; return false; }
+        };
+
         // Prefer typed `session_type` when present; treat timed sessions with a future
         // end_time as active. Also accept bay indicators under multiple possible keys.
         const active = Array.isArray(rows) ? rows.filter((s: any) => {
@@ -44,9 +54,9 @@ export default function SessionControlTab({ userName, counts, assignedBays }: { 
           const st = String(s.session_type ?? '').toLowerCase();
           if (st === 'open') return true;
           if (st === 'timed') {
-            // Prefer server-provided `session_started`. If absent, fall back to
+            // Prefer server-provided `session_started` or start/buckets. If absent, fall back to
             // end_time being in the future.
-            if (s.session_started === true) return true;
+            if (isSessionStarted(s)) return true;
             if (!s.end_time && !s.endTime) return false;
             try { const et = new Date(s.end_time ?? s.endTime); return !isNaN(et.getTime()) && et.getTime() > Date.now(); } catch (_e) { void _e; return false; }
           }

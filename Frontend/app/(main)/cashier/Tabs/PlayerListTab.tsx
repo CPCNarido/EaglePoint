@@ -48,6 +48,16 @@ export default function ActivePlayerList({ userName }: { userName?: string }) {
       const data = await res.json();
       // API returns either an array or { rows, total }
       const list = Array.isArray(data) ? data : (data.rows || []);
+      // Helper: determine whether a session should be considered "started".
+      // Consider session started only when there is at least one delivered ball.
+      const isSessionStarted = (s: any) => {
+        try {
+          if (!s) return false;
+          const balls = Number(s.total_balls ?? s.totalBuckets ?? s.total_buckets ?? s.total_balls ?? s.balls ?? s.balls_used ?? 0) || 0;
+          return balls >= 1;
+        } catch (_e) { void _e; return false; }
+      };
+
       // Prefer typed `session_type` + `session_started` from the server when
       // available. Fallback to legacy end_time heuristics when those fields
       // aren't present on the payload.
@@ -58,7 +68,7 @@ export default function ActivePlayerList({ userName }: { userName?: string }) {
         if (st === 'timed') {
           // Timed sessions are active only after the server reports them started,
           // or if the end_time is still in the future as a fallback.
-          if (s.session_started === true) return true;
+          if (isSessionStarted(s)) return true;
           if (s.end_time) {
             try {
                 const et = new Date(s.end_time);
@@ -99,8 +109,14 @@ export default function ActivePlayerList({ userName }: { userName?: string }) {
       if (hasBay) return true;
       // Open sessions (DB says 'open') are considered assigned in cashier view
       if (st === 'open') return true;
-      // Timed sessions are considered assigned only after they have started
-      if (st === 'timed') return !!(r as any).session_started;
+      // Timed sessions are considered assigned only after at least one ball is delivered
+      if (st === 'timed') {
+        try {
+          const balls = Number((r as any).total_balls ?? (r as any).totalBuckets ?? (r as any).balls ?? (r as any).balls_used ?? 0) || 0;
+          return balls >= 1;
+        } catch (_e) { void _e; }
+        return false;
+      }
       // Fallback: treat presence of bay_no as assigned
       return !!r.bay_no;
     })();
@@ -120,7 +136,7 @@ export default function ActivePlayerList({ userName }: { userName?: string }) {
       // Use the same assigned heuristic as getStatus (prefer DB session_type)
       const st = String((r.session_type ?? '')).toLowerCase();
       const hasBay = (r.bay_no != null && String(r.bay_no).trim() !== '') || (r as any).bay_id != null;
-      const isAssigned = hasBay ? true : (st === 'open' ? true : st === 'timed' ? !!(r as any).session_started : !!r.bay_no);
+      const isAssigned = hasBay ? true : (st === 'open' ? true : st === 'timed' ? (Number((r as any).total_balls ?? (r as any).totalBuckets ?? (r as any).balls ?? (r as any).balls_used ?? 0) || 0) >= 1 : !!r.bay_no);
       if (filter === 'Unassigned' && isAssigned) return false;
       if (filter === 'Assigned' && !isAssigned) return false;
       if (!q) return true;

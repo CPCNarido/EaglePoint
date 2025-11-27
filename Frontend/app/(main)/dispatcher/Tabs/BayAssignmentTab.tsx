@@ -88,6 +88,39 @@ export default function BayAssignmentScreen({ userName, counts, assignedBays }: 
     return available[0] || null;
   };
 
+  // Helper: determine if a timestamp string refers to "today" in Philippine time (UTC+8).
+  const isCreatedTodayPH = (createdStr: any) => {
+    if (!createdStr) return false;
+    try {
+      const created = new Date(createdStr);
+      if (isNaN(created.getTime())) return false;
+      const phOffsetMs = 8 * 60 * 60 * 1000; // UTC+8
+      const createdPh = new Date(created.getTime() + phOffsetMs);
+      const nowPh = new Date(Date.now() + phOffsetMs);
+      return createdPh.getUTCFullYear() === nowPh.getUTCFullYear() && createdPh.getUTCMonth() === nowPh.getUTCMonth() && createdPh.getUTCDate() === nowPh.getUTCDate();
+    } catch (e) { void e; return false; }
+  };
+
+  // Helper: determine whether a session should be considered "started".
+  // Consider a session "started" only when there is at least one delivered ball.
+  // This prevents showing timers as started when the server pre-seeds start_time
+  // or end_time but no ball has been handed over yet.
+  const isSessionStarted = (r: any) => {
+    try {
+      if (!r) return false;
+      const balls = Number(r.total_balls ?? r.totalBuckets ?? r.total_buckets ?? r.total_balls ?? r.balls ?? r.balls_used ?? r.total ?? 0) || 0;
+      return balls >= 1;
+    } catch (_e) { void _e; return false; }
+  };
+
+  // Debug helper: return exclusion reason or null if row should be included
+  // Only exclude rows that already have a bay assigned
+  const waitingExcludeReason = (r: any) => {
+    const noBay = (r.bay_no == null && r.bay_id == null) || (!r.bay_no && !r.bay_id);
+    if (!noBay) return 'hasBay';
+    return null;
+  };
+
   const confirmAssignment = () => {
     (async () => {
   if (!selectedPlayer) { showError('Select a player first.'); return; }
@@ -113,10 +146,21 @@ export default function BayAssignmentScreen({ userName, counts, assignedBays }: 
         // Attach existing cashier-created player so server can reuse the record instead of creating a new one
         if (selectedPlayer.id) body.playerId = selectedPlayer.id;
         if (svc && svc.id) body.servicemanId = svc.id;
-  // POST to server to start session on the chosen bay
+    // POST to server to start session on the chosen bay
   const res = await fetchWithAuth(`${baseUrl}/api/admin/bays/${selectedBay}/start`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    // Diagnostic: log server response for start attempts
+    try {
+      const parsed = await (res && typeof (res.clone) === 'function' ? res.clone().json().catch(() => null) : null);
+      console.debug('[BayAssignment] start API response', { status: res ? res.status : null, body: parsed });
+    } catch (_e) { void _e; }
         if (res && res.ok) {
           showToast('Assignment Complete', `${selectedPlayer.name} assigned to ${svc.name} (Bay ${selectedBay})`);
+          // Immediately notify other dispatcher components to clear any local stopwatch
+          try {
+            if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+              try { window.dispatchEvent(new CustomEvent('stopwatch:clear', { detail: { bay: selectedBay } })); } catch (e) { try { window.dispatchEvent(new Event('stopwatch:clear')); } catch {} }
+            }
+          } catch (_e) { void _e; }
           // remove player from queue
           setPlayers((prev) => prev.filter((p) => Number(p.id) !== Number(selectedPlayer.id)));
           // advance nextServicemanIndex to the next id after the chosen serviceman
@@ -129,6 +173,16 @@ export default function BayAssignmentScreen({ userName, counts, assignedBays }: 
           setSelectedBay(null);
           // clear explicit selection after assignment
           setSelectedServiceman(null);
+          // mark the chosen serviceman as busy immediately so they are not selectable
+          try {
+            if (svc && svc.id != null) {
+              const sid = Number(svc.id);
+              setBusyServicemen((prev) => {
+                if (prev && prev.includes(sid)) return prev;
+                return [...prev, sid];
+              });
+            }
+          } catch (_e) { void _e; }
           // Refresh waiting sessions and bay overview so server-persisted start_time/session_started
           // becomes visible when switching tabs or after logout/login.
           try {
@@ -136,26 +190,22 @@ export default function BayAssignmentScreen({ userName, counts, assignedBays }: 
             if (sres && sres.ok) {
               const rows = await sres.json();
               const waiting = Array.isArray(rows) ? rows.filter((r: any) => {
-                const noBay = (r.bay_no == null && r.bay_id == null) || (!r.bay_no && !r.bay_id);
-                if (!noBay) return false;
-                const st = String(r.session_type ?? '').toLowerCase();
-                if (st === 'open') return true;
-                if (st === 'timed') {
-                  if (r.session_started === true) return true;
-                  if (!r.end_time) return false;
-                  try { const et = new Date(r.end_time); return !isNaN(et.getTime()) && et.getTime() > Date.now(); } catch (e) { void e; return false; }
+                const reason = waitingExcludeReason(r);
+                if (reason) {
+                  try { console.debug('[BayAssignment] excluded session', { id: r.session_id ?? r.id ?? r.player_id, reason, raw: r }); } catch (_e) { void _e; }
+                  return false;
                 }
-                if (r.end_time == null) return true;
-                try { const et = new Date(r.end_time); return !isNaN(et.getTime()) && et.getTime() > Date.now(); } catch (e) { void e; return false; }
+                return true;
               }) : [];
+
               setPlayers(waiting.map((w: any) => ({
-                id: w.player_id,
-                name: w.player_name ?? w.session_id,
-                receipt: w.session_id,
-                note: '',
+                id: w.player_id ?? w.id ?? w.session_id ?? null,
+                name: w.player_name ?? w.player?.full_name ?? w.player?.name ?? String(w.session_id ?? w.id ?? ''),
+                receipt: w.session_id ?? w.sessionId ?? w.id ?? '',
+                note: w.note ?? '',
                 plannedDuration: w.planned_duration_minutes ?? null,
                 balls: Number(w.total_buckets ?? w.total_balls ?? 0) || 0,
-                sessionStarted: !!w.session_started,
+                 sessionStarted: isSessionStarted(w),
               })));
             }
           } catch (_e) { void _e; }
@@ -191,6 +241,13 @@ export default function BayAssignmentScreen({ userName, counts, assignedBays }: 
               }
             }
           } catch (_e) { void _e; }
+            // Dispatch events for other dispatcher components to immediately refresh/clear
+            try {
+              if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+                try { window.dispatchEvent(new CustomEvent('stopwatch:clear', { detail: { bay: selectedBay } })); } catch (e) { try { window.dispatchEvent(new Event('stopwatch:clear')); } catch {} }
+                try { window.dispatchEvent(new Event('overview:updated')); } catch (_e) { void _e; }
+              }
+            } catch (_e) { void _e; }
         } else {
           showError('Server refused assignment.');
         }
@@ -358,22 +415,27 @@ export default function BayAssignmentScreen({ userName, counts, assignedBays }: 
           es.addEventListener('assignment:update', (ev: any) => {
             try {
               const payload = JSON.parse(ev.data);
+              // Diagnostic: log SSE payloads for assignment updates
+              try { console.debug('[BayAssignment] SSE assignment:update', payload); } catch (_e) { void _e; }
               // payload: { assignment_id, bay_id, bay_no, player_id, added_buckets, total_balls, session_started, start_time }
               if (!payload) return;
               setPlayers((prev: any[]) => {
                 if (!prev || prev.length === 0) return prev;
                 return prev.map((p: any) => {
                   if (Number(p.id) === Number(payload.player_id)) {
-                    return { ...p, balls: Number(payload.total_balls) || (Number(p.balls) || 0) + (Number(payload.added_buckets) || 0), sessionStarted: !!payload.session_started };
+                          // compute updated ball count
+                          const updatedBalls = Number(payload.total_balls ?? payload.totalBalls) || (Number(p.balls) || 0) + (Number(payload.added_buckets) || 0);
+                          return { ...p, balls: updatedBalls, sessionStarted: updatedBalls >= 1 };
                   }
                   return p;
                 });
               });
               setSelectedPlayer((cur: any) => {
                 if (!cur) return cur;
-                if (Number(cur.id) === Number(payload.player_id)) {
-                  return { ...cur, balls: Number(payload.total_balls) || (Number(cur.balls) || 0) + (Number(payload.added_buckets) || 0), sessionStarted: !!payload.session_started };
-                }
+                      if (Number(cur.id) === Number(payload.player_id)) {
+                        const updatedBalls = Number(payload.total_balls ?? payload.totalBalls) || (Number(cur.balls) || 0) + (Number(payload.added_buckets) || 0);
+                        return { ...cur, balls: updatedBalls, sessionStarted: updatedBalls >= 1 };
+                      }
                 return cur;
               });
             } catch (_e) { void _e; }
@@ -404,24 +466,13 @@ export default function BayAssignmentScreen({ userName, counts, assignedBays }: 
           const res = await fetchWithAuth(`${baseUrl}/api/admin/reports/sessions?limit=1000`, { method: 'GET' });
             if (res && res.ok) {
             const rows = await res.json();
-            // rows may be array of mapped sessions; prefer `session_type` from API and include
-            // timed sessions whose end_time is in the future.
+            // rows may be array of mapped sessions; only include players who have no bay assigned
             const waiting = Array.isArray(rows) ? rows.filter((r: any) => {
               const noBay = (r.bay_no == null && r.bay_id == null) || (!r.bay_no && !r.bay_id);
               if (!noBay) return false;
-              const st = String(r.session_type ?? '').toLowerCase();
-              if (st === 'open') return true;
-              if (st === 'timed') {
-                // Prefer server `session_started` for timed sessions. If absent,
-                // fall back to end_time in the future to include planned sessions.
-                if (r.session_started === true) return true;
-                if (!r.end_time) return false;
-                try { const et = new Date(r.end_time); return !isNaN(et.getTime()) && et.getTime() > Date.now(); } catch (e) { void e; return false; }
-              }
-              if (r.end_time == null) return true;
-              try { const et = new Date(r.end_time); return !isNaN(et.getTime()) && et.getTime() > Date.now(); } catch (e) { void e; return false; }
+              return true;
             }) : [];
-            // Include ball count and session_started flag so Dispatcher UI can show hint
+            // Include ball count and session_started hint (started only when balls >= 1)
             if (mounted) setPlayers(waiting.map((w: any) => ({
               id: w.player_id,
               name: w.player_name ?? w.session_id,
@@ -429,7 +480,7 @@ export default function BayAssignmentScreen({ userName, counts, assignedBays }: 
               note: '',
               plannedDuration: w.planned_duration_minutes ?? null,
               balls: Number(w.total_buckets ?? w.total_balls ?? 0) || 0,
-              sessionStarted: !!w.session_started,
+              sessionStarted: isSessionStarted(w),
             })));
           }
         } catch (_e) { void _e; }

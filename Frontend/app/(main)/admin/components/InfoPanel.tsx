@@ -38,6 +38,13 @@ export default function InfoPanel({ num, details, now, offsetX }: InfoPanelProps
       };
 
       if (end) {
+        // If the session hasn't recorded any delivered balls yet, treat it as
+        // not started to avoid showing "Expired" for pre-seeded end_time values.
+        try {
+          const balls = Number(raw?.total_balls ?? raw?.balls_used ?? raw?.bucket_count ?? details?.ballsUsed ?? 0) || 0;
+          if (balls < 1) return 'Remaining: Not started';
+        } catch (_e) { void _e; }
+
         const ms = end.getTime() - now.getTime();
         if (ms <= 0) return 'Remaining: Expired';
         return `Remaining: ${formatMsForDisplay(ms)}`;
@@ -45,12 +52,16 @@ export default function InfoPanel({ num, details, now, offsetX }: InfoPanelProps
 
       // If there's a stopwatch-style start_time and no end_time, show elapsed Time: mm:ss (or hr)
       const startStr = raw?.start_time ?? details?.player?.start_time ?? null;
-      if (startStr) {
-        const start = new Date(startStr);
-        const elapsedMs = now.getTime() - start.getTime();
-        if (elapsedMs <= 0) return 'Time: 0:00';
-        return `Time: ${formatMsForDisplay(elapsedMs)}`;
-      }
+      // Only show elapsed timer if we have evidence of at least one delivered ball.
+      try {
+        const ballsFromRaw = Number(raw?.total_balls ?? raw?.balls_used ?? raw?.bucket_count ?? details?.ballsUsed ?? 0) || 0;
+        if (startStr && ballsFromRaw >= 1) {
+          const start = new Date(startStr);
+          const elapsedMs = now.getTime() - start.getTime();
+          if (elapsedMs <= 0) return 'Time: 0:00';
+          return `Time: ${formatMsForDisplay(elapsedMs)}`;
+        }
+      } catch (_e) { void _e; }
 
       // If start_time is not yet persisted but we already have at least one
       // delivered bucket reported (total_balls / bucket_count), treat the
