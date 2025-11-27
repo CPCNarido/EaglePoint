@@ -18,6 +18,7 @@ import { tw } from "react-native-tailwindcss";
 import { useSettings } from '../../../lib/SettingsProvider';
 import { fetchWithAuth } from '../../../_lib/fetchWithAuth';
 import ErrorModal from '../../../components/ErrorModal';
+import { useGlobalModal } from '../../../components/GlobalModalProvider';
 import { friendlyMessageFromThrowable } from '../../../lib/errorUtils';
 
 export default function BayManagement() {
@@ -144,7 +145,7 @@ export default function BayManagement() {
   const [showOverrideConfirm, setShowOverrideConfirm] = useState<boolean>(false);
   const [overrideTarget, setOverrideTarget] = useState<{ bayNo: any; bayId?: any; player?: string } | null>(null);
   const [, setOverrideBusy] = useState<boolean>(false);
-  const [showOverrideSuccess, setShowOverrideSuccess] = useState<boolean>(false);
+  const globalModal = useGlobalModal();
   const overrideTimerRef = React.useRef<any>(null);
 
   // central error modal state
@@ -450,10 +451,10 @@ export default function BayManagement() {
                       showError(t, 'Override failed');
                     } else {
                       setShowOverrideConfirm(false);
-                      setShowOverrideSuccess(true);
+                      try { globalModal.showSuccess('Override Applied', 'The override has been applied successfully.'); } catch (_e) { void _e; }
                       // auto-close success popup after 2s
                       overrideTimerRef.current = setTimeout(() => {
-                        setShowOverrideSuccess(false);
+                        try { globalModal.hide(); } catch (_e) { void _e; }
                         overrideTimerRef.current = null;
                       }, 2000);
                       // refresh bays
@@ -478,16 +479,7 @@ export default function BayManagement() {
           </Pressable>
         </Modal>
 
-        {/* Override success acknowledgement popup */}
-        <Modal visible={showOverrideSuccess} transparent animationType="fade" onRequestClose={() => setShowOverrideSuccess(false)}>
-          <View style={styles.approvalOverlay}>
-            <View style={styles.approvalCard}>
-              <Text style={styles.approvalCardTitle}>Override Applied</Text>
-              <View style={styles.approvalDivider} />
-              <Text style={styles.approvalCardBody}>The override has been applied successfully.</Text>
-            </View>
-          </View>
-        </Modal>
+        {/* Override success acknowledgement handled by centralized global modal */}
       </View>
       <ErrorModal visible={errorModalVisible} errorType={errorModalType} errorMessage={errorModalMessage} errorDetails={errorModalDetails} onClose={() => setErrorModalVisible(false)} />
     </ScrollView>

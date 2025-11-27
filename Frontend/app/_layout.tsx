@@ -1,6 +1,7 @@
 import { Stack } from "expo-router";
 import React, { useEffect } from 'react';
 import SettingsProvider from './lib/SettingsProvider';
+import GlobalModalProvider from './components/GlobalModalProvider';
 import Presence from './lib/presence';
 import { enterFullScreen, exitFullScreen } from './(main)/utils/fullscreen';
 import { Keyboard } from 'react-native';
@@ -71,7 +72,9 @@ export default function RootLayout() {
 
   return (
     <SettingsProvider>
-      <Stack screenOptions={{ headerShown: false }} />
+      <GlobalModalProvider>
+        <Stack screenOptions={{ headerShown: false }} />
+      </GlobalModalProvider>
     </SettingsProvider>
   );
 }

@@ -20,6 +20,7 @@ import { saveAccessToken } from "./_lib/auth";
 import Presence from "./lib/presence";
 import { useSettings } from "./_lib/SettingsProvider";
 import ErrorModal from "./components/ErrorModal";
+import GlobalModalProvider from "./components/GlobalModalProvider";
 
 // === FULL BACKEND + LOGIN IMPLEMENTATION (unchanged) ===
 
@@ -288,11 +289,12 @@ export default function Login() {
     return <Splash message="Signing in..." onClose={() => setShowTransitionSplash(false)} />;
 
   return (
-    <ImageBackground
-      source={require("../assets/Login Page/LOGIN TABLET.png")}
-      style={styles.bg}
-      resizeMode="cover"
-    >
+    <GlobalModalProvider>
+      <ImageBackground
+        source={require("../assets/Login Page/LOGIN TABLET.png")}
+        style={styles.bg}
+        resizeMode="cover"
+      >
       <ScrollView contentContainerStyle={styles.scrollWrap}>
         <View style={styles.card}>
           <Image
@@ -345,18 +347,19 @@ export default function Login() {
         </View>
       </ScrollView>
 
-      <ErrorModal
-        visible={errorModalVisible}
-        errorType={errorType}
-        errorMessage={errorMessage}
-        errorDetails={errorDetails}
-        onClose={() => setErrorModalVisible(false)}
-        onRetry={() => {
-          setErrorModalVisible(false);
-          setTimeout(() => handleSubmit(), 150);
-        }}
-      />
-    </ImageBackground>
+        <ErrorModal
+          visible={errorModalVisible}
+          errorType={errorType}
+          errorMessage={errorMessage}
+          errorDetails={errorDetails}
+          onClose={() => setErrorModalVisible(false)}
+          onRetry={() => {
+            setErrorModalVisible(false);
+            setTimeout(() => handleSubmit(), 150);
+          }}
+        />
+      </ImageBackground>
+    </GlobalModalProvider>
   );
 }
 

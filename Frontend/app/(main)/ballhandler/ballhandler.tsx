@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, Platform, Image, ImageBackground, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Platform, Image, ImageBackground, TouchableOpacity, Animated } from 'react-native';
 import { useRouter } from 'expo-router';
 import { MaterialIcons as Icon } from '@expo/vector-icons';
 import { fetchWithAuth } from '../../_lib/fetchWithAuth';
@@ -7,6 +7,7 @@ import { logoutAndClear } from '../../_lib/auth';
 import { useSettings } from '../../lib/SettingsProvider';
 import TeamChats from '../admin/Tabs/TeamChats';
 import ErrorModal from '../../components/ErrorModal';
+import ConfirmModal from '../../components/ConfirmModal';
 
 export default function BallHandler() {
 	const settings = useSettings();
@@ -14,6 +15,9 @@ export default function BallHandler() {
 	const [activeTab, setActiveTab] = useState<string>('Dashboard');
 
 	const [overview, setOverview] = useState<any>(null);
+	const [recentLog, setRecentLog] = useState<any[]>([]);
+	// Animated values per log entry id for entrance animations
+	const animMap = useRef<Record<string, Animated.Value>>({});
 	const [userName, setUserName] = useState<string>('Ball Handler');
 	const [userEmployeeId, setUserEmployeeId] = useState<string>('');
 	const [now, setNow] = useState<number>(Date.now());
@@ -26,6 +30,10 @@ export default function BallHandler() {
 		await logoutAndClear();
 		try { router.replace('/'); } catch (_e) { void _e; };
 	};
+
+	// Confirm modal state for initial handover (when bay has 0 balls)
+	const [confirmVisible, setConfirmVisible] = useState<boolean>(false);
+	const [confirmBay, setConfirmBay] = useState<any | null>(null);
 
 	const fetchOverview = useCallback(async () => {
 		if (isFetchingRef.current) return;
@@ -89,6 +97,18 @@ export default function BallHandler() {
 				setModalType('success');
 				setModalMessage('Bucket recorded');
 				setModalVisible(true);
+				// Immediately append a local recent-log entry so UI reflects the hand-over
+				try {
+					const id = `local-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+					const entry = { id, ts: Date.now(), bay_no: bay?.bay_number ?? bay?.bayNo ?? bay?.bay ?? null, player_id: null, added_buckets: 1, total_balls: null, raw: { source: 'local', action: 'hand-over' } };
+					try { animMap.current[id] = new Animated.Value(0); } catch (_e) { void _e; }
+					setRecentLog((prev) => {
+						const MAX = 200;
+						const merged = [...(prev || []), entry];
+						return merged.slice(-MAX);
+					});
+					try { Animated.timing(animMap.current[id], { toValue: 1, duration: 320, useNativeDriver: true }).start(); } catch (_e) { void _e; }
+				} catch (_e) { void _e; }
 				await fetchOverview();
 			} else {
 				// Try to parse error details from response for diagnostics
@@ -147,9 +167,66 @@ export default function BallHandler() {
 
 		fetchOverview();
 		const interval = setInterval(() => fetchOverview(), 2000);
+
+		// Real-time SSE subscription: listen for assignment updates (ball transactions)
+		// and push them into the recent deliver log so Ball Handler can see history.
+		let es: EventSource | null = null;
+		(async () => {
+			try {
+				let baseUrl = Platform.OS === 'android' ? 'http://10.127.147.53:3000' : 'http://localhost:3000';
+				try {
+					// @ts-ignore
+					const AsyncStorageModule = await import('@react-native-async-storage/async-storage').catch(() => null);
+					const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
+					const override = AsyncStorage ? await AsyncStorage.getItem('backendBaseUrlOverride') : null;
+					if (override) baseUrl = override;
+				} catch (_e) { void _e; }
+
+				if (typeof EventSource === 'undefined') return;
+				let token: string | null = null;
+				try {
+					const AsyncStorageModule = await import('@react-native-async-storage/async-storage').catch(() => null);
+					const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
+					token = AsyncStorage ? await AsyncStorage.getItem('authToken') : null;
+				} catch (_e) { void _e; }
+
+				const streamBase = baseUrl.replace(/\/$/, '');
+				const streamUrl = token ? `${streamBase}/api/admin/chats/stream?token=${encodeURIComponent(token)}` : `${streamBase}/api/admin/chats/stream`;
+				try {
+					es = new EventSource(streamUrl);
+					es.addEventListener('assignment:update', (ev: any) => {
+						try {
+							const payload = JSON.parse(ev.data);
+							// Debug: mirror other components' SSE logging so we can confirm events
+							try { console.debug('[BallHandler] SSE assignment:update', payload); } catch (_e) { void _e; }
+							if (!payload) return;
+							// Build a simple log entry with an id so we can animate it
+							const id = `sse-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+							const entry = {
+								id,
+								ts: Date.now(),
+								bay_no: payload.bay_no ?? payload.bayNo ?? payload.bay_number ?? null,
+								player_id: payload.player_id ?? payload.playerId ?? null,
+								added_buckets: Number(payload.added_buckets ?? payload.addedBuckets ?? 0) || 0,
+								total_balls: payload.total_balls ?? payload.totalBalls ?? null,
+								raw: payload,
+							};
+							try { animMap.current[id] = new Animated.Value(0); } catch (_e) { void _e; }
+							setRecentLog((prev) => {
+								const MAX = 200;
+								const merged = [...(prev || []), entry];
+								return merged.slice(-MAX);
+							});
+							try { Animated.timing(animMap.current[id], { toValue: 1, duration: 320, useNativeDriver: true }).start(); } catch (_e) { void _e; }
+						} catch (_e) { void _e; }
+					});
+				} catch (_e) { void _e; }
+			} catch (_e) { void _e; }
+		})();
 		return () => {
 			clearInterval(interval);
 			clearInterval(clock);
+			try { if (es) es.close(); } catch (_e) { void _e; }
 		};
 	}, [fetchOverview]);
 
@@ -187,7 +264,17 @@ export default function BallHandler() {
 								<Text style={styles.bayLabel}>Bay #{b.bay_number}</Text>
 								<Text style={styles.playerName}>{b.player?.nickname ?? b.player?.full_name ?? 'Unknown'}</Text>
 								<Text style={styles.sessionMeta}>{b.session_type ?? 'Open'}{b.session_type === 'Timed' && b.end_time ? ` • ends ${new Date(b.end_time).toLocaleTimeString()}` : ''}</Text>
-								<TouchableOpacity onPress={() => handleHandOver(b)} style={styles.handOverBtn}><Text style={styles.handOverTxt}>Handed Over</Text></TouchableOpacity>
+								<TouchableOpacity onPress={() => {
+									try {
+										const balls = Number(b.total_balls ?? b.totalBuckets ?? b.total_buckets ?? b.balls ?? b.balls_used ?? 0) || 0;
+										if (balls === 0) {
+											setConfirmBay(b);
+											setConfirmVisible(true);
+										} else {
+											handleHandOver(b);
+										}
+									} catch (_e) { handleHandOver(b); }
+								}} style={styles.handOverBtn}><Text style={styles.handOverTxt}>Handed Over</Text></TouchableOpacity>
 							</View>
 						))}
 					</ScrollView>
@@ -196,7 +283,22 @@ export default function BallHandler() {
 				<View style={styles.logColumn}>
 					<Text style={styles.sectionTitle}>Recent Deliver Log</Text>
 					<ScrollView style={styles.logList}>
-						<View style={styles.logItem}><Text style={styles.logTitle}>No recent deliver records</Text></View>
+						{(recentLog || []).length === 0 ? (
+							<View style={styles.logItem}><Text style={styles.logTitle}>No recent deliver records</Text></View>
+						) : (
+							// newest first
+							[...recentLog].slice().reverse().map((it: any, idx: number) => {
+								const anim = it?.id ? animMap.current[it.id] : null;
+								const animStyle: any = anim ? { opacity: anim, transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [8, 0] }) }] } : { opacity: 1 };
+								return (
+									<Animated.View key={`log-${idx}-${it.ts}`} style={[styles.logItem, animStyle]}>
+										<Text style={styles.logTitle}>{`Bay ${it.bay_no ?? '—'} • +${it.added_buckets} bucket${(it.added_buckets || 0) === 1 ? '' : 's'}`}</Text>
+										<Text style={{ color: '#666', marginTop: 6 }}>{it.player_id ? `Player ${it.player_id}` : ''} {it.total_balls != null ? ` • total ${it.total_balls}` : ''}</Text>
+										<Text style={{ color: '#999', marginTop: 6 }}>{new Date(it.ts).toLocaleString()}</Text>
+									</Animated.View>
+								);
+							})
+						)}
 					</ScrollView>
 				</View>
 			</View>
@@ -224,6 +326,22 @@ export default function BallHandler() {
 	return (
 		<View style={styles.outerContainer}>
 			<ErrorModal visible={modalVisible} errorType={modalType} errorMessage={modalMessage ?? ''} onClose={() => setModalVisible(false)} />
+			<ConfirmModal
+				visible={confirmVisible}
+				title="Confirm Initial Handoff"
+				message={(() => {
+					const n = confirmBay?.bay_number ?? confirmBay?.bayNo ?? confirmBay?.bay ?? '—';
+					return `Are you confirming the initial ball bucket handover to the Serviceman for Bay #${n}? This starts the session timer/tracking.`;
+				})()}
+				confirmText="Yes"
+				cancelText="Cancel"
+				onConfirm={() => {
+					setConfirmVisible(false);
+					try { if (confirmBay) handleHandOver(confirmBay); } catch (_e) { void _e; }
+					setConfirmBay(null);
+				}}
+				onCancel={() => { setConfirmVisible(false); setConfirmBay(null); }}
+			/>
 			<View style={styles.sidebar}>
 				<View style={styles.logoContainer}>
 					<Image source={require('../../../assets/General/Logo.png')} style={styles.logoImage} resizeMode="contain" />
@@ -322,7 +440,7 @@ const styles = StyleSheet.create({
 	handOverTxt: { color: '#14391A', fontWeight: '700' },
 	placeholderBox: { padding: 20, alignItems: 'center', justifyContent: 'center' },
 	placeholderText: { color: '#666' },
-	logList: { maxHeight: 600 },
+	logList: { height: 330 },
 	logItem: { backgroundColor: '#F7F7F7', padding: 10, borderRadius: 8, marginBottom: 8 },
 	logTitle: { color: '#555' },
 });

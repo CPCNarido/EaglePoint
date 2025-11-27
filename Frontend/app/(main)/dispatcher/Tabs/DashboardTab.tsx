@@ -3,6 +3,7 @@ import DispatcherHeader from "../DispatcherHeader";
 import { View, Text, ScrollView, TouchableOpacity, Modal, StyleSheet, ActivityIndicator, useWindowDimensions, Platform, TextInput } from "react-native";
 import ErrorModal from '../../../components/ErrorModal';
 import ConfirmModal from '../../../components/ConfirmModal';
+import { useGlobalModal } from '../../../components/GlobalModalProvider';
 import Toast from '../../../components/Toast';
 import { friendlyMessageFromThrowable } from '../../../lib/errorUtils';
 import { MaterialIcons } from "@expo/vector-icons";
@@ -82,10 +83,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
   };
   // mark intentionally-unused function as used
   void _showToast;
-  // Success modal state (used instead of transient toast when user requested)
-  const [showSuccessModal, setShowSuccessModal] = useState(false);
-  const [successModalTitle, setSuccessModalTitle] = useState<string | undefined>(undefined);
-  const [successModalMessage, setSuccessModalMessage] = useState<string | undefined>(undefined);
+  // Note: use centralized ErrorModal with `errorModalType='success'` for success messages
 
   // Helper to safely extract a server-sent message from the result returned by postJson
   const extractServerMessage = (res: any) => {
@@ -127,6 +125,9 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
   const [errorModalDetails, setErrorModalDetails] = useState<any>(null);
   const [_errorModalTitle, setErrorModalTitle] = useState<string | undefined>(undefined);
   void _errorModalTitle;
+
+  // Global modal API (centralized success/error modal)
+  const globalModal = useGlobalModal();
 
   const showError = (err: any, fallback?: string) => {
     const friendly = friendlyMessageFromThrowable(err, fallback ?? 'An error occurred');
@@ -603,11 +604,14 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
       }
       // After all attempts, fetch authoritative state from server so DB changes are reflected
       try { await fetchOverview(); await fetchBays(); } catch {}
-      setBatchEnding(false);
-      // after batch end, exit selection mode and clear selections
-      setIsSelecting(false);
-  setBatchSelectedBays([]);
-  try { showError(`Completed: ${success}\nFailed: ${failed}`, 'Batch End Results'); } catch {}
+          setBatchEnding(false);
+          // after batch end, exit selection mode and clear selections
+          setIsSelecting(false);
+          setBatchSelectedBays([]);
+          try {
+            // show a clear summary of results (completed / failed)
+            globalModal.showSuccess('Batch End Results', `Completed: ${success}\nFailed: ${failed}`);
+          } catch (_e) { /* ignore UI show errors */ }
     } catch (e) { void e;
       setBatchEnding(false);
       try { showError('An error occurred performing the batch end.'); } catch {}
@@ -941,12 +945,10 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
       if (didOk) {
         setBays((prev) => (prev || []).map(b => (String(b.bay_number) === String(bayNum) || String(b.bay_id) === String(bayNum)) ? { ...b, player_name: editPlayerName || b.player_name } as BayRow : b));
         try { await fetchOverview(); await fetchBays(); } catch {}
-        // Close the edit modal and show a success modal so user sees an explicit acknowledgment
+        // Close the edit modal and show centralized success modal
         try { setShowEditModal(false); } catch {}
         try {
-          setSuccessModalTitle('Updated');
-          setSuccessModalMessage('Assignment updated');
-          setShowSuccessModal(true);
+          globalModal.showSuccess('Updated', 'Assignment updated');
         } catch {}
       } else {
         try {
@@ -1365,8 +1367,7 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
     </ScrollView>
   <ErrorModal visible={errorModalVisible} errorType={errorModalType} errorMessage={errorModalMessage} errorDetails={errorModalDetails} onClose={() => setErrorModalVisible(false)} />
   <ConfirmModal visible={confirmVisible} title={confirmConfig.title} message={confirmConfig.message} confirmText={confirmConfig.confirmText} cancelText={confirmConfig.cancelText} onConfirm={() => { try { confirmConfig.onConfirm && confirmConfig.onConfirm(); } catch {} setConfirmVisible(false); }} onCancel={() => setConfirmVisible(false)} />
-  {/* Success modal shown after successful edit (single OK button) */}
-  <ConfirmModal visible={showSuccessModal} title={successModalTitle} message={successModalMessage} confirmText={'OK'} cancelText={undefined} onConfirm={() => { try { setShowSuccessModal(false); } catch {} }} onCancel={() => setShowSuccessModal(false)} />
+  {/* Success messages use centralized ErrorModal with type='success' */}
   <Toast visible={toastVisible} title={toastTitle} message={toastMessage} onClose={() => setToastVisible(false)} />
 
     </>
