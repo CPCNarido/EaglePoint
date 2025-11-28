@@ -8,9 +8,11 @@ import {
   Platform,
   Modal,
   Pressable,
+  ActivityIndicator,
 } from "react-native";
 import ErrorModal from '../../../components/ErrorModal';
 import { friendlyMessageFromThrowable } from '../../../lib/errorUtils';
+import { fetchWithAuth } from '../../../_lib/fetchWithAuth';
 // Defer loading of icon library to runtime to avoid possible environment-time errors
 let MaterialIcons: any = null;
 
@@ -251,6 +253,9 @@ export default function StaffManagement({ refreshKey }: { refreshKey?: number })
   // Remove-confirmation modal state
   const [showRemoveConfirmModal, setShowRemoveConfirmModal] = useState(false);
   const [removeTarget, setRemoveTarget] = useState<{ id: number; full_name?: string; role?: string } | null>(null);
+  const [dependentCounts, setDependentCounts] = useState<any | null>(null);
+  const [loadingDependentCounts, setLoadingDependentCounts] = useState(false);
+  const [forceDeleting, setForceDeleting] = useState(false);
   // trigger flags so actions run inside useEffect instead of inline handlers
   const [confirmEditTrigger, setConfirmEditTrigger] = useState(false);
   const [confirmRemoveTrigger, setConfirmRemoveTrigger] = useState(false);
@@ -309,33 +314,55 @@ export default function StaffManagement({ refreshKey }: { refreshKey?: number })
     if (!removeTarget) return;
     const id = removeTarget.id;
     try {
-      const res = await fetch(`${baseUrl}/api/admin/staff/${id}`, { method: 'DELETE', credentials: 'include' });
-      if (!res.ok) {
-        const t = await res.text();
-        showError('Failed deleting staff: ' + t);
-        return;
+      // Instead of naive DELETE, call dependents endpoint and then force-delete
+      setLoadingDependentCounts(true);
+      try {
+        const depRes = await fetchWithAuth(`${baseUrl}/api/admin/staff/${id}/dependents`, { method: 'GET' });
+        if (!depRes.ok) {
+          const t = await depRes.text();
+          showError('Failed checking dependents: ' + t);
+          setLoadingDependentCounts(false);
+          return;
+        }
+        const deps = await depRes.json();
+        setDependentCounts(deps);
+        setLoadingDependentCounts(false);
+        // show modal (it is already shown) with counts for user to confirm force-delete
+        setShowRemoveConfirmModal(true);
+      } catch (e) {
+        setLoadingDependentCounts(false);
+        showError(e, 'Error checking dependents');
       }
-      // close remove modal then show acknowledgement popup
-      setShowRemoveConfirmModal(false);
-      setRemoveTarget(null);
-  openApprovalPopup('Staff has been removed successfully.');
-  try {
-    if (typeof window !== 'undefined' && window.dispatchEvent) {
-      window.dispatchEvent(new Event('overview:updated'));
-    } else if ((global as any).triggerOverviewUpdate) {
-      (global as any).triggerOverviewUpdate();
-    }
-  } catch {}
-  try {
-    if (typeof window !== 'undefined' && window.dispatchEvent) {
-      window.dispatchEvent(new Event('admin:refresh'));
-    } else if ((global as any).triggerAdminRefresh) {
-      (global as any).triggerAdminRefresh();
-    }
-  } catch {}
     } catch (e) { void e;
       showError(e, 'Error deleting staff');
     }
+  };
+
+  // Called when user confirms the destructive force-delete from the modal
+  const performForceDelete = async () => {
+    if (!removeTarget) return;
+    const id = removeTarget.id;
+    try {
+      setForceDeleting(true);
+      const res = await fetchWithAuth(`${baseUrl}/api/admin/staff/${id}/force-delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force: true }),
+      });
+      if (!res.ok) {
+        const t = await res.text();
+        showError('Failed force-deleting staff: ' + t);
+        setForceDeleting(false);
+        return;
+      }
+      setForceDeleting(false);
+      setShowRemoveConfirmModal(false);
+      setRemoveTarget(null);
+      setDependentCounts(null);
+      openApprovalPopup('Staff has been removed successfully.');
+      try { if (typeof window !== 'undefined' && window.dispatchEvent) window.dispatchEvent(new Event('overview:updated')); } catch {}
+      try { if (typeof window !== 'undefined' && window.dispatchEvent) window.dispatchEvent(new Event('admin:refresh')); } catch {}
+    } catch (e) { void e; setForceDeleting(false); showError(e, 'Error force deleting staff'); }
   };
 
   // useEffect to trigger remove when confirmed via modal button
@@ -579,19 +606,39 @@ export default function StaffManagement({ refreshKey }: { refreshKey?: number })
       </Modal>
 
       {/* Remove confirmation modal (custom styled) */}
-      <Modal visible={showRemoveConfirmModal} transparent animationType="fade" onRequestClose={() => { setShowRemoveConfirmModal(false); setRemoveTarget(null); }}>
+      <Modal visible={showRemoveConfirmModal} transparent animationType="fade" onRequestClose={() => { setShowRemoveConfirmModal(false); setRemoveTarget(null); setDependentCounts(null); }}>
         <View style={styles.approvalOverlay}>
           <View style={styles.removeCard}>
             <Text style={styles.removeTitle}>Confirm Staff Removal</Text>
             <View style={styles.removeDivider} />
             <Text style={styles.removeBody}>Are you sure you want to remove {removeTarget?.role} {removeTarget?.full_name ? `(${removeTarget.full_name})` : ''}?</Text>
             <View style={{ height: 1, backgroundColor: '#D6D6D6', marginVertical: 12 }} />
+            {loadingDependentCounts ? (
+              <View style={{ paddingVertical: 12, alignItems: 'center' }}>
+                <ActivityIndicator size="small" color="#333" />
+                <Text style={{ marginTop: 8 }}>Checking dependent records...</Text>
+              </View>
+            ) : dependentCounts ? (
+              <View style={{ marginBottom: 12 }}>
+                <Text style={{ fontWeight: '700', marginBottom: 8 }}>Dependent Records</Text>
+                {Object.keys(dependentCounts).map((k) => (
+                  <View key={k} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 4 }}>
+                    <Text style={{ color: '#333' }}>{k}</Text>
+                    <Text style={{ color: '#333' }}>{String((dependentCounts as any)[k] ?? 0)}</Text>
+                  </View>
+                ))}
+                <View style={{ height: 1, backgroundColor: '#D6D6D6', marginVertical: 8 }} />
+                <Text style={{ color: '#7E0000', fontWeight: '700' }}>Warning: Force deleting will permanently remove these records.</Text>
+              </View>
+            ) : (
+              <Text style={{ marginBottom: 12, color: '#444' }}>Press Force Delete to remove this staff and any dependent records.</Text>
+            )}
             <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 12 }}>
-              <Pressable style={styles.cancelButton} onPress={() => { setShowRemoveConfirmModal(false); setRemoveTarget(null); }}>
+              <Pressable style={styles.cancelButton} onPress={() => { setShowRemoveConfirmModal(false); setRemoveTarget(null); setDependentCounts(null); }}>
                 <Text style={styles.cancelButtonText}>Cancel</Text>
               </Pressable>
-              <Pressable style={styles.confirmButton} onPress={() => { setShowRemoveConfirmModal(false); setConfirmRemoveTrigger(true); }}>
-                <Text style={styles.confirmButtonText}>Remove</Text>
+              <Pressable style={[styles.confirmButton, { backgroundColor: '#B71C1C' }]} onPress={() => { performForceDelete(); }} disabled={forceDeleting}>
+                {forceDeleting ? <ActivityIndicator color="#FFF" /> : <Text style={[styles.confirmButtonText, { color: '#FFF' }]}>Force Delete</Text>}
               </Pressable>
             </View>
           </View>

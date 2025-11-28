@@ -1685,6 +1685,107 @@ export class AdminService {
     return { ok: true };
   }
 
+  // Return counts of dependent records that reference the given employee id
+  async getDependentCounts(id: number) {
+    if (!id) throw new BadRequestException('Invalid id');
+    const [
+      chatParticipantCount,
+      chatMessageCount,
+      notificationAckCount,
+      notificationCount,
+      txByHandlerCount,
+      txByAssignmentCount,
+      servicemanQueueCount,
+      bayUpdatedByCount,
+      invUpdatedByCount,
+      bayAssignmentCount,
+      attendanceCount,
+      playerCount,
+      systemLogCount,
+    ] = await Promise.all([
+      this.prisma.chatParticipant.count({ where: { employee_id: id } }),
+      this.prisma.chatMessage.count({ where: { OR: [{ sender_id: id }, { recipient_id: id }] } }),
+      this.prisma.notificationAcknowledgement.count({ where: { employee_id: id } }),
+      this.prisma.notification.count({ where: { created_by: id } }),
+      this.prisma.ballTransaction.count({ where: { handler_id: id } }),
+      // transactions linked to assignments where this employee is dispatcher/serviceman
+      this.prisma.ballTransaction.count({ where: { assignment: { OR: [{ dispatcher_id: id }, { serviceman_id: id }] } } }),
+      this.prisma.servicemanQueue.count({ where: { serviceman_id: id } }),
+      this.prisma.bay.count({ where: { updated_by: id } }),
+      this.prisma.ballBucketInventory.count({ where: { updated_by: id } }),
+      this.prisma.bayAssignment.count({ where: { OR: [{ dispatcher_id: id }, { serviceman_id: id }] } }),
+      this.prisma.attendance.count({ where: { employee_id: id } }),
+      this.prisma.player.count({ where: { created_by: id } }),
+      this.prisma.systemLog.count({ where: { OR: [{ employee_id: id }, { approved_by: id }] } }),
+    ]);
+
+    return {
+      chatParticipantCount,
+      chatMessageCount,
+      notificationAckCount,
+      notificationCount,
+      txByHandlerCount,
+      txByAssignmentCount,
+      servicemanQueueCount,
+      bayUpdatedByCount,
+      invUpdatedByCount,
+      bayAssignmentCount,
+      attendanceCount,
+      playerCount,
+      systemLogCount,
+    };
+  }
+
+  // Force-delete an employee and remove dependent records. This is destructive.
+  async forceDeleteStaff(id: number, adminActorId?: number) {
+    if (!id) throw new BadRequestException('Invalid id');
+    try {
+      // find assignments referencing this employee
+      const assignments = await this.prisma.bayAssignment.findMany({ where: { OR: [{ dispatcher_id: id }, { serviceman_id: id }] }, select: { assignment_id: true } });
+      const assignmentIds = assignments.map((a) => a.assignment_id);
+
+      await this.prisma.$transaction(async (tx) => {
+        await tx.chatParticipant.deleteMany({ where: { employee_id: id } });
+        await tx.chatMessage.deleteMany({ where: { OR: [{ sender_id: id }, { recipient_id: id }] } });
+        await tx.notificationAcknowledgement.deleteMany({ where: { employee_id: id } });
+        await tx.notification.deleteMany({ where: { created_by: id } });
+
+        if (assignmentIds.length) {
+          await tx.ballTransaction.deleteMany({ where: { assignment_id: { in: assignmentIds } } });
+        }
+        await tx.ballTransaction.deleteMany({ where: { handler_id: id } });
+
+        await tx.servicemanQueue.deleteMany({ where: { serviceman_id: id } });
+
+        // clear optional updated_by
+        await tx.bay.updateMany({ where: { updated_by: id }, data: { updated_by: null } });
+        await tx.ballBucketInventory.updateMany({ where: { updated_by: id }, data: { updated_by: null } });
+
+        await tx.bayAssignment.deleteMany({ where: { OR: [{ dispatcher_id: id }, { serviceman_id: id }, { assignment_id: { in: assignmentIds } }] } });
+
+        await tx.attendance.deleteMany({ where: { employee_id: id } });
+
+        await tx.player.deleteMany({ where: { created_by: id } });
+
+        await tx.systemLog.deleteMany({ where: { OR: [{ employee_id: id }, { approved_by: id }] } });
+
+        await tx.employee.deleteMany({ where: { employee_id: id } });
+      });
+
+      // log the destructive action
+      try {
+        await this.loggingService.writeLog(adminActorId ?? undefined, Role.Admin, `ForceDeleteStaff: id:${id}`, `employee:${id}`);
+      } catch (e) {
+        void e;
+      }
+
+      return { ok: true };
+    } catch (e: any) {
+      Logger.error('Force delete failed', e, 'AdminService');
+      throw new BadRequestException(e?.message ?? 'Force delete failed');
+    }
+  }
+
   // Ensure the Bay table matches the given totalAvailableBays.
   // - Promotes bay_number values like 'B1' -> '1' when possible.
   // - Creates missing numeric bay rows (1..total) as Available.

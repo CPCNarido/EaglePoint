@@ -22,6 +22,9 @@ import { AdminService } from './admin.service';
 import { ChatService } from '../chat/chat.service';
 import { JwtService } from '@nestjs/jwt';
 import { AuthGuard } from '../auth/auth.guard';
+import { Roles } from '../../common/roles/roles.decorator';
+import { RolesGuard } from '../../common/roles/roles.guard';
+import { Role as AppRole } from '../../common/enum/role.enum';
 import { CreateStaffDto } from './dto/create-staff.dto';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
@@ -385,6 +388,43 @@ export class AdminController {
       Logger.error('Failed to delete staff', e, 'AdminController');
       throw new InternalServerErrorException(
         e && e.message ? e.message : 'Failed deleting staff',
+      );
+    }
+  }
+
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(AppRole.ADMIN)
+  @Get('staff/:id/dependents')
+  async getStaffDependents(@Param('id') idStr: string) {
+    try {
+      const id = Number(idStr);
+      if (Number.isNaN(id)) throw new BadRequestException('Invalid id');
+      return await this.adminService.getDependentCounts(id);
+    } catch (e: any) {
+      if (e instanceof BadRequestException) throw e;
+      Logger.error('Failed to get dependent counts', e, 'AdminController');
+      throw new InternalServerErrorException(
+        e && e.message ? e.message : 'Failed getting dependents',
+      );
+    }
+  }
+
+  @UseGuards(AuthGuard, RolesGuard)
+  @Roles(AppRole.ADMIN)
+  @Post('staff/:id/force-delete')
+  async forceDeleteStaff(@Param('id') idStr: string, @Req() req: Request & { user?: any }, @Body() body?: any) {
+    try {
+      const id = Number(idStr);
+      if (Number.isNaN(id)) throw new BadRequestException('Invalid id');
+      const confirm = !!body?.force;
+      if (!confirm) throw new BadRequestException('Missing force flag');
+      const adminId = req?.user?.sub ? Number(req.user.sub) : undefined;
+      return await this.adminService.forceDeleteStaff(id, adminId);
+    } catch (e: any) {
+      if (e instanceof BadRequestException) throw e;
+      Logger.error('Failed to force delete staff', e, 'AdminController');
+      throw new InternalServerErrorException(
+        e && e.message ? e.message : 'Failed force deleting staff',
       );
     }
   }
