@@ -998,20 +998,27 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
               <TouchableOpacity style={{ backgroundColor: '#EEE', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6 }} onPress={selectAllActive}>
                 <Text style={{ color: '#333', fontWeight: '700' }}>Select All</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={{ backgroundColor: batchEnding ? '#CCC' : '#C62828', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6 }} onPress={() => {
-                if (batchEnding) return;
-                if (!batchSelectedBays || batchSelectedBays.length === 0) {
-                  try { showError('No bays selected. Tap bay blocks to select.'); } catch {}
-                  return;
-                }
-                showConfirm({
-                  title: 'Confirm Batch End',
-                  message: `End ${batchSelectedBays.length} selected bay(s)? This will attempt to end the session for each selected bay.`,
-                  confirmText: 'End',
-                  cancelText: 'Cancel',
-                  onConfirm: () => { try { performBatchEnd(); } catch {} },
-                });
-              }} disabled={batchEnding}>
+              <TouchableOpacity
+                style={[
+                  { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 6, backgroundColor: '#C62828' },
+                  (batchEnding || !(batchSelectedBays && batchSelectedBays.length > 0)) ? styles.modalButtonConfirmDisabled : null,
+                ]}
+                onPress={() => {
+                  if (batchEnding) return;
+                  if (!batchSelectedBays || batchSelectedBays.length === 0) {
+                    try { showError('No bays selected. Tap bay blocks to select.'); } catch {}
+                    return;
+                  }
+                  showConfirm({
+                    title: 'Confirm Batch End',
+                    message: `End ${batchSelectedBays.length} selected bay(s)? This will attempt to end the session for each selected bay.`,
+                    confirmText: 'End',
+                    cancelText: 'Cancel',
+                    onConfirm: () => { try { performBatchEnd(); } catch {} },
+                  });
+                }}
+                disabled={batchEnding || !(batchSelectedBays && batchSelectedBays.length > 0)}
+              >
                 {batchEnding ? <ActivityIndicator color="#fff" /> : <Text style={{ color: '#fff', fontWeight: '700' }}>{`End Selected (${batchSelectedBays.length || 0})`}</Text>}
               </TouchableOpacity>
             </View>
@@ -1215,7 +1222,10 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
                 <TouchableOpacity style={[styles.modalButton, styles.modalButtonCancel]} onPress={() => setShowReserveModal(false)}>
                   <Text style={styles.modalButtonCancelText}>Cancel</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.modalButton, styles.modalButtonConfirm]} onPress={async () => {
+                <TouchableOpacity
+                  style={[styles.modalButton, styles.modalButtonConfirm, (!(reserveName && reserveName.trim()) || actionLoading) ? styles.modalButtonConfirmDisabled : null]}
+                  disabled={!(reserveName && reserveName.trim()) || actionLoading}
+                  onPress={async () => {
                   setActionLoading(true);
                   try {
                     const bayNum = selectedBay?.bay_number ?? selectedBay?.bay_id;
@@ -1296,7 +1306,12 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
                 <TouchableOpacity style={[styles.modalButton, styles.modalButtonCancel]} onPress={() => setShowOpenTimeModal(false)}>
                   <Text style={styles.modalButtonCancelText}>Cancel</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.modalButton, styles.modalButtonConfirm]} onPress={async () => {
+                <TouchableOpacity style={[styles.modalButton, styles.modalButtonConfirm, (!(openName && openName.trim()) || actionLoading) ? styles.modalButtonConfirmDisabled : null]} onPress={async () => {
+                  // Validate name is present before attempting to open time
+                  if (!openName || !openName.trim()) {
+                    try { showError('Please enter a name for the open session', 'Validation'); } catch {};
+                    return;
+                  }
                   setActionLoading(true);
                   try {
                     const bayNum = selectedBay?.bay_number ?? selectedBay?.bay_id;
@@ -1317,7 +1332,9 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
                     setShowOpenTimeModal(false);
                     setSelectedBay(null);
                   }
-                }}>
+                }}
+                  disabled={!(openName && openName.trim()) || actionLoading}
+                >
                   {actionLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.modalButtonText}>Start Open Time</Text>}
                 </TouchableOpacity>
               </View>
@@ -1335,28 +1352,37 @@ export default function DashboardTab({ userName, counts, assignedBays }: { userN
                 <TouchableOpacity style={[styles.modalButton, styles.modalButtonCancel]} onPress={() => setShowAssignModal(false)}>
                   <Text style={styles.modalButtonCancelText}>Cancel</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={[styles.modalButton, styles.modalButtonConfirm]} onPress={async () => {
-                  setActionLoading(true);
-                  try {
-                    const bayNum = selectedBay?.bay_number ?? selectedBay?.bay_id;
-                    const baseUrl = await resolveBaseUrl();
-                    const res = await postJson(`${baseUrl}/api/admin/bays/${bayNum}/start`, { nickname: selectedBay?.player_name ?? null, servicemanName: assignServicemanName || null });
-                    if (res && res.ok) {
-                      // Don't set start_time locally; rely on server to report ball deliveries
-                      setBays((prev) => prev.map(b => (String(b.bay_number) === String(bayNum) || String(b.bay_id) === String(bayNum)) ? { ...b, status: 'Occupied', player_name: b.player_name ?? null } : b));
-                      try { await fetchOverview(); await fetchBays(); } catch {}
-                    } else {
-                      try { await fetchOverview(); await fetchBays(); } catch {}
-                      try { const msg = extractServerMessage(res) ?? 'Failed to start session. Server did not accept the request.'; showError(msg); } catch {}
+                <TouchableOpacity
+                  style={[styles.modalButton, styles.modalButtonConfirm, ((!selectedBay?.player_name && !selectedBay?.player?.nickname && !selectedBay?.player?.full_name) || actionLoading) ? styles.modalButtonConfirmDisabled : null]}
+                  disabled={((!selectedBay?.player_name && !selectedBay?.player?.nickname && !selectedBay?.player?.full_name) || actionLoading)}
+                  onPress={async () => {
+                    // Require a player name before starting a regular Start Session
+                    const nickname = selectedBay?.player_name ?? selectedBay?.player?.nickname ?? selectedBay?.player?.full_name ?? null;
+                    if (!nickname || !String(nickname).trim()) {
+                      try { showError('Please enter a name for the session', 'Validation'); } catch {}
+                      return;
                     }
-                  } catch (e) { void e;
-                    try { fetchOverview(); } catch {}
-                  } finally {
-                    setActionLoading(false);
-                    setShowAssignModal(false);
-                    setSelectedBay(null);
-                  }
-                }}>
+                    setActionLoading(true);
+                    try {
+                      const bayNum = selectedBay?.bay_number ?? selectedBay?.bay_id;
+                      const baseUrl = await resolveBaseUrl();
+                      const res = await postJson(`${baseUrl}/api/admin/bays/${bayNum}/start`, { nickname: nickname, servicemanName: assignServicemanName || null });
+                      if (res && res.ok) {
+                        // Don't set start_time locally; rely on server to report ball deliveries
+                        setBays((prev) => prev.map(b => (String(b.bay_number) === String(bayNum) || String(b.bay_id) === String(bayNum)) ? { ...b, status: 'Occupied', player_name: b.player_name ?? null } : b));
+                        try { await fetchOverview(); await fetchBays(); } catch {}
+                      } else {
+                        try { await fetchOverview(); await fetchBays(); } catch {}
+                        try { const msg = extractServerMessage(res) ?? 'Failed to start session. Server did not accept the request.'; showError(msg); } catch {}
+                      }
+                    } catch (e) { void e;
+                      try { fetchOverview(); } catch {}
+                    } finally {
+                      setActionLoading(false);
+                      setShowAssignModal(false);
+                      setSelectedBay(null);
+                    }
+                  }}>
                   {actionLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.modalButtonText}>Start</Text>}
                 </TouchableOpacity>
               </View>
@@ -1432,6 +1458,8 @@ const styles = StyleSheet.create({
   modalButtonCancel: { backgroundColor: '#EEE', marginRight: 8 },
   modalButtonCancelText: { color: '#333', fontWeight: '600' },
   modalButtonConfirm: { backgroundColor: '#C62828', marginRight: 8 },
+  modalButtonDisabled: { opacity: 0.35 },
+  modalButtonConfirmDisabled: { opacity: 0.35 },
   modalButtonText: { color: '#fff', fontWeight: '600' },
   modalInput: { borderWidth: 1, borderColor: '#ddd', padding: 8, borderRadius: 6, backgroundColor: '#fff' },
   servOption: { paddingVertical: 10, paddingHorizontal: 8, borderBottomWidth: 1, borderBottomColor: '#f4f7f4' },

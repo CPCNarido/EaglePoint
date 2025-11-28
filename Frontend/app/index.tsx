@@ -15,6 +15,7 @@ import Constants from "expo-constants";
 import * as Network from "expo-network";
 import { useRouter } from "expo-router";
 import Splash from "./components/Splash";
+import { MaterialIcons } from '@expo/vector-icons';
 // removed unused `tw` import from this file (tailwind used elsewhere)
 import { saveAccessToken } from "./_lib/auth";
 import Presence from "./lib/presence";
@@ -147,6 +148,7 @@ export default function Login() {
   const settings = useSettings();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
 
   const [errorModalVisible, setErrorModalVisible] = useState(false);
@@ -320,14 +322,24 @@ export default function Login() {
           </View>
 
           <View style={styles.field}>
-            <Text style={styles.label}>Password</Text>
+            <View style={styles.labelRow}>
+              <Text style={styles.label}>Password</Text>
+              <TouchableOpacity
+                accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
+                onPress={() => setShowPassword((s) => !s)}
+                style={styles.passwordToggle}
+              >
+                <MaterialIcons name={showPassword ? 'visibility-off' : 'visibility'} size={22} color="#17321d" />
+              </TouchableOpacity>
+            </View>
             <TextInput
-              style={styles.input}
+              style={[styles.input, { marginTop: 6 }]}
               value={password}
               onChangeText={setPassword}
               placeholder="Enter your Password"
               placeholderTextColor="#9AA29A"
-              secureTextEntry
+              secureTextEntry={!showPassword}
+              autoCapitalize="none"
             />
           </View>
 
@@ -408,4 +420,8 @@ const styles = StyleSheet.create({
   },
   buttonText: { color: "#17321d", fontWeight: "800" },
   footer: { marginTop: 18, fontSize: 12, color: "#6C7A6E" },
+  labelRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  passwordRow: { flexDirection: 'row', alignItems: 'center' },
+  passwordToggle: { marginLeft: 8, padding: 6 },
+  passwordToggleText: { color: '#17321d', fontWeight: '700' },
 });

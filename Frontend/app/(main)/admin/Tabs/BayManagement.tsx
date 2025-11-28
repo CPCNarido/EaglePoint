@@ -38,7 +38,7 @@ export default function BayManagement() {
   const anim = React.useRef(new Animated.Value(0)).current;
   // action dropdown refs/state
   // action list (inline buttons)
-  const actionList = ['End Session', 'Lock Bay for Maintenance', 'Reserved'];
+  const actionList = ['End Session', 'Reserved'];
   const filterOptions = [
     'All',
     'Available',
@@ -147,6 +147,18 @@ export default function BayManagement() {
   const [, setOverrideBusy] = useState<boolean>(false);
   const globalModal = useGlobalModal();
   const overrideTimerRef = React.useRef<any>(null);
+
+  // Derived validation for the override input: integer, positive, and within total bays
+  const isBayInputValid = (() => {
+    const raw = String(selectedBayInput || '').trim();
+    if (!raw || !/^\d+$/.test(raw)) return false;
+    const bayNum = Number(raw);
+    if (!Number.isFinite(bayNum) || bayNum < 1) return false;
+    const maxBays = settings?.totalAvailableBays ?? null;
+    if (typeof maxBays === 'number' && maxBays > 0 && bayNum > maxBays) return false;
+    if (!selectedAction) return false;
+    return true;
+  })();
 
   // central error modal state
   const [errorModalVisible, setErrorModalVisible] = useState(false);
@@ -395,12 +407,32 @@ export default function BayManagement() {
             </ScrollView>
           </View>
 
-          <TouchableOpacity style={styles.overrideButton} onPress={() => {
-            // Open confirm modal
+          <TouchableOpacity style={[styles.overrideButton, !isBayInputValid ? styles.overrideButtonDisabled : {}]} disabled={!isBayInputValid} onPress={() => {
+            // Open confirm modal with validation
             if (!selectedBayInput || !selectedAction) { showError('Please select a bay number and an action', 'Validation'); return; }
+
+            const raw = String(selectedBayInput || '').trim();
+            // must be an integer (no decimals, no other characters)
+            if (!/^\d+$/.test(raw)) {
+              showError('Bay number must be a whole integer (e.g. 5).', 'Validation');
+              return;
+            }
+
+            const bayNum = Number(raw);
+            if (!Number.isFinite(bayNum) || bayNum < 1) {
+              showError('Bay number must be a positive integer.', 'Validation');
+              return;
+            }
+
+            const maxBays = settings?.totalAvailableBays ?? null;
+            if (typeof maxBays === 'number' && maxBays > 0 && bayNum > maxBays) {
+              showError(`Bay number must be less than or equal to ${maxBays}.`, 'Validation');
+              return;
+            }
+
             // try to find player name for the bay
-            const found = (bays || []).find((b) => String(b.bayNo) === String(selectedBayInput));
-            setOverrideTarget({ bayNo: selectedBayInput, player: found?.player });
+            const found = (bays || []).find((b) => String(b.bayNo) === String(bayNum));
+            setOverrideTarget({ bayNo: bayNum, player: found?.player, bayId: found?.bayId });
             setShowOverrideConfirm(true);
           }}>
             <Text style={styles.overrideButtonText}>Override</Text>
@@ -642,6 +674,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   overrideButtonText: { color: "#fff", fontWeight: "700", fontSize: 14 },
+  overrideButtonDisabled: { opacity: 0.35 },
   /* Confirm override modal styles */
   confirmOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' },
   overrideConfirmBox: { width: '90%', maxWidth: 520, backgroundColor: '#F4F8F3', borderRadius: 10, padding: 18 },

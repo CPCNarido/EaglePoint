@@ -19,6 +19,7 @@ import DateTimePickerModal from 'react-native-modal-datetime-picker';
 import DispatcherHeader from "../DispatcherHeader";
 void ScrollView;
 void isStaffActive;
+import { useGlobalModal } from '../../../components/GlobalModalProvider';
 
 export default function AttendanceTab(props?: any) {
   const [attendanceData, setAttendanceData] = useState<any[]>([]);
@@ -39,9 +40,9 @@ export default function AttendanceTab(props?: any) {
   const [batchMode, setBatchMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
-  // Batch update logs: record per-employee result when performing batch updates
-  const [batchLogs, setBatchLogs] = useState<any[]>([]);
-  const [showBatchLogs, setShowBatchLogs] = useState(false);
+  // Batch update state removed: logs are no longer stored locally
+
+  const globalModal = useGlobalModal();
 
   // inline clock-in editing (use native time picker)
   const [editingClockInId, setEditingClockInId] = useState<string | null>(null);
@@ -313,6 +314,22 @@ export default function AttendanceTab(props?: any) {
     );
   };
 
+  // Determine selected rows' statuses to control which batch actions are allowed.
+  const selectedStatusesSet = React.useMemo(() => {
+    const s = new Set<string>();
+    try {
+      for (const id of selectedIds) {
+        const it = attendanceData.find((a) => String(a.id) === String(id));
+        const st = String(it?.attendanceStatus ?? it?.status ?? 'No Record');
+        s.add(st);
+      }
+    } catch (_e) { void _e; }
+    return s;
+  }, [selectedIds, attendanceData]);
+
+  const allSelectedNoStatus = selectedIds.length > 0 && selectedStatusesSet.size === 1 && (Array.from(selectedStatusesSet)[0] === 'No Record' || Array.from(selectedStatusesSet)[0] === '');
+  const allSelectedPresent = selectedIds.length > 0 && selectedStatusesSet.size === 1 && Array.from(selectedStatusesSet)[0] === 'Present';
+
   const markSelected = () => {
     (async () => {
       const logs: any[] = [];
@@ -320,20 +337,26 @@ export default function AttendanceTab(props?: any) {
         for (const id of selectedIds) {
           try {
             const rec = await apiClock(id, 'in');
-            logs.push({ employeeId: id, ok: true, attendance: rec });
-            console.log('[Attendance][Batch][IN] success', { employeeId: id, attendance_id: rec?.attendance_id, rec });
+            logs.push({ employeeId: id, ok: true });
+            console.log('Batch Clock-In success', { employeeId: id, attendance_id: rec?.attendance_id, rec });
           } catch (err: any) {
-            logs.push({ employeeId: id, ok: false, error: String(err?.message ?? err) });
-            console.warn('[Attendance][Batch][IN] failed', { employeeId: id, error: String(err?.message ?? err) });
+            logs.push({ employeeId: id, ok: false });
+            console.warn('Batch Clock-In failed', { employeeId: id, error: String(err?.message ?? err) });
           }
         }
-  setBatchLogs(logs);
-  setShowBatchLogs(true);
   // Refresh staff and attendance rows so UI reflects DB changes
   await fetchStaff();
-        Alert.alert('Batch Update', 'Selected staff marked Present. See logs for details.');
+    // Show concise result: on success use centralized modal, otherwise show failure
+    try {
+      const failed = (logs || []).filter((l) => !l.ok).length;
+      if (failed === 0) {
+        try { globalModal.showSuccess('Batch', 'Success'); } catch (_e) { /* ignore */ }
+      } else {
+        Alert.alert('Batch', `${failed} Failed`);
+      }
+    } catch (_e) { Alert.alert('Batch', 'Completed'); }
       } catch (e: any) {
-        Alert.alert('Batch Update Failed', String(e?.message ?? e));
+        Alert.alert('Batch', 'Failed');
       } finally {
         setBatchMode(false);
         setSelectedIds([]);
@@ -348,20 +371,25 @@ export default function AttendanceTab(props?: any) {
         for (const id of selectedIds) {
           try {
             const rec = await apiClock(id, 'out');
-            logs.push({ employeeId: id, ok: true, attendance: rec });
-            console.log('[Attendance][Batch][OUT] success', { employeeId: id, attendance_id: rec?.attendance_id, rec });
+            logs.push({ employeeId: id, ok: true });
+            console.log('Batch Clock-Out success', { employeeId: id, attendance_id: rec?.attendance_id, rec });
           } catch (err: any) {
-            logs.push({ employeeId: id, ok: false, error: String(err?.message ?? err) });
-            console.warn('[Attendance][Batch][OUT] failed', { employeeId: id, error: String(err?.message ?? err) });
+            logs.push({ employeeId: id, ok: false });
+            console.warn('Batch Clock-Out failed', { employeeId: id, error: String(err?.message ?? err) });
           }
         }
-  setBatchLogs(logs);
-  setShowBatchLogs(true);
   // Refresh staff and attendance rows so UI reflects DB changes
   await fetchStaff();
-        Alert.alert('Batch Clock-Out', 'Clock-Out time applied for selected Present staff. See logs for details.');
+    try {
+      const failed = (logs || []).filter((l) => !l.ok).length;
+      if (failed === 0) {
+        try { globalModal.showSuccess('Batch', 'Success'); } catch (_e) { /* ignore */ }
+      } else {
+        Alert.alert('Batch', `${failed} Failed`);
+      }
+    } catch (_e) { Alert.alert('Batch', 'Completed'); }
       } catch (e: any) {
-        Alert.alert('Batch Clock-Out Failed', String(e?.message ?? e));
+        Alert.alert('Batch', 'Failed');
       } finally {
         setSelectedIds([]);
         setBatchMode(false);
@@ -399,24 +427,30 @@ export default function AttendanceTab(props?: any) {
                     const json = await res.json();
                     // json is expected to be an array of per-employee results
                     for (const r of Array.isArray(json) ? json : [json]) {
-                      if (r && r.ok) {
-                        logs.push({ employeeId: r.employeeId ?? null, ok: true, result: r });
-                        console.log('[Attendance][MarkOthers][ABSENT] success', { employeeId: r.employeeId, result: r });
+                        if (r && r.ok) {
+                        logs.push({ employeeId: r.employeeId ?? null, ok: true });
+                        console.log('Batch Mark as Absent success', { employeeId: r?.employeeId ?? null, attendance_id: r?.attendance_id ?? null, r });
                       } else {
-                        logs.push({ employeeId: r?.employeeId ?? null, ok: false, error: r?.error ?? JSON.stringify(r) });
-                        console.warn('[Attendance][MarkOthers][ABSENT] failed', { employeeId: r?.employeeId ?? null, error: r?.error ?? JSON.stringify(r) });
+                        logs.push({ employeeId: r?.employeeId ?? null, ok: false });
+                        console.warn('Batch Mark as Absent failed', { employeeId: r?.employeeId ?? null, error: r?.error ?? 'Unknown error' });
                       }
                     }
-                  } catch (err: any) {
-                    logs.push({ employeeIds: others, ok: false, error: String(err?.message ?? err) });
-                    console.warn('[Attendance][MarkOthers][ABSENT] bulk request failed', { employeeIds: others, error: String(err?.message ?? err) });
+                    } catch (err: any) {
+                    logs.push({ employeeIds: others, ok: false });
+                    console.warn('Batch Mark as Absent failed', { employeeIds: others, error: String(err?.message ?? err) });
                   }
                 }
 
-                setBatchLogs(logs);
-                setShowBatchLogs(true);
                 await fetchStaff();
-                Alert.alert('Marked Others Absent', `Attempted to mark ${others.length} staff as absent. See logs.`);
+                try {
+                  const failed = (logs || []).filter((l) => !l.ok).length;
+                  if (failed === 0) {
+                    // clear any stored logs and use centralized success modal
+                    try { globalModal.showSuccess('Batch', 'Success'); } catch (_e) { /* ignore */ }
+                  } else {
+                    Alert.alert('Batch', `${failed} Failed`);
+                  }
+                } catch (_e) { Alert.alert('Batch', 'Completed'); }
               } catch (e: any) {
                 Alert.alert('Mark Others Failed', String(e?.message ?? e));
               } finally {
@@ -671,20 +705,32 @@ export default function AttendanceTab(props?: any) {
       {batchMode && (
         <View style={styles.batchActions}>
           <TouchableOpacity
-            style={[styles.batchButton, { backgroundColor: "#c8e6c9" }]}
+            style={[
+              styles.batchButton,
+              { backgroundColor: allSelectedNoStatus ? "#c8e6c9" : "#ddd", opacity: allSelectedNoStatus ? 1 : 0.5 },
+            ]}
             onPress={markSelected}
+            disabled={!allSelectedNoStatus}
           >
             <Text style={styles.batchButtonText}>Batch Clock-In & Mark Present</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.batchButton, { backgroundColor: "#b3cde0" }]}
+            style={[
+              styles.batchButton,
+              { backgroundColor: allSelectedPresent ? "#b3cde0" : "#ddd", opacity: allSelectedPresent ? 1 : 0.5 },
+            ]}
             onPress={handleBatchClockOut}
+            disabled={!allSelectedPresent}
           >
             <Text style={styles.batchButtonText}>Batch Clock-Out</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.batchButton, { backgroundColor: "#f8d7da" }]}
+            style={[
+              styles.batchButton,
+              { backgroundColor: allSelectedNoStatus ? "#f8d7da" : "#ddd", opacity: allSelectedNoStatus ? 1 : 0.5 },
+            ]}
             onPress={markOthersAsAbsent}
+            disabled={!allSelectedNoStatus}
           >
             <Text style={styles.batchButtonText}>Mark Others As Absent</Text>
           </TouchableOpacity>
@@ -766,36 +812,6 @@ export default function AttendanceTab(props?: any) {
       />
 
       {/* Manual entry removed — inline editing available when editing mode is active */}
-      {/* Batch logs modal - shows per-employee DB result for recent batch operations */}
-      <Modal visible={showBatchLogs} transparent animationType="fade" onRequestClose={() => setShowBatchLogs(false)}>
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalBox, { maxHeight: 400 }]}>
-            <Text style={styles.modalTitle}>Batch Update Logs</Text>
-            <View style={styles.separator} />
-            <View style={{ maxHeight: 280 }}>
-              {batchLogs.length === 0 ? (
-                <Text>No entries</Text>
-              ) : (
-                batchLogs.map((l, idx) => (
-                  <View key={String(idx)} style={{ paddingVertical: 6 }}>
-                    {l.ok ? (
-                      <Text style={{ color: '#2e7d32' }}>{`[OK] ${l.employeeId} → attendance_id=${l.attendance?.attendance_id ?? 'N/A'}`}</Text>
-                    ) : (
-                      <Text style={{ color: '#c62828' }}>{`[ERR] ${l.employeeId} → ${l.error}`}</Text>
-                    )}
-                    {l.ok && l.attendance ? <Text style={{ color: '#444', fontSize: 11 }}>{JSON.stringify(l.attendance)}</Text> : null}
-                  </View>
-                ))
-              )}
-            </View>
-            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 12 }}>
-              <TouchableOpacity style={[styles.modalButton, { backgroundColor: '#EEE' }]} onPress={() => setShowBatchLogs(false)}>
-                <Text style={{ color: '#333', fontWeight: '600' }}>Close</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
     </SafeAreaView>
   );
 }

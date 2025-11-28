@@ -125,6 +125,8 @@ export default function BayAssignmentScreen({ userName, counts, assignedBays }: 
     (async () => {
   if (!selectedPlayer) { showError('Select a player first.'); return; }
   if (!selectedBay) { showError('Please select a bay first.'); return; }
+  const playerName = selectedPlayer.name ?? selectedPlayer.player_name ?? selectedPlayer.nickname ?? null;
+  if (!playerName || !String(playerName).trim()) { showError('Please enter a name for the player before assigning'); return; }
   // prefer explicit selected serviceman (only if still available), otherwise fallback to queue logic
   const explicit = selectedServiceman ? servicemen.find((s) => Number(s.id) === Number(selectedServiceman)) : null;
   const svc = explicit && !busyServicemen.includes(Number(explicit.id)) ? explicit : getNextServiceman();
@@ -142,7 +144,7 @@ export default function BayAssignmentScreen({ userName, counts, assignedBays }: 
           if (override) baseUrl = override;
         } catch {}
 
-        const body: any = { nickname: selectedPlayer.name ?? selectedPlayer.player_name ?? selectedPlayer.nickname ?? null };
+        const body: any = { nickname: playerName };
         // Attach existing cashier-created player so server can reuse the record instead of creating a new one
         if (selectedPlayer.id) body.playerId = selectedPlayer.id;
         if (svc && svc.id) body.servicemanId = svc.id;
@@ -656,21 +658,22 @@ export default function BayAssignmentScreen({ userName, counts, assignedBays }: 
             {/* Confirm */}
             <TouchableOpacity
               onPress={confirmAssignment}
-              disabled={!selectedPlayer || assigning}
+              disabled={assigning || !selectedBay || !selectedServiceman || !(selectedPlayer && (selectedPlayer.name || selectedPlayer.player_name || selectedPlayer.nickname) && String(selectedPlayer.name ?? selectedPlayer.player_name ?? selectedPlayer.nickname).trim())}
               style={[
                 styles.confirmButton,
-                !selectedPlayer && styles.confirmButtonDisabled,
+                (!(selectedPlayer && (selectedPlayer.name || selectedPlayer.player_name || selectedPlayer.nickname) && String(selectedPlayer.name ?? selectedPlayer.player_name ?? selectedPlayer.nickname).trim()) || !selectedBay || !selectedServiceman || assigning) && styles.confirmButtonDisabled,
+                (!(selectedPlayer && (selectedPlayer.name || selectedPlayer.player_name || selectedPlayer.nickname) && String(selectedPlayer.name ?? selectedPlayer.player_name ?? selectedPlayer.nickname).trim()) || !selectedBay || !selectedServiceman || assigning) && styles.modalButtonConfirmDisabled,
               ]}
             >
               {assigning ? (
                 <ActivityIndicator color="#1c2b1d" />
               ) : (
-                <Text
-                  style={[
-                    styles.confirmButtonText,
-                    !selectedPlayer && styles.confirmButtonTextDisabled,
-                  ]}
-                >
+                    <Text
+                      style={[
+                        styles.confirmButtonText,
+                        !(selectedPlayer && (selectedPlayer.name || selectedPlayer.player_name || selectedPlayer.nickname) && String(selectedPlayer.name ?? selectedPlayer.player_name ?? selectedPlayer.nickname).trim()) && styles.confirmButtonTextDisabled,
+                      ]}
+                    >
                   CONFIRM ASSIGNMENT
                 </Text>
               )}
@@ -810,6 +813,7 @@ const styles = StyleSheet.create({
     color: "#1c2b1d",
   },
   confirmButtonTextDisabled: { color: "#666" },
+  modalButtonConfirmDisabled: { opacity: 0.35 },
   // modernized, semi-transparent dropdown card
   filterOptions: {
     backgroundColor: 'rgba(255,255,255,0.92)',

@@ -384,6 +384,11 @@ export default function SessionControlTab({ userName, counts, assignedBays }: { 
   };
 
   const handleStartSession = async (item: any) => {
+    // Validate the provided name before starting
+    if (!item?.name || !String(item.name).trim()) {
+      try { showError('Please enter a name for the session', 'Validation'); } catch {}
+      return;
+    }
     setActionLoading(true);
     try {
       let baseUrl = Platform.OS === 'android' ? 'http://10.127.147.53:3000' : 'http://localhost:3000';
@@ -498,7 +503,11 @@ export default function SessionControlTab({ userName, counts, assignedBays }: { 
           )}
 
           {isSpecial && (
-            <TouchableOpacity style={styles.cancelBtn} onPress={() => confirmStart(item)}>
+            <TouchableOpacity
+              style={[styles.cancelBtn, (!item?.name || !String(item.name).trim() || actionLoading) ? styles.cancelBtnDisabled : null]}
+              onPress={() => confirmStart(item)}
+              disabled={!item?.name || !String(item.name).trim() || actionLoading}
+            >
               <Text style={styles.btnText}>Start</Text>
             </TouchableOpacity>
           )}
@@ -728,6 +737,7 @@ const styles = StyleSheet.create({
   actionCell: { flexDirection: 'row', justifyContent: 'center', gap: 8 },
   editBtn: { backgroundColor: '#b8d7a3', padding: 6, borderRadius: 5, width: 60 },
   cancelBtn: { backgroundColor: '#7b0f0f', padding: 6, borderRadius: 5, width: 60 },
+  cancelBtnDisabled: { opacity: 0.35 },
   btnText: { color: '#fff', textAlign: 'center', fontSize: 12 },
   actionHeader: { flex: 1, textAlign: 'center' },
 
