@@ -40,7 +40,3 @@ export function mapErrorToFriendly(err: any, fallback?: string): FriendlyError {
 export function friendlyMessageFromThrowable(err: any, fallback?: string) {
   return mapErrorToFriendly(err, fallback);
 }
-
-// Placeholder default export to prevent expo-router warning while helpers
-// are available in `Frontend/lib/`. This component is never used.
-export default function _errorUtilsPlaceholder() { return null as any; }

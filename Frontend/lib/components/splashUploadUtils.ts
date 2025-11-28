@@ -63,7 +63,3 @@ export async function processFileForUpload(file: any, onSealUpload?: (file: any)
 
   return { uploadedUrl: null, previewUri: null };
 }
-
-// Placeholder default export to prevent expo-router warning while helpers
-// are available in `Frontend/lib/`. This component is never used.
-export default function _splashUploadUtilsPlaceholder() { return null as any; }

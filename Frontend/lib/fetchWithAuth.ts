@@ -43,7 +43,3 @@ export async function fetchWithAuth(input: RequestInfo, init?: RequestInit) {
 
 // Intentionally no default export: keep as a named export to avoid being treated
 // as a route component by bundlers that expect default exports in `app/`.
-
-// Placeholder default export to prevent expo-router warning while helpers
-// are available in `Frontend/lib/`. This component is never used.
-export default function _fetchWithAuthPlaceholder() { return null as any; }
