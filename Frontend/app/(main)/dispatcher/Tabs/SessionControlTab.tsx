@@ -65,7 +65,7 @@ export default function SessionControlTab({ userName, counts, assignedBays }: { 
           try { const et = new Date(s.end_time ?? s.endTime); return !isNaN(et.getTime()) && et.getTime() > Date.now(); } catch (_e) { void _e; return false; }
         }) : [];
         // normalize objects to a simple shape for the UI
-        const normalized = active.map((s: any, ix: number) => ({
+        let normalized = active.map((s: any, ix: number) => ({
           id: s.session_id ?? s.id ?? ix,
           bay: Number(s.bay_no ?? s.bay ?? s.bay_number ?? s.bayNo),
           name: (s.player_name ?? s.name ?? s.nickname ?? (s.player && (s.player.name || s.player.full_name))) || 'Player',
@@ -74,6 +74,79 @@ export default function SessionControlTab({ userName, counts, assignedBays }: { 
           duration: s.duration_text ?? s.duration ?? 'N/A',
           raw: s,
         }));
+        // Next: consult real-time bay overview to show only sessions for currently-occupied bays
+        // and prefer the literal assigned player name from the overview for display.
+        try {
+          let baseUrl = Platform.OS === 'android' ? 'http://10.127.147.53:3000' : 'http://localhost:3000';
+          try {
+            // @ts-ignore
+            const AsyncStorageModule = await import('@react-native-async-storage/async-storage').catch(() => null);
+            const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
+            const override = AsyncStorage ? await AsyncStorage.getItem('backendBaseUrlOverride') : null;
+            if (override) baseUrl = override;
+          } catch (_e) { void _e; }
+
+          const overviewRes = await fetchWithAuth(`${baseUrl}/api/dispatcher/overview`, { method: 'GET' });
+          let overviewJson: any = null;
+          if (overviewRes && overviewRes.ok) overviewJson = await overviewRes.json().catch(() => null);
+          const bayList = Array.isArray(overviewJson?.bays) ? overviewJson.bays : (Array.isArray(overviewJson) ? overviewJson : []);
+          const occupiedSet = new Set<number>();
+          const bayPlayerMap: Record<number, string> = {};
+          try {
+            for (const b of bayList) {
+              const status = String(b?.status ?? '').toLowerCase();
+              if (status && (status.includes('occupied') || status.includes('assigned') || status.includes('open') || status.includes('opentime') || status.includes('timed'))) {
+                const num = Number(b?.bay_number ?? b?.bay_no ?? b?.bay_id ?? b?.bay ?? null);
+                if (!isNaN(num)) occupiedSet.add(num);
+                try {
+                  const playerName = b?.player_name ?? b?.player?.nickname ?? b?.player?.full_name ?? b?.playerName ?? null;
+                  if (playerName) bayPlayerMap[Number(num)] = String(playerName);
+                } catch (_e) { void _e; }
+              }
+            }
+          } catch (_e) { void _e; }
+
+          // If assignedBays provided, intersect with occupied set so dispatcher only sees their occupied bays
+          if (assignedBays && Array.isArray(assignedBays) && assignedBays.length > 0) {
+            const allowed = new Set((assignedBays || []).map((b:any) => Number(b)));
+            normalized = normalized.filter((n:any) => allowed.has(Number(n.bay)) && occupiedSet.has(Number(n.bay)));
+          } else {
+            // otherwise show any currently-occupied session
+            normalized = normalized.filter((n:any) => occupiedSet.has(Number(n.bay)));
+          }
+          // Override session name with literal assigned player from bay overview when available
+          try {
+            normalized = normalized.map((n:any) => ({ ...n, name: (bayPlayerMap[Number(n.bay)] ?? n.name) }));
+          } catch (_e) { void _e; }
+
+          // Collapse multiple sessions per bay to a single entry to avoid showing previously-assigned players
+          try {
+            const byBay = new Map<number, { session: any; score: number }>();
+            for (const s of normalized) {
+              const bayNum = Number(s.bay);
+              const raw = s.raw || {};
+              let ts = 0;
+              try {
+                const cand = raw.start_time ?? raw.startTime ?? raw.created_at ?? raw.createdAt ?? raw.ts ?? raw.time ?? null;
+                if (cand) {
+                  const asNum = Number(cand);
+                  if (!isNaN(asNum) && asNum > 0) ts = asNum;
+                  else {
+                    const parsed = new Date(String(cand)).getTime();
+                    if (!isNaN(parsed)) ts = parsed;
+                  }
+                }
+              } catch (_e) { void _e; }
+              // fallback to id as tie-breaker
+              if (!ts && s.id) ts = Number(s.id) || 0;
+              const existing = byBay.get(bayNum);
+              if (!existing || (existing.score || 0) < ts) byBay.set(bayNum, { session: s, score: ts });
+            }
+            const collapsed: any[] = [];
+            for (const [, v] of byBay) collapsed.push(v.session);
+            normalized = collapsed;
+          } catch (_e) { void _e; }
+        } catch (_e) { void _e; }
         setSessions(normalized);
       }
     } catch (_e) { void _e; // ignore
