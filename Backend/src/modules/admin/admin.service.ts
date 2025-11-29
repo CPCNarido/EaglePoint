@@ -482,9 +482,12 @@ export class AdminService {
       where: { start_time: { gte: startDate, lte: now } },
     });
 
-    // total buckets dispensed (sum of ballTransaction.bucket_count)
+    // total buckets dispensed (sum of ballTransaction.bucket_count) within the selected time range
     const buckets = await this.prisma.ballTransaction
-      .aggregate({ _sum: { bucket_count: true } })
+      .aggregate({
+        _sum: { bucket_count: true },
+        where: { delivered_time: { gte: startDate, lte: now } },
+      })
       .catch(() => ({ _sum: { bucket_count: null } }));
     const totalBuckets =
       (buckets && buckets._sum && Number(buckets._sum.bucket_count || 0)) || 0;

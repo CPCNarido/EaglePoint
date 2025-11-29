@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, Platform, Image, ImageBackground, TouchableOpacity, Animated } from 'react-native';
+import BucketTracker from './BucketTracker';
 import { useRouter } from 'expo-router';
 import { MaterialIcons as Icon } from '@expo/vector-icons';
 import { fetchWithAuth } from '../../_lib/fetchWithAuth';
@@ -136,6 +137,29 @@ export default function BallHandler() {
 			setModalVisible(true);
 			await fetchOverview();
 		}
+	};
+
+	// Allow child components to push a recent-log entry (local, animated)
+	const pushRecentLogEntry = (payload: { bay_no?: any; added_buckets?: number; total_balls?: any; raw?: any }) => {
+		try {
+			const id = `local-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+			const entry = {
+				id,
+				ts: Date.now(),
+				bay_no: payload?.bay_no ?? null,
+				player_id: null,
+				added_buckets: Number(payload?.added_buckets ?? 0) || 0,
+				total_balls: payload?.total_balls ?? null,
+				raw: payload?.raw ?? { source: 'local', action: 'hand-over' },
+			};
+			try { animMap.current[id] = new Animated.Value(0); } catch (_e) { void _e; }
+			setRecentLog((prev) => {
+				const MAX = 200;
+				const merged = [...(prev || []), entry];
+				return merged.slice(-MAX);
+			});
+			try { Animated.timing(animMap.current[id], { toValue: 1, duration: 320, useNativeDriver: true }).start(); } catch (_e) { void _e; }
+		} catch (_e) { void _e; }
 	};
 
 	useEffect(() => {
@@ -280,7 +304,7 @@ export default function BallHandler() {
 					</ScrollView>
 				</View>
 
-				<View style={styles.logColumn}>
+				<View style={styles.logColumn}>	
 					<Text style={styles.sectionTitle}>Recent Deliver Log</Text>
 					<ScrollView style={styles.logList}>
 						{(recentLog || []).length === 0 ? (
@@ -305,17 +329,13 @@ export default function BallHandler() {
 		</View>
 	);
 
+
 	const renderContent = () => {
 		switch (activeTab) {
 			case 'Dashboard':
 				return renderDashboard();
 			case 'Bucket Tracker':
-				return (
-					<View style={styles.container}>
-						<Text style={styles.header}>Bucket Tracker</Text>
-						<View style={styles.placeholderBox}><Text style={styles.placeholderText}>Bucket Tracker is a placeholder for now.</Text></View>
-					</View>
-				);
+				return <BucketTracker userName={userName} overview={overview} onRefresh={fetchOverview} onPushRecentLog={(p: any) => pushRecentLogEntry(p)} />;
 			case 'Team Chats':
 				return <TeamChats />;
 			default:
@@ -443,4 +463,6 @@ const styles = StyleSheet.create({
 	logList: { height: 330 },
 	logItem: { backgroundColor: '#F7F7F7', padding: 10, borderRadius: 8, marginBottom: 8 },
 	logTitle: { color: '#555' },
+
+
 });
