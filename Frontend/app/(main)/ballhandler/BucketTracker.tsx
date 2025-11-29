@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, Platfo
 // custom dropdown used instead of external Picker to avoid extra dependency
 import { fetchWithAuth } from '../../_lib/fetchWithAuth';
 
-export default function BucketTracker({ userName, overview, onRefresh, onPushRecentLog }: { userName?: string; overview?: any; onRefresh?: () => Promise<void> | void; onPushRecentLog?: (payload: any) => void }) {
+export default function BucketTracker({ userName, overview, onRefresh, onPushRecentLog, onRefreshTotalDelivered }: { userName?: string; overview?: any; onRefresh?: () => Promise<void> | void; onPushRecentLog?: (p: any) => void; onRefreshTotalDelivered?: () => Promise<void> | void }) {
   const [bayNumber, setBayNumber] = React.useState('');
   const [bucketCount, setBucketCount] = React.useState('');
   const [totalDelivered, setTotalDelivered] = React.useState(0);
@@ -66,6 +66,9 @@ export default function BucketTracker({ userName, overview, onRefresh, onPushRec
       const url = `${baseUrl}/api/admin/bays/${encodeURIComponent(bayNumber)}/hand-over`;
       const res = await fetchWithAuth(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bucket_count: Number(bucketCount) }) });
       if (res.ok) {
+        // attempt to parse returned payload for more details (e.g. total balls)
+        let payload: any = null;
+        try { payload = await res.json().catch(() => null); } catch (_e) { payload = null; }
         // refresh daily total from server to keep authoritative daily count
         try {
           const sBase = await resolveBaseUrl();
@@ -83,13 +86,11 @@ export default function BucketTracker({ userName, overview, onRefresh, onPushRec
         }
         setBayNumber('');
         setBucketCount('');
-        // inform parent dashboard to append a recent-log entry
-        try {
-          if (typeof onPushRecentLog === 'function') {
-            onPushRecentLog({ bay_no: bayNumber, added_buckets: Number(bucketCount) || 0, total_balls: null, raw: { source: 'bucket-tracker', action: 'hand-over' } });
-          }
-        } catch (_e) { void _e; }
         Alert.alert('Success', 'Bucket recorded');
+        try {
+          if (onPushRecentLog) onPushRecentLog({ bay_no: bayNumber, added_buckets: Number(bucketCount) || 0, total_balls: payload?.total_balls ?? payload?.totalBalls ?? null, raw: payload ?? { source: 'local', action: 'hand-over' } });
+        } catch (_e) { void _e; }
+        try { if (onRefreshTotalDelivered) await onRefreshTotalDelivered(); } catch (_e) { void _e; }
         if (onRefresh) await onRefresh();
       } else {
         let details = '';
@@ -113,6 +114,9 @@ export default function BucketTracker({ userName, overview, onRefresh, onPushRec
       const url = `${baseUrl}/api/admin/bays/${encodeURIComponent(bayNo)}/hand-over`;
       const res = await fetchWithAuth(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bucket_count: 1 }) });
       if (res.ok) {
+        // attempt to parse returned payload for more details (e.g. total balls)
+        let payload: any = null;
+        try { payload = await res.json().catch(() => null); } catch (_e) { payload = null; }
         // refresh daily total from server to keep authoritative daily count
         try {
           const baseUrl = await resolveBaseUrl();
@@ -128,13 +132,11 @@ export default function BucketTracker({ userName, overview, onRefresh, onPushRec
         } catch (_e) {
           setTotalDelivered((t) => t + 1);
         }
-        // inform parent dashboard to append a recent-log entry
-        try {
-          if (typeof onPushRecentLog === 'function') {
-            onPushRecentLog({ bay_no: bayNo, added_buckets: 1, total_balls: null, raw: { source: 'bucket-tracker', action: 'hand-over' } });
-          }
-        } catch (_e) { void _e; }
         Alert.alert('Success', 'Bucket recorded');
+        try {
+          if (onPushRecentLog) onPushRecentLog({ bay_no: bayNo, added_buckets: 1, total_balls: payload?.total_balls ?? payload?.totalBalls ?? null, raw: payload ?? { source: 'local', action: 'hand-over' } });
+        } catch (_e) { void _e; }
+        try { if (onRefreshTotalDelivered) await onRefreshTotalDelivered(); } catch (_e) { void _e; }
         if (onRefresh) await onRefresh();
       } else {
         let details = '';
@@ -152,15 +154,6 @@ export default function BucketTracker({ userName, overview, onRefresh, onPushRec
 
   return (
     <View style={styles.container}>
-      <View style={styles.headerRow}>
-        <View>
-          <Text style={styles.title}>Bucket Tracker</Text>
-          <Text style={styles.subtitle}>Ball Handler {userName ?? ''}</Text>
-        </View>
-        <View style={styles.totalBadge}>
-          <Text style={styles.totalBadgeText}>Total Bucket Delivered: {totalDelivered}</Text>
-        </View>
-      </View>
 
       <View style={styles.card}>
         <View style={styles.cardHeader}>

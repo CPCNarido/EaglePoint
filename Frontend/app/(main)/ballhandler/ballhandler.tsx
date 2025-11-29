@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, Platform, Image, ImageBackground, TouchableOpacity, Animated } from 'react-native';
 import BucketTracker from './BucketTracker';
+import BallHandlerHeader from './BallHandlerHeader';
 import { useRouter } from 'expo-router';
 import { MaterialIcons as Icon } from '@expo/vector-icons';
 import { fetchWithAuth } from '../../_lib/fetchWithAuth';
@@ -17,6 +18,7 @@ export default function BallHandler() {
 
 	const [overview, setOverview] = useState<any>(null);
 	const [recentLog, setRecentLog] = useState<any[]>([]);
+    const [totalDelivered, setTotalDelivered] = useState<number | null>(null);
 	// Animated values per log entry id for entrance animations
 	const animMap = useRef<Record<string, Animated.Value>>({});
 	const [userName, setUserName] = useState<string>('Ball Handler');
@@ -61,6 +63,26 @@ export default function BallHandler() {
 		} finally {
 			isFetchingRef.current = false;
 		}
+	}, []);
+
+	// refresh daily total delivered (used by children to request authoritative update)
+	const refreshTotalDelivered = useCallback(async () => {
+		try {
+			let baseUrl = Platform.OS === 'android' ? 'http://10.127.147.53:3000' : 'http://localhost:3000';
+			try {
+				// @ts-ignore
+				const AsyncStorageModule = await import('@react-native-async-storage/async-storage').catch(() => null);
+				const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
+				const override = AsyncStorage ? await AsyncStorage.getItem('backendBaseUrlOverride') : null;
+				if (override) baseUrl = override;
+			} catch (_e) { void _e; }
+
+			const res = await fetchWithAuth(`${baseUrl}/api/admin/reports/summary?timeRange=daily`, { method: 'GET' });
+			if (res && res.ok) {
+				const j = await res.json();
+				setTotalDelivered(Number(j?.totalBuckets ?? j?.total_buckets ?? 0) || 0);
+			}
+		} catch (_e) { void _e; }
 	}, []);
 
 	const handleHandOver = async (bay: any) => {
@@ -110,6 +132,8 @@ export default function BallHandler() {
 					});
 					try { Animated.timing(animMap.current[id], { toValue: 1, duration: 320, useNativeDriver: true }).start(); } catch (_e) { void _e; }
 				} catch (_e) { void _e; }
+				// refresh overview and daily total delivered so header stays accurate
+				try { await refreshTotalDelivered(); } catch (_e) { void _e; }
 				await fetchOverview();
 			} else {
 				// Try to parse error details from response for diagnostics
@@ -190,6 +214,25 @@ export default function BallHandler() {
 		})();
 
 		fetchOverview();
+
+		// fetch daily total for header
+		(async () => {
+			try {
+				let baseUrl = Platform.OS === 'android' ? 'http://10.127.147.53:3000' : 'http://localhost:3000';
+				try {
+					// @ts-ignore
+					const AsyncStorageModule = await import('@react-native-async-storage/async-storage').catch(() => null);
+					const AsyncStorage = (AsyncStorageModule as any)?.default ?? AsyncStorageModule;
+					const override = AsyncStorage ? await AsyncStorage.getItem('backendBaseUrlOverride') : null;
+					if (override) baseUrl = override;
+				} catch (_e) { void _e; }
+				const res = await fetchWithAuth(`${baseUrl}/api/admin/reports/summary?timeRange=daily`, { method: 'GET' });
+				if (res && res.ok) {
+					const j = await res.json();
+					setTotalDelivered(Number(j?.totalBuckets ?? j?.total_buckets ?? 0) || 0);
+				}
+			} catch (_e) { void _e; }
+		})();
 		const interval = setInterval(() => fetchOverview(), 2000);
 
 		// Real-time SSE subscription: listen for assignment updates (ball transactions)
@@ -263,7 +306,6 @@ export default function BallHandler() {
 
 	const renderDashboard = () => (
 		<View style={styles.container}>
-			<Text style={styles.header}>Ball Handler Dashboard</Text>
 			<ImageBackground source={require('../../../assets/General/BHHeroImg.png')} style={styles.heroImage} resizeMode="cover">
 				{/* top-left welcome */}
 				<View style={styles.heroTopLeft} pointerEvents="none">
@@ -335,7 +377,7 @@ export default function BallHandler() {
 			case 'Dashboard':
 				return renderDashboard();
 			case 'Bucket Tracker':
-				return <BucketTracker userName={userName} overview={overview} onRefresh={fetchOverview} onPushRecentLog={(p: any) => pushRecentLogEntry(p)} />;
+				return <BucketTracker userName={userName} overview={overview} onRefresh={fetchOverview} onPushRecentLog={(p: any) => pushRecentLogEntry(p)} onRefreshTotalDelivered={refreshTotalDelivered} />;
 			case 'Team Chats':
 				return <TeamChats />;
 			default:
@@ -343,10 +385,10 @@ export default function BallHandler() {
 		}
 	};
 
-	return (
-		<View style={styles.outerContainer}>
-			<ErrorModal visible={modalVisible} errorType={modalType} errorMessage={modalMessage ?? ''} onClose={() => setModalVisible(false)} />
-			<ConfirmModal
+		return (
+			<View style={styles.outerContainer}>
+				<ErrorModal visible={modalVisible} errorType={modalType} errorMessage={modalMessage ?? ''} onClose={() => setModalVisible(false)} />
+				<ConfirmModal
 				visible={confirmVisible}
 				title="Confirm Initial Handoff"
 				message={(() => {
@@ -362,7 +404,7 @@ export default function BallHandler() {
 				}}
 				onCancel={() => { setConfirmVisible(false); setConfirmBay(null); }}
 			/>
-			<View style={styles.sidebar}>
+				<View style={styles.sidebar}>
 				<View style={styles.logoContainer}>
 					<Image source={require('../../../assets/General/Logo.png')} style={styles.logoImage} resizeMode="contain" />
 					<View style={styles.logoTextContainer}>
@@ -391,8 +433,10 @@ export default function BallHandler() {
 					</TouchableOpacity>
 				</View>
 			</View>
-
-			{renderContent()}
+				<View style={{ flex: 1,backgroundColor: '#F9F8F6' }}>
+					<BallHandlerHeader title={activeTab === 'Bucket Tracker' ? 'Bucket Tracker' : 'Ball Handler Dashboard'} subtitle={`Welcome back, ${userName}!`} totalDelivered={totalDelivered ?? null} />
+					{renderContent()}
+				</View>
 		</View>
 	);
 }
