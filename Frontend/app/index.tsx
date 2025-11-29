@@ -22,6 +22,7 @@ import Presence from "./lib/presence";
 import { useSettings } from "./_lib/SettingsProvider";
 import ErrorModal from "./components/ErrorModal";
 import GlobalModalProvider from "./components/GlobalModalProvider";
+import DevNetHelper from './components/DevNetHelper';
 
 // === FULL BACKEND + LOGIN IMPLEMENTATION (unchanged) ===
 
@@ -196,7 +197,10 @@ export default function Login() {
       }
       candidates.push(
         "http://192.168.100.88:3000",
-        "http://192.168.100.86:3000"
+        "http://192.168.100.86:3000",
+        "http://100.80.90.45:3000",
+        "http://10.93.10.53.3000"
+
       );
       if (devIp) candidates.push(`http://${devIp}:3000`);
       candidates.push("http://10.127.147.53:3000", defaultBase, "http://localhost:3000");
@@ -370,6 +374,7 @@ export default function Login() {
             setTimeout(() => handleSubmit(), 150);
           }}
         />
+        {/* {typeof __DEV__ !== 'undefined' && __DEV__ ? <DevNetHelper /> : null} */}
       </ImageBackground>
     </GlobalModalProvider>
   );
